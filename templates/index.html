@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA Service Monitor</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card-bg: #1a1d27;
+      --border: #2a2d3a;
+      --text: #e4e4e7;
+      --text-muted: #71717a;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+      --blue: #3b82f6;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header .meta {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .ha-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+    .ha-badge.ok { background: rgba(34,197,94,.15); color: var(--green); }
+    .ha-badge.down { background: rgba(239,68,68,.15); color: var(--red); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: #3a3d4a; }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-weight: 600;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,.4); }
+    .status-dot.warn { background: var(--yellow); box-shadow: 0 0 8px rgba(234,179,8,.4); }
+    .status-dot.down { background: var(--red); box-shadow: 0 0 8px rgba(239,68,68,.4); animation: pulse 1.5s infinite; }
+    .status-dot.skip { background: var(--text-muted); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .card-detail {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: 4px;
+    }
+    .card-status {
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .card-status.running { background: rgba(34,197,94,.12); color: var(--green); }
+    .card-status.stopped { background: rgba(239,68,68,.12); color: var(--red); }
+    .card-status.skip { background: rgba(113,113,122,.12); color: var(--text-muted); }
+    .btn-action {
+      background: rgba(59,130,246,.12);
+      color: var(--blue);
+      border: 1px solid rgba(59,130,246,.25);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 0.75rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .15s;
+      white-space: nowrap;
+    }
+    .btn-action:hover:not(:disabled) { background: rgba(59,130,246,.25); }
+    .btn-action:disabled { opacity: .4; cursor: not-allowed; }
+    .update-progress {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: rgba(59,130,246,.07);
+      border: 1px solid rgba(59,130,246,.15);
+      border-radius: 8px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: none;
+    }
+    .entity-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .entity-row:last-child { border-bottom: none; }
+    .entity-label { display: flex; align-items: center; gap: 10px; }
+    .entity-value { font-weight: 500; font-size: 0.9rem; }
+    .entity-value.ok { color: var(--green); }
+    .entity-value.down { color: var(--red); }
+    .entity-value.warn { color: var(--yellow); }
+    .live-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      background: var(--green);
+      border-radius: 50%;
+      margin-right: 6px;
+      animation: pulse 2s infinite;
+    }
+    .footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    HA Service Monitor
+    <span class="ha-badge {{ 'ok' if state.ha_reachable else 'down' }}">
+      {{ 'Connected' if state.ha_reachable else 'Disconnected' }}{% if state.ha_version %} &mdash; v{{ state.ha_version }}{% endif %}
+    </span>
+  </h1>
+  <div class="meta">
+    <span class="live-dot"></span>
+    Auto-refresh every {{ poll_interval }}s{% if state.last_poll %} &middot; Last poll: {{ state.last_poll }}{% endif %}
+  </div>
+</div>
+
+<!-- Add-on Services -->
+<div class="section-title">Add-on Services</div>
+<div class="grid">
+  {% for name, svc in state.services.items() %}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">
+        <span class="status-dot {{ 'ok' if svc.ok else ('skip' if svc.status == 'not_installed' else 'down') }}"></span>
+        {{ name }}
+      </span>
+      <div class="card-right">
+        {% if name == 'Zigbee2MQTT Edge' %}
+        <button class="btn-action" id="btn-z2m" onclick="updateZ2M()">Update</button>
+        {% endif %}
+        <span class="card-status {{ 'running' if svc.ok else ('skip' if svc.status == 'not_installed' else 'stopped') }}">
+          {{ svc.status }}
+        </span>
+      </div>
+    </div>
+    <div class="card-detail">{{ svc.detail }}</div>
+    {% if name == 'Zigbee2MQTT Edge' %}
+    <div class="update-progress" id="z2m-progress"></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if not state.services %}
+  <div class="card"><div class="card-detail">Waiting for first poll&hellip;</div></div>
+  {% endif %}
+</div>
+
+<!-- Zigbee Coordinators -->
+<div class="section-title">Zigbee Coordinators &amp; Bridges</div>
+<div class="card" style="max-width: 720px;">
+  {% for label, ent in state.entities.items() %}
+  <div class="entity-row">
+    <div class="entity-label">
+      <span class="status-dot {{ 'ok' if ent.ok else 'down' }}"></span>
+      <span>{{ label }}</span>
+    </div>
+    <span class="entity-value {{ 'ok' if ent.ok else 'down' }}">{{ ent.detail }}</span>
+  </div>
+  {% endfor %}
+  {% if not state.entities %}
+  <div class="entity-row"><span class="card-detail">Waiting for first poll&hellip;</span></div>
+  {% endif %}
+</div>
+
+<div class="footer" style="margin-top: 32px;">
+  HA Service Monitor &middot; Polling {{ state.services|length }} add-ons, {{ state.entities|length }} entities
+</div>
+
+<script>
+  // Auto-refresh
+  async function refresh() {
+    if (window._z2mUpdating) return;
+    try {
+      const r = await fetch('/api/status');
+      if (r.ok) location.reload();
+    } catch (_) {}
+  }
+  setInterval(refresh, {{ poll_interval }} * 1000);
+
+  // Z2M Edge update
+  window._z2mUpdating = false;
+
+  async function updateZ2M() {
+    if (window._z2mUpdating) return;
+    window._z2mUpdating = true;
+    const btn = document.getElementById('btn-z2m');
+    const progress = document.getElementById('z2m-progress');
+    btn.disabled = true;
+    progress.style.display = 'block';
+
+    function setMsg(msg) { progress.textContent = msg; }
+
+    setMsg('Backing up config\u2026');
+    try {
+      const r = await fetch('/api/update_z2m', { method: 'POST' });
+      const data = await r.json();
+      if (data.status === 'error') {
+        setMsg('Error: ' + data.message);
+        btn.disabled = false;
+        window._z2mUpdating = false;
+        return;
+      }
+    } catch (e) {
+      setMsg('Failed to start update: ' + e);
+      btn.disabled = false;
+      window._z2mUpdating = false;
+      return;
+    }
+
+    setMsg('Update started \u2014 waiting for Z2M Edge to restart\u2026');
+    let attempts = 0;
+    const poller = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await fetch('/api/z2m_update_status');
+        const d = await r.json();
+        setMsg(d.message || 'Working\u2026');
+        if (d.state === 'done') {
+          clearInterval(poller);
+          window._z2mUpdating = false;
+          setTimeout(() => location.reload(), 1500);
+        } else if (d.state === 'error') {
+          clearInterval(poller);
+          btn.disabled = false;
+          window._z2mUpdating = false;
+        }
+      } catch (_) {}
+      if (attempts > 120) {
+        clearInterval(poller);
+        setMsg('Timed out \u2014 check HA logs');
+        btn.disabled = false;
+        window._z2mUpdating = false;
+      }
+    }, 5000);
+  }
+</script>
+
+</body>
+</html>
