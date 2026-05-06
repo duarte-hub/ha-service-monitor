@@ -578,12 +578,22 @@ def api_z2m_update_status():
     return jsonify(z2m_update_status)
 
 
+@app.route("/api/z2m_backup")
+def api_z2m_backup():
+    backup_path = os.environ.get("Z2M_BACKUP_PATH", "/data/z2m_edge_backup.json")
+    if not os.path.exists(backup_path):
+        return jsonify({"error": "No backup found yet"}), 404
+    with open(backup_path) as fh:
+        return jsonify(json.load(fh))
+
+
 @app.route("/api/update_z2m", methods=["POST"])
 def api_update_z2m():
     """Uninstall Z2M Edge, refresh store, reinstall, restore config via HA WebSocket supervisor/api."""
     global z2m_update_status
     Z2M_EDGE_SLUG = os.environ.get("Z2M_EDGE_SLUG", "45df7312_zigbee2mqtt_edge")
     Z2M_EDGE_PORT = int(os.environ.get("Z2M_EDGE_PORT", "8486"))
+    Z2M_BACKUP_PATH = os.environ.get("Z2M_BACKUP_PATH", "/data/z2m_edge_backup.json")
 
     def _set(state, message):
         global z2m_update_status
@@ -641,10 +651,18 @@ def api_update_z2m():
             _set("running", "Backing up Z2M Edge config…")
             info = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
             saved_options = info.get("options", {})
-            _dbg(f"Backed up options: {json.dumps(saved_options)[:500]}")
             if not saved_options:
                 raise RuntimeError(f"Could not read addon options — full info: {info}")
-            _dbg(f"Addon state at backup: {info.get('state')}, version: {info.get('version')}")
+            _dbg(f"Addon state: {info.get('state')}, version: {info.get('version')}")
+            _dbg(f"Options: {json.dumps(saved_options)}")
+            try:
+                os.makedirs(os.path.dirname(Z2M_BACKUP_PATH), exist_ok=True)
+                with open(Z2M_BACKUP_PATH, "w") as fh:
+                    json.dump({"timestamp": datetime.now(timezone.utc).isoformat(),
+                               "slug": Z2M_EDGE_SLUG, "options": saved_options}, fh, indent=2)
+                _dbg(f"Config backed up to {Z2M_BACKUP_PATH}")
+            except Exception as be:
+                _dbg(f"WARNING: could not write backup file: {be}")
 
             # Step 2 — uninstall
             _set("running", "Uninstalling Z2M Edge…")
