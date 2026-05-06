@@ -583,59 +583,48 @@ def api_update_z2m():
     """Uninstall Z2M Edge, refresh store, reinstall, restore config via HA WebSocket supervisor/api."""
     global z2m_update_status
     Z2M_EDGE_SLUG = os.environ.get("Z2M_EDGE_SLUG", "45df7312_zigbee2mqtt_edge")
+    Z2M_EDGE_PORT = int(os.environ.get("Z2M_EDGE_PORT", "8486"))
 
     def _set(state, message):
         global z2m_update_status
         z2m_update_status = {"state": state, "message": message}
         log.info("Z2M update [%s]: %s", state, message)
 
-    def _ws_connect():
+    def _ws_sup(method, endpoint, payload=None, timeout=60):
+        """Open a fresh WebSocket, send one supervisor/api command, return result data."""
         ws_url = HA_URL.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
         ws = websocket.WebSocket()
-        ws.connect(ws_url, timeout=30)
-        ws.recv()  # auth_required
-        ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
-        if json.loads(ws.recv()).get("type") != "auth_ok":
-            raise RuntimeError("WebSocket auth failed")
-        return ws
-
-    def _sup(ws, msg_id, method, endpoint, payload=None, timeout=120):
-        """Send a supervisor/api command and wait for the matching result, skipping other messages."""
-        cmd = {"id": msg_id, "type": "supervisor/api", "method": method, "endpoint": endpoint}
-        if payload is not None:
-            cmd["data"] = payload
-        ws.send(json.dumps(cmd))
-        ws.settimeout(timeout)
-        while True:
-            resp = json.loads(ws.recv())
-            if resp.get("id") == msg_id and resp.get("type") == "result":
-                if not resp.get("success"):
-                    raise RuntimeError(f"{method} {endpoint} failed: {resp.get('error') or resp}")
-                r = resp.get("result", {})
-                return r.get("data", r) if isinstance(r, dict) else r
-
-    def _merge_options(saved: dict, fresh: dict) -> dict:
-        """Overlay saved options onto fresh defaults, but take any 'port' key from the fresh install."""
-        result = dict(fresh)
-        for k, v in saved.items():
-            if k == "port":
-                pass  # keep port assigned by fresh install, not the stale backed-up value
-            elif isinstance(v, dict) and isinstance(fresh.get(k), dict):
-                result[k] = _merge_options(v, fresh[k])
-            else:
-                result[k] = v
-        return result
+        try:
+            ws.connect(ws_url, timeout=30)
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                raise RuntimeError("WebSocket auth failed")
+            cmd = {"id": 1, "type": "supervisor/api", "method": method, "endpoint": endpoint}
+            if payload is not None:
+                cmd["data"] = payload
+            ws.send(json.dumps(cmd))
+            ws.settimeout(timeout)
+            while True:
+                resp = json.loads(ws.recv())
+                if resp.get("id") == 1 and resp.get("type") == "result":
+                    if not resp.get("success"):
+                        raise RuntimeError(
+                            f"{method} {endpoint} failed: {resp.get('error') or resp}"
+                        )
+                    r = resp.get("result", {})
+                    return r.get("data", r) if isinstance(r, dict) else r
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
     def _do_update():
-        ws = None
         try:
-            ws = _ws_connect()
-            mid = 1
-
             # Step 1 — backup current options
             _set("running", "Backing up Z2M Edge config…")
-            info = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
-            mid += 1
+            info = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
             saved_options = info.get("options", {})
             if not saved_options:
                 raise RuntimeError(f"Could not read addon options: {info}")
@@ -643,57 +632,58 @@ def api_update_z2m():
 
             # Step 2 — uninstall
             _set("running", "Uninstalling Z2M Edge…")
-            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/uninstall")
-            mid += 1
+            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/uninstall")
             time.sleep(3)
 
-            # Step 3 — refresh store
+            # Step 3 — refresh store; give repos time to fetch before install
             _set("running", "Refreshing add-on store…")
-            _sup(ws, mid, "POST", "/store/reload")
-            mid += 1
-            time.sleep(10)
+            _ws_sup("POST", "/store/reload")
+            time.sleep(30)
 
-            # Step 4 — install latest (can take several minutes; use 5-min timeout)
+            # Step 4 — install latest; retry a few times in case store cache is still warming
             _set("running", "Installing latest Z2M Edge…")
-            _sup(ws, mid, "POST", f"/store/addons/{Z2M_EDGE_SLUG}/install", timeout=300)
-            mid += 1
+            for install_attempt in range(3):
+                try:
+                    _ws_sup("POST", f"/store/addons/{Z2M_EDGE_SLUG}/install", timeout=300)
+                    break
+                except Exception as ie:
+                    log.warning("Z2M update: install attempt %d failed: %s", install_attempt + 1, ie)
+                    if install_attempt < 2:
+                        _set("running", f"Install attempt {install_attempt + 1} failed, retrying…")
+                        time.sleep(15)
+                    else:
+                        raise
 
-            # Step 5 — wait for addon to reach stopped/started state (up to 6 min)
+            # Step 5 — poll addon state until it settles (up to 6 min, fresh WS each poll)
             _set("running", "Waiting for install to complete…")
             for attempt in range(72):
                 time.sleep(5)
                 try:
-                    chk = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
-                    mid += 1
+                    chk = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
                     addon_state = chk.get("state", "")
                     log.info("Z2M update: addon state = %s", addon_state)
                     if addon_state in ("stopped", "started", "running"):
                         break
                 except Exception as e:
-                    mid += 1
                     log.warning("Z2M update: poll attempt %d: %s", attempt, e)
                 _set("running", f"Waiting for install… ({(attempt + 1) * 5}s)")
             else:
                 raise RuntimeError("Timed out waiting for addon to install")
 
-            # Step 6 — get fresh options to capture new port assignment, then merge
-            fresh_info = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
-            mid += 1
-            fresh_options = fresh_info.get("options", {})
-            restored_options = _merge_options(saved_options, fresh_options)
-            log.info("Z2M update: restoring options: %s", restored_options)
-
-            # Step 7 — restore config
+            # Step 6 — restore saved options exactly; set network port to Z2M_EDGE_PORT
             _set("running", "Restoring config options…")
-            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/options", {"options": restored_options})
-            mid += 1
+            options_payload: dict = {"options": saved_options}
+            if Z2M_EDGE_PORT:
+                # Tell Supervisor which host port to bind the addon's web frontend to
+                options_payload["network"] = {"8485/tcp": Z2M_EDGE_PORT}
+                log.info("Z2M update: binding host port → %d", Z2M_EDGE_PORT)
+            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/options", options_payload)
 
-            # Step 8 — start
+            # Step 7 — start
             _set("running", "Starting Z2M Edge…")
-            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/start")
-            mid += 1
+            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/start")
 
-            # Step 9 — wait for bridge to reconnect
+            # Step 8 — wait for bridge to reconnect
             _set("running", "Waiting for Z2M Edge bridge to come online…")
             for attempt in range(60):
                 time.sleep(5)
@@ -710,12 +700,6 @@ def api_update_z2m():
 
         except Exception as exc:
             _set("error", f"Error: {exc}")
-        finally:
-            if ws:
-                try:
-                    ws.close()
-                except Exception:
-                    pass
 
     if z2m_update_status.get("state") == "running":
         return jsonify({"status": "error", "message": "Update already in progress"}), 409
