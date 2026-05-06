@@ -580,56 +580,62 @@ def api_z2m_update_status():
 
 @app.route("/api/update_z2m", methods=["POST"])
 def api_update_z2m():
-    """Uninstall Z2M Edge, refresh store, reinstall, restore config via HA Supervisor REST API."""
+    """Uninstall Z2M Edge, refresh store, reinstall, restore config via HA WebSocket supervisor/api."""
     global z2m_update_status
     Z2M_EDGE_SLUG = os.environ.get("Z2M_EDGE_SLUG", "45df7312_zigbee2mqtt_edge")
-
-    def _hassio_get(path, timeout=30):
-        resp = requests.get(
-            f"{HA_URL}/api/hassio/{path}", headers=ha_headers(), timeout=timeout
-        )
-        resp.raise_for_status()
-        d = resp.json()
-        if d.get("result") == "error":
-            raise RuntimeError(f"Supervisor error on GET {path}: {d.get('message', d)}")
-        return d.get("data", {})
-
-    def _hassio_post(path, payload=None, timeout=60):
-        resp = requests.post(
-            f"{HA_URL}/api/hassio/{path}",
-            headers=ha_headers(),
-            json=payload,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        d = resp.json()
-        if d.get("result") == "error":
-            raise RuntimeError(f"Supervisor error on POST {path}: {d.get('message', d)}")
-        return d.get("data", {})
-
-    def _merge_options(saved: dict, fresh: dict) -> dict:
-        """Overlay saved options onto fresh defaults, but take 'port' keys from fresh install."""
-        result = dict(fresh)
-        for k, v in saved.items():
-            if k == "port":
-                # Keep the port assigned by the fresh install; don't restore stale value
-                pass
-            elif isinstance(v, dict) and isinstance(fresh.get(k), dict):
-                result[k] = _merge_options(v, fresh[k])
-            else:
-                result[k] = v
-        return result
 
     def _set(state, message):
         global z2m_update_status
         z2m_update_status = {"state": state, "message": message}
         log.info("Z2M update [%s]: %s", state, message)
 
+    def _ws_connect():
+        ws_url = HA_URL.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
+        ws = websocket.WebSocket()
+        ws.connect(ws_url, timeout=30)
+        ws.recv()  # auth_required
+        ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+        if json.loads(ws.recv()).get("type") != "auth_ok":
+            raise RuntimeError("WebSocket auth failed")
+        return ws
+
+    def _sup(ws, msg_id, method, endpoint, payload=None, timeout=120):
+        """Send a supervisor/api command and wait for the matching result, skipping other messages."""
+        cmd = {"id": msg_id, "type": "supervisor/api", "method": method, "endpoint": endpoint}
+        if payload is not None:
+            cmd["data"] = payload
+        ws.send(json.dumps(cmd))
+        ws.settimeout(timeout)
+        while True:
+            resp = json.loads(ws.recv())
+            if resp.get("id") == msg_id and resp.get("type") == "result":
+                if not resp.get("success"):
+                    raise RuntimeError(f"{method} {endpoint} failed: {resp.get('error') or resp}")
+                r = resp.get("result", {})
+                return r.get("data", r) if isinstance(r, dict) else r
+
+    def _merge_options(saved: dict, fresh: dict) -> dict:
+        """Overlay saved options onto fresh defaults, but take any 'port' key from the fresh install."""
+        result = dict(fresh)
+        for k, v in saved.items():
+            if k == "port":
+                pass  # keep port assigned by fresh install, not the stale backed-up value
+            elif isinstance(v, dict) and isinstance(fresh.get(k), dict):
+                result[k] = _merge_options(v, fresh[k])
+            else:
+                result[k] = v
+        return result
+
     def _do_update():
+        ws = None
         try:
+            ws = _ws_connect()
+            mid = 1
+
             # Step 1 — backup current options
             _set("running", "Backing up Z2M Edge config…")
-            info = _hassio_get(f"addons/{Z2M_EDGE_SLUG}/info")
+            info = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+            mid += 1
             saved_options = info.get("options", {})
             if not saved_options:
                 raise RuntimeError(f"Could not read addon options: {info}")
@@ -637,47 +643,55 @@ def api_update_z2m():
 
             # Step 2 — uninstall
             _set("running", "Uninstalling Z2M Edge…")
-            _hassio_post(f"addons/{Z2M_EDGE_SLUG}/uninstall")
+            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/uninstall")
+            mid += 1
             time.sleep(3)
 
             # Step 3 — refresh store
             _set("running", "Refreshing add-on store…")
-            _hassio_post("store/reload")
+            _sup(ws, mid, "POST", "/store/reload")
+            mid += 1
             time.sleep(10)
 
-            # Step 4 — install latest from store
+            # Step 4 — install latest (can take several minutes; use 5-min timeout)
             _set("running", "Installing latest Z2M Edge…")
-            _hassio_post(f"store/addons/{Z2M_EDGE_SLUG}/install", timeout=180)
+            _sup(ws, mid, "POST", f"/store/addons/{Z2M_EDGE_SLUG}/install", timeout=300)
+            mid += 1
 
             # Step 5 — wait for addon to reach stopped/started state (up to 6 min)
             _set("running", "Waiting for install to complete…")
             for attempt in range(72):
                 time.sleep(5)
                 try:
-                    chk = _hassio_get(f"addons/{Z2M_EDGE_SLUG}/info")
+                    chk = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+                    mid += 1
                     addon_state = chk.get("state", "")
                     log.info("Z2M update: addon state = %s", addon_state)
                     if addon_state in ("stopped", "started", "running"):
                         break
                 except Exception as e:
+                    mid += 1
                     log.warning("Z2M update: poll attempt %d: %s", attempt, e)
                 _set("running", f"Waiting for install… ({(attempt + 1) * 5}s)")
             else:
                 raise RuntimeError("Timed out waiting for addon to install")
 
-            # Step 6 — merge options: keep user config but take new port assignments
-            fresh_info = _hassio_get(f"addons/{Z2M_EDGE_SLUG}/info")
+            # Step 6 — get fresh options to capture new port assignment, then merge
+            fresh_info = _sup(ws, mid, "GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+            mid += 1
             fresh_options = fresh_info.get("options", {})
             restored_options = _merge_options(saved_options, fresh_options)
             log.info("Z2M update: restoring options: %s", restored_options)
 
             # Step 7 — restore config
             _set("running", "Restoring config options…")
-            _hassio_post(f"addons/{Z2M_EDGE_SLUG}/options", {"options": restored_options})
+            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/options", {"options": restored_options})
+            mid += 1
 
             # Step 8 — start
             _set("running", "Starting Z2M Edge…")
-            _hassio_post(f"addons/{Z2M_EDGE_SLUG}/start")
+            _sup(ws, mid, "POST", f"/addons/{Z2M_EDGE_SLUG}/start")
+            mid += 1
 
             # Step 9 — wait for bridge to reconnect
             _set("running", "Waiting for Z2M Edge bridge to come online…")
@@ -696,6 +710,12 @@ def api_update_z2m():
 
         except Exception as exc:
             _set("error", f"Error: {exc}")
+        finally:
+            if ws:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
 
     if z2m_update_status.get("state") == "running":
         return jsonify({"status": "error", "message": "Update already in progress"}), 409
