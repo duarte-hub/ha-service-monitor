@@ -174,6 +174,21 @@
       border-radius: 50%;
       animation: pulse 2s infinite;
     }
+    .version-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .vtag {
+      font-size: 0.71rem;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.05);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .vtag b { color: var(--text); font-weight: 500; }
     .footer {
       text-align: center;
       color: var(--text-muted);
@@ -221,6 +236,13 @@
       </div>
     </div>
     <div class="card-detail">{{ svc.detail }}</div>
+    {% if svc.versions %}
+    <div class="version-tags">
+      {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
+      {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
+      {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
+    </div>
+    {% endif %}
     {% if name == 'Zigbee2MQTT Edge' %}
     <div class="update-progress" id="z2m-progress"></div>
     {% endif %}

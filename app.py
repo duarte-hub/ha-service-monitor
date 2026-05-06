@@ -98,11 +98,13 @@ ADDON_CONFIG = {
         "update_entity": "update.zigbee2mqtt_update",
         "integration": None,
         "health_entity": "binary_sensor.zigbee2mqtt_bridge_connection_state",
+        "mqtt_prefix": os.environ.get("Z2M_MQTT_PREFIX", "zigbee2mqtt"),
     },
     "Zigbee2MQTT Edge": {
         "update_entity": "update.zigbee2mqtt_edge_update",
         "integration": None,
         "health_entity": "binary_sensor.zigbee2mqtt_bridge_connection_state_2",
+        "mqtt_prefix": os.environ.get("Z2M_EDGE_MQTT_PREFIX", "zigbee2mqtt2"),
     },
     "Mosquitto Broker": {
         "update_entity": "update.mosquitto_broker_update",
@@ -126,6 +128,54 @@ TEMP_WARN_THRESHOLD = float(os.environ.get("TEMP_WARN_THRESHOLD", "60"))
 
 # Cache of integration states from config entries
 _integration_states: dict[str, str] = {}
+
+# Cache of Z2M bridge/info payloads keyed by MQTT prefix
+_z2m_bridge_cache: dict[str, tuple[float, dict]] = {}
+_Z2M_BRIDGE_CACHE_TTL = 300  # seconds
+
+
+def _fetch_z2m_bridge_info(mqtt_prefix: str) -> dict:
+    """Connect to HA WebSocket and read the retained bridge/info payload for a Z2M instance."""
+    ws_url = HA_URL.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
+    ws = None
+    try:
+        ws = websocket.WebSocket()
+        ws.connect(ws_url, timeout=10)
+        ws.recv()  # auth_required
+        ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+        if json.loads(ws.recv()).get("type") != "auth_ok":
+            return {}
+        ws.send(json.dumps({"id": 1, "type": "mqtt/subscribe", "topic": f"{mqtt_prefix}/bridge/info"}))
+        ws.settimeout(5)
+        for _ in range(10):
+            try:
+                msg = json.loads(ws.recv())
+                if msg.get("type") == "event" and msg.get("id") == 1:
+                    payload = msg.get("event", {}).get("payload")
+                    if payload:
+                        return json.loads(payload)
+            except websocket.WebSocketTimeoutException:
+                break
+    except Exception as exc:
+        log.debug("Z2M bridge info(%s): %s", mqtt_prefix, exc)
+    finally:
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
+    return {}
+
+
+def get_z2m_bridge_info(mqtt_prefix: str) -> dict:
+    """Return cached Z2M bridge info, refreshing when stale."""
+    now = time.time()
+    cached = _z2m_bridge_cache.get(mqtt_prefix)
+    if cached and now - cached[0] < _Z2M_BRIDGE_CACHE_TTL:
+        return cached[1]
+    info = _fetch_z2m_bridge_info(mqtt_prefix)
+    _z2m_bridge_cache[mqtt_prefix] = (now, info)
+    return info
 
 
 def fmt_version(version: str) -> str:
@@ -314,6 +364,44 @@ def poll_once():
     refresh_integration_states()
     for name, config in ADDON_CONFIG.items():
         result = check_addon(config)
+
+        # Enrich Z2M services with library versions from MQTT bridge/info
+        mqtt_prefix = config.get("mqtt_prefix")
+        if mqtt_prefix and result.get("status") not in ("not_installed",):
+            info = get_z2m_bridge_info(mqtt_prefix)
+            if info:
+                versions: dict[str, str] = {}
+                bridge_ver = info.get("version", "")
+                commit = (info.get("commit") or "")
+                if commit == "unknown":
+                    commit = ""
+                commit = commit[:7]
+                if bridge_ver:
+                    versions["main"] = bridge_ver
+                if commit:
+                    versions["commit"] = commit
+                for vkey, field in [
+                    ("herdsman", "zigbee_herdsman"),
+                    ("converters", "zigbee_herdsman_converters"),
+                    ("frontend", "frontend"),
+                ]:
+                    d = info.get(field) or {}
+                    if isinstance(d, dict) and d.get("version"):
+                        versions[vkey] = d["version"]
+                if versions:
+                    result["versions"] = versions
+                    v = bridge_ver or result.get("version", "?")
+                    if v and v[0].isdigit():
+                        v = f"v{v}"
+                    new_detail = v + (f" · {commit}" if commit else "")
+                    orig = result.get("detail", "")
+                    for marker in [" (update to", " — bridge disconnected", " — port", " — integration"]:
+                        idx = orig.find(marker)
+                        if idx >= 0:
+                            new_detail += orig[idx:]
+                            break
+                    result["detail"] = new_detail
+
         services[name] = result
         if not result["ok"] and result["status"] != "not_installed":
             maybe_alert(f"addon_{name}", f"{name} is DOWN", result["detail"])
