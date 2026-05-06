@@ -61,7 +61,7 @@ monitor_state = {
     "ha_version": "",
 }
 state_lock = threading.Lock()
-z2m_update_status: dict = {"state": "idle", "message": ""}
+z2m_update_status: dict = {"state": "idle", "message": "", "log": []}
 alert_history: dict[str, float] = {}  # key -> last alert timestamp
 
 
@@ -587,12 +587,24 @@ def api_update_z2m():
 
     def _set(state, message):
         global z2m_update_status
-        z2m_update_status = {"state": state, "message": message}
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        entry = f"[{ts}] {message}"
+        prev_log = z2m_update_status.get("log", [])
+        z2m_update_status = {"state": state, "message": message, "log": prev_log + [entry]}
         log.info("Z2M update [%s]: %s", state, message)
+
+    def _dbg(msg):
+        global z2m_update_status
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        entry = f"[{ts}] {msg}"
+        prev = z2m_update_status.get("log", [])
+        z2m_update_status = {**z2m_update_status, "log": prev + [entry]}
+        log.info("Z2M dbg: %s", msg)
 
     def _ws_sup(method, endpoint, payload=None, timeout=60):
         """Open a fresh WebSocket, send one supervisor/api command, return result data."""
         ws_url = HA_URL.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
+        _dbg(f"WS {method} {endpoint}" + (f" payload={json.dumps(payload)[:200]}" if payload else ""))
         ws = websocket.WebSocket()
         try:
             ws.connect(ws_url, timeout=30)
@@ -606,7 +618,9 @@ def api_update_z2m():
             ws.send(json.dumps(cmd))
             ws.settimeout(timeout)
             while True:
-                resp = json.loads(ws.recv())
+                raw = ws.recv()
+                resp = json.loads(raw)
+                _dbg(f"WS recv id={resp.get('id')} type={resp.get('type')} success={resp.get('success')} result_keys={list(resp.get('result', {}).keys()) if isinstance(resp.get('result'), dict) else resp.get('result')}")
                 if resp.get("id") == 1 and resp.get("type") == "result":
                     if not resp.get("success"):
                         raise RuntimeError(
@@ -621,35 +635,41 @@ def api_update_z2m():
                 pass
 
     def _do_update():
+        import traceback
         try:
             # Step 1 — backup current options
             _set("running", "Backing up Z2M Edge config…")
             info = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
             saved_options = info.get("options", {})
+            _dbg(f"Backed up options: {json.dumps(saved_options)[:500]}")
             if not saved_options:
-                raise RuntimeError(f"Could not read addon options: {info}")
-            log.info("Z2M update: options backed up: %s", saved_options)
+                raise RuntimeError(f"Could not read addon options — full info: {info}")
+            _dbg(f"Addon state at backup: {info.get('state')}, version: {info.get('version')}")
 
             # Step 2 — uninstall
             _set("running", "Uninstalling Z2M Edge…")
-            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/uninstall")
+            uninstall_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/uninstall")
+            _dbg(f"Uninstall result: {uninstall_result}")
             time.sleep(3)
 
             # Step 3 — refresh store; give repos time to fetch before install
             _set("running", "Refreshing add-on store…")
-            _ws_sup("POST", "/store/reload")
+            reload_result = _ws_sup("POST", "/store/reload")
+            _dbg(f"Store reload result: {reload_result}")
+            _dbg("Waiting 30 s for store cache to warm…")
             time.sleep(30)
 
             # Step 4 — install latest; retry a few times in case store cache is still warming
             _set("running", "Installing latest Z2M Edge…")
             for install_attempt in range(3):
                 try:
-                    _ws_sup("POST", f"/store/addons/{Z2M_EDGE_SLUG}/install", timeout=300)
+                    install_result = _ws_sup("POST", f"/store/addons/{Z2M_EDGE_SLUG}/install", timeout=300)
+                    _dbg(f"Install result: {install_result}")
                     break
                 except Exception as ie:
-                    log.warning("Z2M update: install attempt %d failed: %s", install_attempt + 1, ie)
+                    _dbg(f"Install attempt {install_attempt + 1} error: {ie}")
                     if install_attempt < 2:
-                        _set("running", f"Install attempt {install_attempt + 1} failed, retrying…")
+                        _set("running", f"Install attempt {install_attempt + 1} failed — retrying in 15 s…")
                         time.sleep(15)
                     else:
                         raise
@@ -661,27 +681,28 @@ def api_update_z2m():
                 try:
                     chk = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
                     addon_state = chk.get("state", "")
-                    log.info("Z2M update: addon state = %s", addon_state)
+                    _dbg(f"Poll {attempt + 1}: addon state={addon_state}")
                     if addon_state in ("stopped", "started", "running"):
                         break
                 except Exception as e:
-                    log.warning("Z2M update: poll attempt %d: %s", attempt, e)
+                    _dbg(f"Poll {attempt + 1} error: {e}")
                 _set("running", f"Waiting for install… ({(attempt + 1) * 5}s)")
             else:
                 raise RuntimeError("Timed out waiting for addon to install")
 
-            # Step 6 — restore saved options exactly; set network port to Z2M_EDGE_PORT
+            # Step 6 — restore saved options; set network port binding
             _set("running", "Restoring config options…")
             options_payload: dict = {"options": saved_options}
             if Z2M_EDGE_PORT:
-                # Tell Supervisor which host port to bind the addon's web frontend to
                 options_payload["network"] = {"8485/tcp": Z2M_EDGE_PORT}
-                log.info("Z2M update: binding host port → %d", Z2M_EDGE_PORT)
-            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/options", options_payload)
+            _dbg(f"Options payload: {json.dumps(options_payload)[:500]}")
+            options_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/options", options_payload)
+            _dbg(f"Options result: {options_result}")
 
             # Step 7 — start
             _set("running", "Starting Z2M Edge…")
-            _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/start")
+            start_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/start")
+            _dbg(f"Start result: {start_result}")
 
             # Step 8 — wait for bridge to reconnect
             _set("running", "Waiting for Z2M Edge bridge to come online…")
@@ -689,16 +710,20 @@ def api_update_z2m():
                 time.sleep(5)
                 try:
                     data = ha_get("states/binary_sensor.zigbee2mqtt_bridge_connection_state_2")
-                    if data.get("state") == "on":
+                    bridge_state = data.get("state")
+                    _dbg(f"Bridge poll {attempt + 1}: state={bridge_state}")
+                    if bridge_state == "on":
                         _set("done", "Z2M Edge updated and reconnected!")
                         return
-                except Exception:
-                    pass
+                except Exception as e:
+                    _dbg(f"Bridge poll {attempt + 1} error: {e}")
                 _set("running", f"Waiting for bridge… ({(attempt + 1) * 5}s)")
 
             _set("done", "Z2M Edge installed and started — bridge may still be connecting.")
 
         except Exception as exc:
+            tb = traceback.format_exc()
+            _dbg(f"EXCEPTION:\n{tb}")
             _set("error", f"Error: {exc}")
 
     if z2m_update_status.get("state") == "running":
