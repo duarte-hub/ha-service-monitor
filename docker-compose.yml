@@ -34,3 +34,8 @@ services:
       # Z2M_ADDON_SLUG: "45df7312_zigbee2mqtt"
       # Z2M_EDGE_ADDON_SLUG: "45df7312_zigbee2mqtt_edge"
       # MQTT_ADDON_SLUG: "core_mosquitto"
+    volumes:
+      - ha-monitor-data:/data
+
+volumes:
+  ha-monitor-data:
