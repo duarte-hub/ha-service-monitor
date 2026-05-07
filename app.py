@@ -7,21 +7,19 @@ Provides a live web dashboard and email alerts.
 import os
 import time
 import json
-import base64
 import logging
 import smtplib
 import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urlencode
 
 import socket
 import subprocess
 
 import websocket
 import requests
-from flask import Flask, render_template, jsonify, request, redirect
+from flask import Flask, render_template, jsonify, request
 
 # ---------------------------------------------------------------------------
 # Configuration (all via environment variables)
@@ -127,89 +125,7 @@ _CONFIG_FIELDS = {
     "email_from":        {"label": "Email from",          "default": EMAIL_FROM},
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
     "alert_cooldown":    {"label": "Alert cooldown (s)",  "default": str(ALERT_COOLDOWN)},
-    "gmail_client_id":   {"label": "Gmail Client ID",     "default": ""},
-    "gmail_client_secret": {"label": "Gmail Client Secret", "default": "", "secret": True},
 }
-
-# ---------------------------------------------------------------------------
-# Gmail OAuth2
-# ---------------------------------------------------------------------------
-_GMAIL_TOKEN_PATH = os.environ.get("GMAIL_TOKEN_PATH", "/data/gmail_token.json")
-_GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-_GMAIL_SEND_URL   = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
-_GMAIL_SCOPE      = "https://www.googleapis.com/auth/gmail.send"
-
-def _load_gmail_token() -> dict | None:
-    try:
-        with open(_GMAIL_TOKEN_PATH) as fh:
-            return json.load(fh)
-    except Exception:
-        return None
-
-def _save_gmail_token(data: dict) -> None:
-    try:
-        os.makedirs(os.path.dirname(_GMAIL_TOKEN_PATH), exist_ok=True)
-        with open(_GMAIL_TOKEN_PATH, "w") as fh:
-            json.dump(data, fh, indent=2)
-    except Exception as e:
-        log.error("Failed to save Gmail token: %s", e)
-
-def _get_gmail_access_token() -> str | None:
-    token = _load_gmail_token()
-    if not token or not token.get("refresh_token"):
-        return None
-    if time.time() > token.get("expires_at", 0) - 60:
-        try:
-            r = requests.post(_GOOGLE_TOKEN_URL, data={
-                "client_id":     _runtime_config.get("gmail_client_id", ""),
-                "client_secret": _runtime_config.get("gmail_client_secret", ""),
-                "refresh_token": token["refresh_token"],
-                "grant_type":    "refresh_token",
-            }, timeout=10)
-            r.raise_for_status()
-            new = r.json()
-            token["access_token"] = new["access_token"]
-            token["expires_at"]   = time.time() + new.get("expires_in", 3600)
-            _save_gmail_token(token)
-        except Exception as e:
-            log.error("Gmail token refresh failed: %s", e)
-            return None
-    return token.get("access_token")
-
-def send_email_gmail(to: str, subject: str, body: str) -> None:
-    access_token = _get_gmail_access_token()
-    if not access_token:
-        raise RuntimeError("Gmail not authorised — connect via Settings")
-    msg = MIMEText(body, "plain")
-    msg["To"]      = to
-    msg["Subject"] = subject
-    raw  = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    resp = requests.post(
-        _GMAIL_SEND_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"raw": raw},
-        timeout=10,
-    )
-    resp.raise_for_status()
-
-def send_email(to: str, subject: str, body: str) -> None:
-    """Send via Gmail OAuth if configured, otherwise SMTP."""
-    if _load_gmail_token() and _load_gmail_token().get("refresh_token"):
-        send_email_gmail(to, subject, body)
-        return
-    if not SMTP_HOST:
-        raise RuntimeError("No email method configured")
-    msg = MIMEMultipart()
-    msg["From"]    = EMAIL_FROM or SMTP_USER
-    msg["To"]      = to
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
-        s.starttls()
-        if SMTP_USER and SMTP_PASS:
-            s.login(SMTP_USER, SMTP_PASS)
-        s.sendmail(msg["From"], [to], msg.as_string())
 
 def _load_config() -> dict:
     try:
@@ -811,86 +727,21 @@ def api_test_push():
 @app.route("/api/test_email", methods=["POST"])
 def api_test_email():
     try:
-        to = EMAIL_TO
-        gmail = _load_gmail_token()
-        if gmail and gmail.get("refresh_token") and not to:
-            to = gmail.get("email", "")
-        if not to:
-            return jsonify({"ok": False, "error": "Set 'Email to' in settings"})
-        send_email(to, "HA Monitor — test email", "HA Monitor email alerts are working.")
+        if not SMTP_HOST or not EMAIL_TO:
+            return jsonify({"ok": False, "error": "SMTP host and Email to are required"})
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_FROM or SMTP_USER
+        msg["To"] = EMAIL_TO
+        msg["Subject"] = "HA Monitor — test email"
+        msg.attach(MIMEText("HA Monitor email alerts are working.", "plain"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+            s.starttls()
+            if SMTP_USER and SMTP_PASS:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(msg["From"], [EMAIL_TO], msg.as_string())
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
-
-
-@app.route("/oauth/gmail/start")
-def oauth_gmail_start():
-    client_id = _runtime_config.get("gmail_client_id", "")
-    if not client_id:
-        return "Gmail Client ID not set — save it in Settings first.", 400
-    redirect_uri = request.url_root.rstrip("/") + "/oauth/gmail/callback"
-    url = _GOOGLE_AUTH_URL + "?" + urlencode({
-        "client_id":     client_id,
-        "redirect_uri":  redirect_uri,
-        "response_type": "code",
-        "scope":         _GMAIL_SCOPE,
-        "access_type":   "offline",
-        "prompt":        "consent",
-    })
-    return redirect(url)
-
-
-@app.route("/oauth/gmail/callback")
-def oauth_gmail_callback():
-    error = request.args.get("error")
-    if error:
-        return redirect(f"/config?gmail_error={error}")
-    code = request.args.get("code")
-    if not code:
-        return redirect("/config?gmail_error=no_code")
-    redirect_uri = request.url_root.rstrip("/") + "/oauth/gmail/callback"
-    try:
-        r = requests.post(_GOOGLE_TOKEN_URL, data={
-            "client_id":     _runtime_config.get("gmail_client_id", ""),
-            "client_secret": _runtime_config.get("gmail_client_secret", ""),
-            "code":          code,
-            "grant_type":    "authorization_code",
-            "redirect_uri":  redirect_uri,
-        }, timeout=10)
-        r.raise_for_status()
-        tokens = r.json()
-        token_data = {
-            "access_token":  tokens["access_token"],
-            "refresh_token": tokens.get("refresh_token"),
-            "expires_at":    time.time() + tokens.get("expires_in", 3600),
-            "email":         None,
-        }
-        ui = requests.get("https://www.googleapis.com/oauth2/v2/userinfo",
-                          headers={"Authorization": f"Bearer {token_data['access_token']}"},
-                          timeout=5)
-        if ui.ok:
-            token_data["email"] = ui.json().get("email")
-        _save_gmail_token(token_data)
-        return redirect("/config?gmail=connected")
-    except Exception as e:
-        return redirect(f"/config?gmail_error={e}")
-
-
-@app.route("/oauth/gmail/status")
-def oauth_gmail_status():
-    token = _load_gmail_token()
-    if token and token.get("refresh_token"):
-        return jsonify({"connected": True, "email": token.get("email")})
-    return jsonify({"connected": False, "email": None})
-
-
-@app.route("/oauth/gmail/disconnect", methods=["POST"])
-def oauth_gmail_disconnect():
-    try:
-        os.remove(_GMAIL_TOKEN_PATH)
-    except Exception:
-        pass
-    return jsonify({"ok": True})
 
 
 @app.route("/api/z2m_backup")
