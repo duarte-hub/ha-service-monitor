@@ -120,6 +120,7 @@ alerts_enabled = _load_alerts_enabled()
 # ---------------------------------------------------------------------------
 SCAN_NETWORK  = os.environ.get("SCAN_NETWORK", "")   # e.g. 192.168.0.0/24
 PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "30"))
+GDRIVE_TOKEN_PATH = os.environ.get("GDRIVE_TOKEN_PATH", "/data/gdrive_token.json")
 
 _DEVICES_PATH = os.environ.get("DEVICES_PATH", "/data/devices.json")
 _devices: dict[str, dict] = {}
@@ -244,6 +245,117 @@ def _ping_monitored() -> None:
             log.info("Device %s (%s) is back online", label, ip)
 
 # ---------------------------------------------------------------------------
+# Google Drive backup (device-flow OAuth, no redirect URI needed)
+# ---------------------------------------------------------------------------
+_gdrive_auth_state: dict = {"state": "idle"}  # idle | pending | done | error
+
+def _gdrive_token_data() -> dict:
+    try:
+        with open(GDRIVE_TOKEN_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+def _gdrive_connected() -> bool:
+    return bool(_gdrive_token_data().get("refresh_token"))
+
+def _gdrive_access_token() -> str | None:
+    client_id     = _runtime_config.get("gdrive_client_id", "")
+    client_secret = _runtime_config.get("gdrive_client_secret", "")
+    if not client_id or not client_secret:
+        return None
+    data = _gdrive_token_data()
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        return None
+    r = requests.post("https://oauth2.googleapis.com/token", data={
+        "client_id": client_id, "client_secret": client_secret,
+        "refresh_token": refresh_token, "grant_type": "refresh_token",
+    }, timeout=15)
+    if r.ok:
+        return r.json().get("access_token")
+    log.error("GDrive token refresh failed: %s", r.text)
+    return None
+
+def _gdrive_upload(token: str, filename: str, content: bytes) -> None:
+    headers   = {"Authorization": f"Bearer {token}"}
+    folder_id = _runtime_config.get("gdrive_folder_id", "")
+    q = f"name='{filename}' and trashed=false"
+    if folder_id:
+        q += f" and '{folder_id}' in parents"
+    search = requests.get("https://www.googleapis.com/drive/v3/files",
+                          headers=headers, params={"q": q, "fields": "files(id)"}, timeout=15)
+    files = search.json().get("files", []) if search.ok else []
+    boundary = "ha_monitor_bnd"
+    meta = {"name": filename, "mimeType": "application/json"}
+    if folder_id and not files:
+        meta["parents"] = [folder_id]
+    body = (
+        f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+        f"{json.dumps(meta)}\r\n"
+        f"--{boundary}\r\nContent-Type: application/json\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--".encode()
+    ct = f"multipart/related; boundary={boundary}"
+    if files:
+        r = requests.patch(
+            f"https://www.googleapis.com/upload/drive/v3/files/{files[0]['id']}",
+            headers={**headers, "Content-Type": ct}, data=body,
+            params={"uploadType": "multipart"}, timeout=30)
+    else:
+        r = requests.post(
+            "https://www.googleapis.com/upload/drive/v3/files",
+            headers={**headers, "Content-Type": ct}, data=body,
+            params={"uploadType": "multipart"}, timeout=30)
+    r.raise_for_status()
+
+def _gdrive_do_backup() -> tuple[bool, str]:
+    try:
+        token = _gdrive_access_token()
+        if not token:
+            return False, "Not connected to Google Drive"
+        backed = []
+        for path in [_DEVICES_PATH, _CONFIG_PATH, _ALERTS_STATE_PATH]:
+            if os.path.exists(path):
+                with open(path, "rb") as fh:
+                    content = fh.read()
+                _gdrive_upload(token, f"ha-monitor-{os.path.basename(path)}", content)
+                backed.append(os.path.basename(path))
+        log.info("GDrive backup complete: %s", ", ".join(backed))
+        return True, f"Backed up: {', '.join(backed)}"
+    except Exception as e:
+        log.error("GDrive backup failed: %s", e)
+        return False, str(e)
+
+def _gdrive_poll_auth(device_code: str, expires_at: float, interval: int) -> None:
+    global _gdrive_auth_state
+    client_id     = _runtime_config.get("gdrive_client_id", "")
+    client_secret = _runtime_config.get("gdrive_client_secret", "")
+    while time.time() < expires_at:
+        time.sleep(interval)
+        try:
+            r = requests.post("https://oauth2.googleapis.com/token", data={
+                "client_id": client_id, "client_secret": client_secret,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            }, timeout=15)
+            d = r.json()
+            if r.ok and d.get("access_token"):
+                os.makedirs(os.path.dirname(GDRIVE_TOKEN_PATH), exist_ok=True)
+                with open(GDRIVE_TOKEN_PATH, "w") as fh:
+                    json.dump({"access_token": d["access_token"],
+                               "refresh_token": d.get("refresh_token", "")}, fh)
+                _gdrive_auth_state = {"state": "done"}
+                log.info("GDrive: authorised")
+                return
+            err = d.get("error", "")
+            if err in ("expired_token", "access_denied"):
+                _gdrive_auth_state = {"state": "error", "message": err}
+                return
+        except Exception as e:
+            log.error("GDrive auth poll: %s", e)
+    _gdrive_auth_state = {"state": "error", "message": "Authorization expired"}
+
+# ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
 # ---------------------------------------------------------------------------
 _CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/monitor_config.json")
@@ -255,8 +367,11 @@ _CONFIG_FIELDS = {
     "smtp_pass":         {"label": "SMTP password",       "default": SMTP_PASS, "secret": True},
     "email_from":        {"label": "Email from",          "default": EMAIL_FROM},
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
-    "alert_cooldown":       {"label": "Alert cooldown (s)",  "default": str(ALERT_COOLDOWN)},
-    "email_alerts_enabled": {"label": "Email alerts enabled", "default": "false"},
+    "alert_cooldown":         {"label": "Alert cooldown (s)",              "default": str(ALERT_COOLDOWN)},
+    "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
+    "gdrive_client_id":       {"label": "Google Drive OAuth client ID",    "default": ""},
+    "gdrive_client_secret":   {"label": "Google Drive OAuth client secret","default": "", "secret": True},
+    "gdrive_folder_id":       {"label": "Google Drive folder ID (optional)","default": ""},
 }
 
 def _load_config() -> dict:
@@ -869,6 +984,58 @@ def api_update():
 @app.route("/api/z2m_update_status")
 def api_z2m_update_status():
     return jsonify(z2m_update_status)
+
+
+@app.route("/api/gdrive/status")
+def api_gdrive_status():
+    return jsonify({
+        "connected":    _gdrive_connected(),
+        "auth_state":   _gdrive_auth_state.get("state", "idle"),
+        "user_code":    _gdrive_auth_state.get("user_code"),
+        "verification_url": _gdrive_auth_state.get("verification_url"),
+    })
+
+
+@app.route("/api/gdrive/auth", methods=["POST"])
+def api_gdrive_auth():
+    global _gdrive_auth_state
+    client_id = _runtime_config.get("gdrive_client_id", "")
+    if not client_id:
+        return jsonify({"ok": False, "error": "Save client ID first"}), 400
+    r = requests.post("https://oauth2.googleapis.com/device/code", data={
+        "client_id": client_id,
+        "scope": "https://www.googleapis.com/auth/drive.file",
+    }, timeout=15)
+    if not r.ok:
+        return jsonify({"ok": False, "error": r.text}), 400
+    d = r.json()
+    _gdrive_auth_state = {
+        "state": "pending",
+        "device_code":      d["device_code"],
+        "user_code":        d["user_code"],
+        "verification_url": d["verification_url"],
+    }
+    threading.Thread(
+        target=_gdrive_poll_auth,
+        args=(d["device_code"], time.time() + d["expires_in"], d.get("interval", 5)),
+        daemon=True,
+    ).start()
+    return jsonify({"ok": True, "user_code": d["user_code"], "verification_url": d["verification_url"]})
+
+
+@app.route("/api/gdrive/backup", methods=["POST"])
+def api_gdrive_backup():
+    ok, msg = _gdrive_do_backup()
+    return jsonify({"ok": ok, "message": msg})
+
+
+@app.route("/api/gdrive/disconnect", methods=["POST"])
+def api_gdrive_disconnect():
+    try:
+        os.remove(GDRIVE_TOKEN_PATH)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
 
 
 @app.route("/api/alerts_enabled", methods=["GET", "POST"])

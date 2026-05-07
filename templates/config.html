@@ -28,6 +28,13 @@
     .status-msg { font-size:.82rem; }
     .status-msg.ok  { color:var(--green); }
     .status-msg.err { color:var(--red); }
+    .code-box { background:rgba(0,0,0,.35); border:1px solid var(--border); border-radius:8px; padding:14px 18px; margin:12px 0; }
+    .code-box .code { font-family:'SF Mono','Fira Code',monospace; font-size:1.5rem; font-weight:700; color:#fff; letter-spacing:.12em; }
+    .code-box .url  { font-size:.78rem; color:var(--primary); margin-top:6px; word-break:break-all; }
+    .gdrive-status { display:flex; align-items:center; gap:8px; font-size:.85rem; }
+    .gdrive-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; background:var(--text-muted); }
+    .gdrive-dot.on  { background:var(--green); }
+    .gdrive-dot.off { background:var(--text-muted); }
   </style>
 </head>
 <body>
@@ -99,6 +106,63 @@
     </div>
   </div>
 
+  <div class="section-title">Google Drive Backup</div>
+
+  <!-- setup instructions (collapsed) -->
+  <details style="margin-bottom:12px;color:var(--text-muted);font-size:.8rem">
+    <summary style="cursor:pointer;color:var(--primary);font-size:.82rem;margin-bottom:6px">Setup instructions</summary>
+    <ol style="padding-left:18px;line-height:1.9;margin-top:8px">
+      <li>Go to <strong>console.cloud.google.com</strong> → create or select a project</li>
+      <li>Enable <strong>Google Drive API</strong></li>
+      <li>APIs &amp; Services → Credentials → Create Credentials → <strong>OAuth client ID</strong></li>
+      <li>Application type: <strong>TVs and Limited Input Devices</strong></li>
+      <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> below and save</li>
+      <li>Click <strong>Connect Google Drive</strong> — a code will appear</li>
+      <li>Open the URL shown, enter the code, and grant access</li>
+    </ol>
+  </details>
+
+  <div class="card">
+    <div class="field">
+      <label>OAuth Client ID</label>
+      <input type="text" id="gdrive_client_id" placeholder="xxxx.apps.googleusercontent.com">
+    </div>
+    <div class="field">
+      <label>OAuth Client Secret</label>
+      <input type="password" id="gdrive_client_secret">
+      <span class="show-pass" onclick="toggleGSecret()">show</span>
+    </div>
+    <div class="field">
+      <label>Backup folder ID (optional — leave blank for Drive root)</label>
+      <input type="text" id="gdrive_folder_id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveGDrive()">Save</button>
+      <span class="status-msg" id="gdrive-save-status"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:-8px">
+    <div class="gdrive-status" id="gdrive-connection-status">
+      <span class="gdrive-dot off" id="gdrive-dot"></span>
+      <span id="gdrive-label">Checking…</span>
+    </div>
+
+    <!-- pending: show the user code -->
+    <div id="gdrive-code-box" class="code-box" style="display:none">
+      <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:6px">Open the URL below and enter this code:</div>
+      <div class="code" id="gdrive-user-code"></div>
+      <div class="url"><a id="gdrive-verify-url" href="" target="_blank" style="color:var(--primary)"></a></div>
+    </div>
+
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-primary" id="btn-gdrive-connect" onclick="gdriveConnect()">Connect Google Drive</button>
+      <button class="btn btn-secondary" id="btn-gdrive-backup" onclick="gdriveBackup()" style="display:none">Backup Now</button>
+      <button class="btn btn-secondary" id="btn-gdrive-disconnect" onclick="gdriveDisconnect()" style="display:none">Disconnect</button>
+      <span class="status-msg" id="gdrive-status"></span>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -106,17 +170,20 @@
     try {
       const r = await fetch('/api/config');
       const d = await r.json();
-      set('notify_service', d.notify_service || '');
-      set('alert_cooldown', d.alert_cooldown || '300');
-      set('smtp_host',      d.smtp_host      || '');
-      set('smtp_port',      d.smtp_port      || '587');
-      set('smtp_user',      d.smtp_user      || '');
-      set('email_from',     d.email_from     || '');
-      set('email_to',       d.email_to       || '');
+      set('notify_service',    d.notify_service    || '');
+      set('alert_cooldown',    d.alert_cooldown    || '300');
+      set('smtp_host',         d.smtp_host         || '');
+      set('smtp_port',         d.smtp_port         || '587');
+      set('smtp_user',         d.smtp_user         || '');
+      set('email_from',        d.email_from        || '');
+      set('email_to',          d.email_to          || '');
+      set('gdrive_client_id',  d.gdrive_client_id  || '');
+      set('gdrive_folder_id',  d.gdrive_folder_id  || '');
       const on = String(d.email_alerts_enabled).toLowerCase() === 'true';
       document.getElementById('email_alerts_enabled').checked = on;
       document.getElementById('email-toggle-label').textContent = on ? 'On' : 'Off';
     } catch (_) {}
+    refreshGDriveStatus();
   }
 
   async function saveEmailToggle() {
@@ -162,7 +229,85 @@
     el.textContent = msg; el.className = 'status-msg ' + cls;
     setTimeout(() => { el.textContent = ''; el.className = 'status-msg'; }, 4000);
   }
-  function togglePass() { const el = document.getElementById('smtp_pass'); el.type = el.type === 'password' ? 'text' : 'password'; }
+  function togglePass()    { const el = document.getElementById('smtp_pass');    el.type = el.type === 'password' ? 'text' : 'password'; }
+  function toggleGSecret() { const el = document.getElementById('gdrive_client_secret'); el.type = el.type === 'password' ? 'text' : 'password'; }
+
+  async function saveGDrive() {
+    const payload = {gdrive_client_id: val('gdrive_client_id'), gdrive_folder_id: val('gdrive_folder_id')};
+    const s = val('gdrive_client_secret'); if (s) payload.gdrive_client_secret = s;
+    await post(payload);
+    flash('gdrive-save-status', 'Saved', 'ok');
+  }
+
+  let _gdrivePoller = null;
+
+  async function refreshGDriveStatus() {
+    try {
+      const d = await (await fetch('/api/gdrive/status')).json();
+      const dot   = document.getElementById('gdrive-dot');
+      const label = document.getElementById('gdrive-label');
+      const codebox = document.getElementById('gdrive-code-box');
+      const btnConnect    = document.getElementById('btn-gdrive-connect');
+      const btnBackup     = document.getElementById('btn-gdrive-backup');
+      const btnDisconnect = document.getElementById('btn-gdrive-disconnect');
+
+      if (d.connected) {
+        dot.className = 'gdrive-dot on';
+        label.textContent = 'Connected to Google Drive';
+        codebox.style.display = 'none';
+        btnConnect.style.display    = 'none';
+        btnBackup.style.display     = '';
+        btnDisconnect.style.display = '';
+        if (_gdrivePoller) { clearInterval(_gdrivePoller); _gdrivePoller = null; }
+      } else if (d.auth_state === 'pending') {
+        dot.className = 'gdrive-dot off';
+        label.textContent = 'Waiting for authorisation…';
+        document.getElementById('gdrive-user-code').textContent = d.user_code || '';
+        const link = document.getElementById('gdrive-verify-url');
+        link.href = d.verification_url || '#'; link.textContent = d.verification_url || '';
+        codebox.style.display = '';
+        btnConnect.style.display    = 'none';
+        btnBackup.style.display     = 'none';
+        btnDisconnect.style.display = 'none';
+      } else if (d.auth_state === 'error') {
+        dot.className = 'gdrive-dot off';
+        label.textContent = 'Authorisation failed — try again';
+        codebox.style.display = 'none';
+        btnConnect.style.display    = '';
+        btnBackup.style.display     = 'none';
+        btnDisconnect.style.display = 'none';
+        if (_gdrivePoller) { clearInterval(_gdrivePoller); _gdrivePoller = null; }
+      } else {
+        dot.className = 'gdrive-dot off';
+        label.textContent = 'Not connected';
+        codebox.style.display = 'none';
+        btnConnect.style.display    = '';
+        btnBackup.style.display     = 'none';
+        btnDisconnect.style.display = 'none';
+      }
+    } catch(_) {}
+  }
+
+  async function gdriveConnect() {
+    const r = await fetch('/api/gdrive/auth', {method:'POST'});
+    const d = await r.json();
+    if (!d.ok) { flash('gdrive-status', 'Error: ' + d.error, 'err'); return; }
+    refreshGDriveStatus();
+    if (_gdrivePoller) clearInterval(_gdrivePoller);
+    _gdrivePoller = setInterval(refreshGDriveStatus, 3000);
+  }
+
+  async function gdriveBackup() {
+    flash('gdrive-status', 'Backing up…', '');
+    const r = await fetch('/api/gdrive/backup', {method:'POST'});
+    const d = await r.json();
+    flash('gdrive-status', d.ok ? d.message : 'Error: ' + d.message, d.ok ? 'ok' : 'err');
+  }
+
+  async function gdriveDisconnect() {
+    await fetch('/api/gdrive/disconnect', {method:'POST'});
+    refreshGDriveStatus();
+  }
 
   loadConfig();
 </script>
