@@ -61,7 +61,23 @@ monitor_state = {
     "ha_version": "",
 }
 state_lock = threading.Lock()
-z2m_update_status: dict = {"state": "idle", "message": "", "log": []}
+_Z2M_STATUS_PATH = os.environ.get("Z2M_STATUS_PATH", "/data/z2m_last_update_status.json")
+def _load_z2m_status() -> dict:
+    try:
+        with open(_Z2M_STATUS_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return {"state": "idle", "message": "", "log": []}
+
+def _persist_z2m_status(status: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_Z2M_STATUS_PATH), exist_ok=True)
+        with open(_Z2M_STATUS_PATH, "w") as fh:
+            json.dump(status, fh)
+    except Exception:
+        pass
+
+z2m_update_status: dict = _load_z2m_status()
 alert_history: dict[str, float] = {}  # key -> last alert timestamp
 
 
@@ -602,6 +618,8 @@ def api_update_z2m():
         prev_log = z2m_update_status.get("log", [])
         z2m_update_status = {"state": state, "message": message, "log": prev_log + [entry]}
         log.info("Z2M update [%s]: %s", state, message)
+        if state in ("error", "done"):
+            _persist_z2m_status(z2m_update_status)
 
     def _dbg(msg):
         global z2m_update_status

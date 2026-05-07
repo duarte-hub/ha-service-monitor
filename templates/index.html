@@ -304,6 +304,66 @@
   // Z2M Edge update
   window._z2mUpdating = false;
 
+  const _z2mMsgEl  = document.getElementById('z2m-msg');
+  const _z2mLogEl  = document.getElementById('z2m-log');
+  function setMsg(msg) { _z2mMsgEl.textContent = msg; }
+  function setLog(lines) {
+    if (!lines || !lines.length) return;
+    _z2mLogEl.innerHTML = lines.map(l => {
+      const cls = l.includes('error') || l.includes('Error') || l.includes('EXCEPTION') ? ' class="log-err"' : '';
+      return `<div${cls}>${l.replace(/</g,'&lt;')}</div>`;
+    }).join('');
+    _z2mLogEl.scrollTop = _z2mLogEl.scrollHeight;
+  }
+
+  // Restore any previous update log on page load
+  (async () => {
+    try {
+      const r = await fetch('/api/z2m_update_status');
+      const d = await r.json();
+      if (d.log && d.log.length) {
+        document.getElementById('z2m-progress').style.display = 'block';
+        setMsg(d.message || '');
+        setLog(d.log);
+        if (d.state === 'running') {
+          // Update is still in progress \u2014 resume polling
+          window._z2mUpdating = true;
+          document.getElementById('btn-z2m').disabled = true;
+          _resumePoller();
+        }
+      }
+    } catch (_) {}
+  })();
+
+  function _resumePoller() {
+    let attempts = 0;
+    const btn = document.getElementById('btn-z2m');
+    const poller = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await fetch('/api/z2m_update_status');
+        const d = await r.json();
+        setMsg(d.message || 'Working\u2026');
+        if (d.log) setLog(d.log);
+        if (d.state === 'done') {
+          clearInterval(poller);
+          window._z2mUpdating = false;
+          setTimeout(() => location.reload(), 3000);
+        } else if (d.state === 'error') {
+          clearInterval(poller);
+          btn.disabled = false;
+          window._z2mUpdating = false;
+        }
+      } catch (_) {}
+      if (attempts > 120) {
+        clearInterval(poller);
+        setMsg('Timed out \u2014 check HA logs');
+        btn.disabled = false;
+        window._z2mUpdating = false;
+      }
+    }, 5000);
+  }
+
   async function updateZ2M() {
     if (window._z2mUpdating) return;
     window._z2mUpdating = true;
@@ -311,18 +371,6 @@
     const progress = document.getElementById('z2m-progress');
     btn.disabled = true;
     progress.style.display = 'block';
-
-    const msgEl  = document.getElementById('z2m-msg');
-    const logEl  = document.getElementById('z2m-log');
-    function setMsg(msg) { msgEl.textContent = msg; }
-    function setLog(lines) {
-      if (!lines || !lines.length) return;
-      logEl.innerHTML = lines.map(l => {
-        const cls = l.includes('error') || l.includes('Error') || l.includes('EXCEPTION') ? ' class="log-err"' : '';
-        return `<div${cls}>${l.replace(/</g,'&lt;')}</div>`;
-      }).join('');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
 
     setMsg('Backing up config\u2026');
     try {
@@ -342,31 +390,7 @@
     }
 
     setMsg('Update started \u2014 waiting for Z2M Edge to restart\u2026');
-    let attempts = 0;
-    const poller = setInterval(async () => {
-      attempts++;
-      try {
-        const r = await fetch('/api/z2m_update_status');
-        const d = await r.json();
-        setMsg(d.message || 'Working\u2026');
-        if (d.log) setLog(d.log);
-        if (d.state === 'done') {
-          clearInterval(poller);
-          window._z2mUpdating = false;
-          setTimeout(() => location.reload(), 1500);
-        } else if (d.state === 'error') {
-          clearInterval(poller);
-          btn.disabled = false;
-          window._z2mUpdating = false;
-        }
-      } catch (_) {}
-      if (attempts > 120) {
-        clearInterval(poller);
-        setMsg('Timed out \u2014 check HA logs');
-        btn.disabled = false;
-        window._z2mUpdating = false;
-      }
-    }, 5000);
+    _resumePoller();
   }
 </script>
 
