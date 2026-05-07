@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA Monitor — Logs</title>
+  <style>
+    :root { --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12); --text:#e1e1e1; --text-muted:#9b9b9b; --primary:#03a9f4; --green:#4caf50; --red:#db4437; --yellow:#ff9800; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; }
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; font-size:1.1rem; font-weight:600; flex-shrink:0; }
+    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
+    .topbar a { color:#fff; text-decoration:none; opacity:.85; }
+    .topbar a:hover { opacity:1; }
+    .toolbar { padding:12px 20px; background:var(--card-bg); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; flex-shrink:0; }
+    .toolbar input { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:.82rem; padding:5px 10px; outline:none; width:220px; }
+    .toolbar input:focus { border-color:var(--primary); }
+    .btn { background:rgba(255,255,255,.07); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:5px 13px; font-size:.8rem; cursor:pointer; }
+    .btn:hover { background:rgba(255,255,255,.12); }
+    .btn.active { background:var(--primary); border-color:var(--primary); color:#fff; }
+    .log-wrap { flex:1; overflow-y:auto; padding:12px 20px; font-family:'SF Mono','Fira Code',monospace; font-size:.77rem; }
+    .line { padding:1px 0; white-space:pre-wrap; word-break:break-all; color:var(--text-muted); border-bottom:1px solid rgba(255,255,255,.03); }
+    .line.err  { color:var(--red); }
+    .line.warn { color:var(--yellow); }
+    .line.info { color:var(--text-muted); }
+    .line.mark { background:rgba(3,169,244,.12); color:var(--text); }
+    .status { font-size:.75rem; opacity:.7; }
+    #scroll-btn { position:fixed; bottom:20px; right:20px; background:var(--primary); color:#fff; border:none; border-radius:20px; padding:7px 16px; font-size:.8rem; cursor:pointer; display:none; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span>Application Logs</span>
+  <div class="topbar-right">
+    <span class="status" id="status">loading…</span>
+    <a href="/config">Settings</a>
+    <a href="/">&larr; Dashboard</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" id="filter" placeholder="Filter…" oninput="renderLines()">
+  <button class="btn" id="btn-err"  onclick="toggleLevel('ERROR')">Errors</button>
+  <button class="btn" id="btn-warn" onclick="toggleLevel('WARNING')">Warnings</button>
+  <button class="btn" id="btn-tail" onclick="toggleTail()" id="btn-tail">Tail: on</button>
+  <button class="btn" onclick="clearFilter()">Clear filter</button>
+</div>
+
+<div class="log-wrap" id="log-wrap"></div>
+<button id="scroll-btn" onclick="scrollToBottom()">&#8595; Jump to bottom</button>
+
+<script>
+  let allLines = [];
+  let tailing = true;
+  let levelFilter = new Set();
+
+  const wrap = document.getElementById('log-wrap');
+  const filterEl = document.getElementById('filter');
+  const statusEl = document.getElementById('status');
+  const scrollBtn = document.getElementById('scroll-btn');
+
+  wrap.addEventListener('scroll', () => {
+    const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 40;
+    scrollBtn.style.display = atBottom ? 'none' : 'block';
+  });
+
+  function scrollToBottom() { wrap.scrollTop = wrap.scrollHeight; }
+
+  function toggleTail() {
+    tailing = !tailing;
+    const btn = document.getElementById('btn-tail');
+    btn.textContent = 'Tail: ' + (tailing ? 'on' : 'off');
+    btn.className = 'btn' + (tailing ? ' active' : '');
+  }
+
+  function toggleLevel(lvl) {
+    if (levelFilter.has(lvl)) levelFilter.delete(lvl);
+    else levelFilter.add(lvl);
+    document.getElementById('btn-' + lvl.toLowerCase().replace('warning','warn')).className =
+      'btn' + (levelFilter.has(lvl) ? ' active' : '');
+    renderLines();
+  }
+
+  function clearFilter() {
+    filterEl.value = '';
+    levelFilter.clear();
+    document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('btn-tail').className = 'btn' + (tailing ? ' active' : '');
+    renderLines();
+  }
+
+  function classFor(line) {
+    if (line.includes('[ERROR]'))   return 'err';
+    if (line.includes('[WARNING]')) return 'warn';
+    return 'info';
+  }
+
+  function renderLines() {
+    const q = filterEl.value.toLowerCase();
+    const fragment = document.createDocumentFragment();
+    for (const l of allLines) {
+      const cls = classFor(l);
+      if (levelFilter.size && !levelFilter.has(cls === 'err' ? 'ERROR' : cls === 'warn' ? 'WARNING' : '')) continue;
+      if (q && !l.toLowerCase().includes(q)) continue;
+      const div = document.createElement('div');
+      div.className = 'line ' + cls;
+      div.textContent = l;
+      fragment.appendChild(div);
+    }
+    wrap.innerHTML = '';
+    wrap.appendChild(fragment);
+    if (tailing) scrollToBottom();
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/api/logs?n=500');
+      const d = await r.json();
+      const prev = allLines.length;
+      allLines = d.lines;
+      statusEl.textContent = allLines.length + ' lines';
+      if (allLines.length !== prev) renderLines();
+    } catch (_) { statusEl.textContent = 'error'; }
+  }
+
+  poll();
+  setInterval(poll, 3000);
+
+  // Initial tail button state
+  document.getElementById('btn-tail').className = 'btn active';
+</script>
+</body>
+</html>

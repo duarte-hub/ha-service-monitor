@@ -36,15 +36,28 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", SMTP_USER)
 EMAIL_TO = os.environ.get("EMAIL_TO", "")
 ALERT_COOLDOWN = int(os.environ.get("ALERT_COOLDOWN", "300"))  # seconds
+NOTIFY_SERVICE = os.environ.get("NOTIFY_SERVICE", "notify.mobile_app_iphoned")
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+_LOG_BUFFER: list[str] = []
+_LOG_BUFFER_MAX = 500
+
+class _BufferHandler(logging.Handler):
+    def emit(self, record):
+        _LOG_BUFFER.append(self.format(record))
+        if len(_LOG_BUFFER) > _LOG_BUFFER_MAX:
+            del _LOG_BUFFER[0]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("ha-monitor")
+_buf_handler = _BufferHandler()
+_buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.getLogger().addHandler(_buf_handler)
 
 # ---------------------------------------------------------------------------
 # Flask app
@@ -511,9 +524,6 @@ def poll_once():
 # ---------------------------------------------------------------------------
 # Alerts — via Home Assistant companion app push notifications
 # ---------------------------------------------------------------------------
-NOTIFY_SERVICE = os.environ.get("NOTIFY_SERVICE", "notify.mobile_app_iphoned")
-
-
 def send_push(subject: str, body: str):
     """Send a push notification via the HA companion app."""
     try:
@@ -693,6 +703,16 @@ def api_config():
     safe = {k: ("••••••" if _CONFIG_FIELDS[k].get("secret") and v else v)
             for k, v in _runtime_config.items() if k in _CONFIG_FIELDS}
     return jsonify(safe)
+
+
+@app.route("/logs")
+def logs_page():
+    return render_template("logs.html")
+
+@app.route("/api/logs")
+def api_logs():
+    n = min(int(request.args.get("n", 200)), _LOG_BUFFER_MAX)
+    return jsonify({"lines": _LOG_BUFFER[-n:]})
 
 
 @app.route("/api/test_push", methods=["POST"])
