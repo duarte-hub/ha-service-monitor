@@ -3,458 +3,444 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HA Service Monitor</title>
+  <title>Network Monitor</title>
   <style>
-    :root {
-      --bg: #111827;
-      --card-bg: #1c1c1e;
-      --border: rgba(225,225,225,0.12);
-      --text: #e1e1e1;
-      --text-muted: #9b9b9b;
-      --primary: #03a9f4;
-      --primary-dim: rgba(3,169,244,0.15);
-      --green: #4caf50;
-      --red: #db4437;
-      --yellow: #ff9800;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    .topbar {
-      background: var(--primary);
-      color: #fff;
-      padding: 0 24px;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 2px 8px rgba(0,0,0,.4);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    .topbar-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 1.1rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-    }
-    .topbar-right {
-      font-size: 0.8rem;
-      opacity: 0.9;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .ha-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 0.78rem;
-      font-weight: 500;
-      background: rgba(255,255,255,0.2);
-      color: #fff;
-    }
-    .ha-badge.down { background: rgba(219,68,55,0.35); }
-    .content { padding: 24px; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 16px;
-      margin-bottom: 28px;
-    }
-    .section-title {
-      font-size: 0.7rem;
-      font-weight: 600;
-      margin-bottom: 12px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px 20px;
-      transition: box-shadow 0.2s;
-    }
-    .card:hover { box-shadow: 0 4px 20px rgba(3,169,244,0.08); }
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 10px;
-    }
-    .card-title {
-      font-weight: 600;
-      font-size: 0.95rem;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .card-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .status-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      display: inline-block;
-      flex-shrink: 0;
-    }
-    .status-dot.ok   { background: var(--green); box-shadow: 0 0 6px rgba(76,175,80,.5); }
-    .status-dot.warn { background: var(--yellow); box-shadow: 0 0 6px rgba(255,152,0,.5); }
-    .status-dot.down { background: var(--red); box-shadow: 0 0 6px rgba(219,68,55,.5); animation: pulse 1.5s infinite; }
-    .status-dot.skip { background: var(--text-muted); }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-    .card-detail {
-      color: var(--text-muted);
-      font-size: 0.83rem;
-      margin-top: 2px;
-    }
-    .card-status {
-      font-size: 0.78rem;
-      font-weight: 500;
-      padding: 3px 9px;
-      border-radius: 6px;
-      white-space: nowrap;
-    }
-    .card-status.running { background: rgba(76,175,80,.15); color: var(--green); }
-    .card-status.stopped { background: rgba(219,68,55,.15); color: var(--red); }
-    .card-status.skip    { background: rgba(155,155,155,.12); color: var(--text-muted); }
-    .btn-action {
-      background: var(--primary-dim);
-      color: var(--primary);
-      border: 1px solid rgba(3,169,244,.3);
-      border-radius: 6px;
-      padding: 3px 10px;
-      font-size: 0.75rem;
-      font-family: inherit;
-      cursor: pointer;
-      transition: background .15s;
-      white-space: nowrap;
-    }
-    .btn-action:hover:not(:disabled) { background: rgba(3,169,244,.28); }
-    .btn-action:disabled { opacity: .4; cursor: not-allowed; }
-    .update-progress {
-      margin-top: 10px;
-      padding: 8px 12px;
-      background: rgba(3,169,244,.07);
-      border: 1px solid rgba(3,169,244,.18);
-      border-radius: 8px;
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      display: none;
-    }
-    .update-log {
-      margin-top: 6px;
-      max-height: 220px;
-      overflow-y: auto;
-      font-size: 0.72rem;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      color: var(--text-muted);
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    .update-log .log-err { color: var(--red); }
-    .entity-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 11px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .entity-row:last-child { border-bottom: none; }
-    .entity-label { display: flex; align-items: center; gap: 10px; }
-    .entity-value { font-weight: 500; font-size: 0.9rem; }
-    .entity-value.ok   { color: var(--green); }
-    .entity-value.down { color: var(--red); }
-    .entity-value.warn { color: var(--yellow); }
-    .live-dot {
-      display: inline-block;
-      width: 6px; height: 6px;
-      background: #fff;
-      border-radius: 50%;
-      animation: pulse 2s infinite;
-    }
-    .version-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 8px;
-    }
-    .vtag {
-      font-size: 0.71rem;
-      padding: 2px 7px;
-      border-radius: 4px;
-      background: rgba(255,255,255,0.05);
-      color: var(--text-muted);
-      border: 1px solid var(--border);
-    }
-    .vtag b { color: var(--text); font-weight: 500; }
-    .footer {
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
-    }
-    .alerts-toggle {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.78rem;
-      cursor: pointer;
-      user-select: none;
-      opacity: 0.9;
-    }
-    .toggle-track {
-      width: 30px; height: 17px;
-      border-radius: 9px;
-      background: rgba(255,255,255,0.25);
-      position: relative;
-      transition: background 0.2s;
-      flex-shrink: 0;
-    }
-    .toggle-track.on { background: var(--green); }
-    .toggle-thumb {
-      position: absolute;
-      top: 2px; left: 2px;
-      width: 13px; height: 13px;
-      border-radius: 50%;
-      background: #fff;
-      transition: transform 0.2s;
-    }
-    .toggle-track.on .toggle-thumb { transform: translateX(13px); }
+    :root { --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12); --text:#e1e1e1; --muted:#9b9b9b; --primary:#03a9f4; --pdim:rgba(3,169,244,.15); --green:#4caf50; --red:#db4437; --yellow:#ff9800; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+
+    /* ── topbar ─────────────────────────────────────────────────────────── */
+    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:52px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+    .topbar-left { display:flex; align-items:center; gap:10px; font-size:1rem; font-weight:700; }
+    .topbar-right { display:flex; align-items:center; gap:12px; font-size:.8rem; }
+    .topbar-right a { color:#fff; text-decoration:none; opacity:.85; }
+    .topbar-right a:hover { opacity:1; }
+    .live-dot { width:6px; height:6px; background:#fff; border-radius:50%; animation:blink 2s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .alerts-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+    .toggle-track { width:28px; height:16px; border-radius:8px; background:rgba(255,255,255,.3); position:relative; transition:background .2s; flex-shrink:0; }
+    .toggle-track.on { background:var(--green); }
+    .toggle-thumb { position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; transition:transform .2s; }
+    .toggle-track.on .toggle-thumb { transform:translateX(12px); }
+
+    /* ── layout ─────────────────────────────────────────────────────────── */
+    .content { padding:20px; max-width:1200px; margin:0 auto; }
+    .section-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .section-title { font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+
+    /* ── scan bar ───────────────────────────────────────────────────────── */
+    .scan-bar { display:flex; align-items:center; gap:10px; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:10px 16px; margin-bottom:16px; }
+    .scan-bar input { flex:1; background:transparent; border:none; color:var(--text); font-size:.88rem; outline:none; font-family:inherit; }
+    .scan-bar input::placeholder { color:var(--muted); }
+    .btn-scan { background:var(--primary); color:#fff; border:none; border-radius:7px; padding:6px 16px; font-size:.85rem; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity .15s; }
+    .btn-scan:hover { opacity:.85; }
+    .btn-scan:disabled { opacity:.4; cursor:not-allowed; }
+    .scan-info { font-size:.78rem; color:var(--muted); }
+
+    /* ── device table ───────────────────────────────────────────────────── */
+    .device-table { width:100%; border-collapse:collapse; }
+    .device-table th { font-size:.68rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; padding:6px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+    .device-table td { padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.04); font-size:.85rem; vertical-align:middle; }
+    .device-table tr:last-child td { border-bottom:none; }
+    .device-table tr:hover td { background:rgba(255,255,255,.02); }
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+
+    /* ── status dot ─────────────────────────────────────────────────────── */
+    .dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .dot.up      { background:var(--green); box-shadow:0 0 5px rgba(76,175,80,.6); }
+    .dot.down    { background:var(--red);   box-shadow:0 0 5px rgba(219,68,55,.6); animation:blink 1.5s infinite; }
+    .dot.unknown { background:var(--muted); }
+
+    /* ── name edit ──────────────────────────────────────────────────────── */
+    .name-cell { display:flex; align-items:center; gap:6px; }
+    .name-view { cursor:pointer; }
+    .name-view:hover { color:var(--primary); }
+    .name-input { background:rgba(255,255,255,.07); border:1px solid var(--primary); border-radius:5px; color:var(--text); font-size:.85rem; padding:2px 7px; outline:none; width:140px; font-family:inherit; }
+
+    /* ── monitor toggle ─────────────────────────────────────────────────── */
+    .mon-toggle { display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:.78rem; color:var(--muted); }
+    .mon-toggle input { accent-color:var(--primary); cursor:pointer; }
+    .mon-toggle.active { color:var(--primary); }
+
+    /* ── latency ────────────────────────────────────────────────────────── */
+    .latency { font-size:.78rem; color:var(--muted); font-family:'SF Mono','Fira Code',monospace; }
+    .latency.fast { color:var(--green); }
+    .latency.slow { color:var(--yellow); }
+
+    /* ── delete btn ─────────────────────────────────────────────────────── */
+    .btn-del { background:none; border:none; color:var(--muted); cursor:pointer; font-size:.9rem; padding:0 4px; line-height:1; }
+    .btn-del:hover { color:var(--red); }
+
+    /* ── HA section (collapsible) ───────────────────────────────────────── */
+    .collapse-hdr { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+    .collapse-arrow { font-size:.7rem; color:var(--muted); transition:transform .2s; }
+    .collapse-arrow.open { transform:rotate(90deg); }
+    .ha-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; margin-top:14px; }
+    .ha-card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+    .ha-card-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .ha-card-title { font-weight:600; font-size:.9rem; display:flex; align-items:center; gap:7px; }
+    .ha-badge { font-size:.72rem; font-weight:500; padding:2px 8px; border-radius:5px; }
+    .ha-badge.running { background:rgba(76,175,80,.15); color:var(--green); }
+    .ha-badge.stopped { background:rgba(219,68,55,.15); color:var(--red); }
+    .ha-badge.skip    { background:rgba(155,155,155,.12); color:var(--muted); }
+    .ha-detail { color:var(--muted); font-size:.8rem; }
+    .entity-row { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:.85rem; }
+    .entity-row:last-child { border-bottom:none; }
+    .entity-val.ok   { color:var(--green); font-weight:500; }
+    .entity-val.down { color:var(--red); font-weight:500; }
+    .btn-action { background:var(--pdim); color:var(--primary); border:1px solid rgba(3,169,244,.3); border-radius:5px; padding:2px 9px; font-size:.72rem; cursor:pointer; font-family:inherit; }
+    .btn-action:hover:not(:disabled) { background:rgba(3,169,244,.28); }
+    .btn-action:disabled { opacity:.4; cursor:not-allowed; }
+    .update-progress { margin-top:10px; padding:8px 12px; background:rgba(3,169,244,.07); border:1px solid rgba(3,169,244,.18); border-radius:7px; font-size:.78rem; color:var(--muted); display:none; }
+    .update-log { margin-top:5px; max-height:200px; overflow-y:auto; font-size:.7rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; }
+    .update-log .log-err { color:var(--red); }
+    .vtag { font-size:.68rem; padding:2px 6px; border-radius:4px; background:rgba(255,255,255,.05); color:var(--muted); border:1px solid var(--border); }
+    .vtag b { color:var(--text); }
+    .empty-row td { text-align:center; color:var(--muted); padding:32px; font-size:.88rem; }
+    .footer { text-align:center; color:var(--muted); font-size:.72rem; padding:20px 0 8px; }
   </style>
 </head>
 <body>
 
 <div class="topbar">
   <div class="topbar-left">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L2 12h3v8h6v-5h2v5h6v-8h3L12 3z"/></svg>
-    HA Service Monitor
-    <span class="ha-badge {{ '' if state.ha_reachable else 'down' }}">
-      {{ 'Connected' if state.ha_reachable else 'Disconnected' }}{% if state.ha_version %} &mdash; v{{ state.ha_version }}{% endif %}
-    </span>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.237 4.237 0 00-6 0zm-4-4l2 2a7.074 7.074 0 0110 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>
+    Network Monitor
   </div>
   <div class="topbar-right">
-    <span class="alerts-toggle" id="alerts-toggle" onclick="toggleAlerts()">
+    <span class="alerts-toggle" onclick="toggleAlerts()">
       <span class="toggle-track" id="alerts-track"><span class="toggle-thumb"></span></span>
       <span id="alerts-label">Alerts</span>
     </span>
-    <a href="/logs" style="color:#fff;opacity:.85;font-size:.8rem;text-decoration:none;">Logs</a>
-    <a href="/config" style="color:#fff;opacity:.85;font-size:.8rem;text-decoration:none;">Settings</a>
+    <a href="/logs">Logs</a>
+    <a href="/config">Settings</a>
     <span class="live-dot"></span>
-    Refresh every {{ poll_interval }}s{% if state.last_poll %} &middot; {{ state.last_poll }}{% endif %}
   </div>
 </div>
 
 <div class="content">
 
-<!-- Add-on Services -->
-<div class="section-title">Add-on Services</div>
-<div class="grid">
-  {% for name, svc in state.services.items() %}
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">
-        <span class="status-dot {{ 'ok' if svc.ok else ('skip' if svc.status == 'not_installed' else 'down') }}"></span>
-        {{ name }}
-      </span>
-      <div class="card-right">
-        {% if name == 'Zigbee2MQTT Edge' %}
-        <button class="btn-action" id="btn-z2m" onclick="updateZ2M()">Update</button>
+<!-- ── Network Devices ───────────────────────────────────────────────────── -->
+<div class="section-hdr" style="margin-top:4px">
+  <span class="section-title">Network Devices</span>
+  <span class="scan-info" id="scan-info"></span>
+</div>
+
+<div class="scan-bar">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--muted)"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+  <input type="text" id="scan-network" placeholder="Network (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
+  <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
+</div>
+
+<div class="card">
+  <table class="device-table" id="device-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>IP Address</th>
+        <th>Name</th>
+        <th>Hostname</th>
+        <th>Vendor / MAC</th>
+        <th>Last Seen</th>
+        <th>Latency</th>
+        <th>Monitor</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="device-tbody">
+      <tr class="empty-row"><td colspan="9">No devices yet — click Scan Now</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── HA Services (collapsible) ─────────────────────────────────────────── -->
+<div style="margin-top:28px">
+  <div class="collapse-hdr" onclick="toggleHA()">
+    <span class="collapse-arrow" id="ha-arrow">&#9654;</span>
+    <span class="section-title" style="margin:0">HA Add-on Services</span>
+    <span class="scan-info" id="ha-badge" style="margin-left:8px"></span>
+  </div>
+
+  <div id="ha-section" style="display:none">
+    <div class="ha-grid" id="ha-services-grid">
+      {% for name, svc in state.services.items() %}
+      <div class="ha-card">
+        <div class="ha-card-hdr">
+          <span class="ha-card-title">
+            <span class="dot {{ 'up' if svc.ok else ('unknown' if svc.status == 'not_installed' else 'down') }}"></span>
+            {{ name }}
+          </span>
+          <div style="display:flex;gap:6px;align-items:center">
+            {% if name == 'Zigbee2MQTT Edge' %}
+            <button class="btn-action" id="btn-z2m" onclick="updateZ2M()">Update</button>
+            {% endif %}
+            <span class="ha-badge {{ 'running' if svc.ok else ('skip' if svc.status == 'not_installed' else 'stopped') }}">{{ svc.status }}</span>
+          </div>
+        </div>
+        <div class="ha-detail">{{ svc.detail }}</div>
+        {% if svc.versions %}
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+          {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
+          {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
+          {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
+        </div>
         {% endif %}
-        <span class="card-status {{ 'running' if svc.ok else ('skip' if svc.status == 'not_installed' else 'stopped') }}">
-          {{ svc.status }}
-        </span>
+        {% if name == 'Zigbee2MQTT Edge' %}
+        <div class="update-progress" id="z2m-progress">
+          <div id="z2m-msg"></div>
+          <div class="update-log" id="z2m-log"></div>
+        </div>
+        {% endif %}
       </div>
+      {% endfor %}
+      {% if not state.services %}
+      <div class="ha-card"><div class="ha-detail">Waiting for first poll…</div></div>
+      {% endif %}
     </div>
-    <div class="card-detail">{{ svc.detail }}</div>
-    {% if svc.versions %}
-    <div class="version-tags">
-      {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
-      {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
-      {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
-    </div>
-    {% endif %}
-    {% if name == 'Zigbee2MQTT Edge' %}
-    <div class="update-progress" id="z2m-progress">
-      <div id="z2m-msg"></div>
-      <div class="update-log" id="z2m-log"></div>
+
+    {% if state.entities %}
+    <div class="card" style="margin-top:14px;padding:4px 16px">
+      {% for label, ent in state.entities.items() %}
+      <div class="entity-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="dot {{ 'up' if ent.ok else 'down' }}"></span>{{ label }}
+        </div>
+        <span class="entity-val {{ 'ok' if ent.ok else 'down' }}">{{ ent.detail }}</span>
+      </div>
+      {% endfor %}
     </div>
     {% endif %}
   </div>
-  {% endfor %}
-  {% if not state.services %}
-  <div class="card"><div class="card-detail">Waiting for first poll&hellip;</div></div>
-  {% endif %}
 </div>
 
-<!-- Zigbee Coordinators -->
-<div class="section-title">Zigbee Coordinators &amp; Bridges</div>
-<div class="card" style="max-width: 720px;">
-  {% for label, ent in state.entities.items() %}
-  <div class="entity-row">
-    <div class="entity-label">
-      <span class="status-dot {{ 'ok' if ent.ok else 'down' }}"></span>
-      <span>{{ label }}</span>
-    </div>
-    <span class="entity-value {{ 'ok' if ent.ok else 'down' }}">{{ ent.detail }}</span>
-  </div>
-  {% endfor %}
-  {% if not state.entities %}
-  <div class="entity-row"><span class="card-detail">Waiting for first poll&hellip;</span></div>
-  {% endif %}
+<div class="footer">Network Monitor &middot; {{ state.services|length }} HA add-ons &middot; polling every {{ poll_interval }}s</div>
 </div>
-
-<div class="footer" style="margin-top: 32px;">
-  HA Service Monitor &middot; Polling {{ state.services|length }} add-ons, {{ state.entities|length }} entities
-</div>
-
-</div><!-- /content -->
 
 <script>
-  // Auto-refresh
-  async function refresh() {
-    if (window._z2mUpdating) return;
-    try {
-      const r = await fetch('/api/status');
-      if (r.ok) location.reload();
-    } catch (_) {}
-  }
-  setInterval(refresh, {{ poll_interval }} * 1000);
-
-  // Alerts toggle
+  // ── Alerts toggle ──────────────────────────────────────────────────────
   (async () => {
-    try {
-      const r = await fetch('/api/alerts_enabled');
-      const d = await r.json();
-      _setAlertsUI(d.enabled);
-    } catch (_) {}
+    try { const d = await (await fetch('/api/alerts_enabled')).json(); _setAlerts(d.enabled); } catch(_) {}
   })();
-
-  function _setAlertsUI(enabled) {
-    const track = document.getElementById('alerts-track');
-    const label = document.getElementById('alerts-label');
-    track.classList.toggle('on', enabled);
-    label.textContent = enabled ? 'Alerts on' : 'Alerts off';
+  function _setAlerts(on) {
+    document.getElementById('alerts-track').classList.toggle('on', on);
+    document.getElementById('alerts-label').textContent = on ? 'Alerts on' : 'Alerts off';
   }
-
   async function toggleAlerts() {
-    try {
-      const cur = document.getElementById('alerts-track').classList.contains('on');
-      const r = await fetch('/api/alerts_enabled', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({enabled: !cur})
-      });
-      const d = await r.json();
-      _setAlertsUI(d.enabled);
-    } catch (_) {}
+    const cur = document.getElementById('alerts-track').classList.contains('on');
+    const d = await (await fetch('/api/alerts_enabled', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:!cur})})).json();
+    _setAlerts(d.enabled);
   }
 
-  // Z2M Edge update
-  window._z2mUpdating = false;
+  // ── HA section toggle ──────────────────────────────────────────────────
+  function toggleHA() {
+    const sec = document.getElementById('ha-section');
+    const arr = document.getElementById('ha-arrow');
+    const open = sec.style.display === 'none';
+    sec.style.display = open ? '' : 'none';
+    arr.classList.toggle('open', open);
+  }
 
-  const _z2mMsgEl  = document.getElementById('z2m-msg');
-  const _z2mLogEl  = document.getElementById('z2m-log');
-  function setMsg(msg) { _z2mMsgEl.textContent = msg; }
+  // ── Device table ───────────────────────────────────────────────────────
+  let _devices = [];
+  let _editingIp = null;
+
+  function _statusDot(d) {
+    const cls = d.monitored ? (d.status === 'up' ? 'up' : d.status === 'down' ? 'down' : 'unknown') : 'unknown';
+    return `<span class="dot ${cls}"></span>`;
+  }
+
+  function _latencyCell(d) {
+    if (!d.monitored || d.ping_latency_ms == null) return '<span class="latency">—</span>';
+    const ms = d.ping_latency_ms;
+    const cls = ms < 10 ? 'fast' : ms > 100 ? 'slow' : '';
+    return `<span class="latency ${cls}">${ms.toFixed(1)} ms</span>`;
+  }
+
+  function _lastSeen(iso) {
+    if (!iso) return '—';
+    const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (diff < 10)   return 'just now';
+    if (diff < 60)   return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    return `${Math.floor(diff/3600)}h ago`;
+  }
+
+  function _nameCell(d) {
+    if (_editingIp === d.ip) {
+      return `<div class="name-cell"><input class="name-input" id="name-input-${d.ip}"
+        value="${(d.name||'').replace(/"/g,'&quot;')}"
+        onblur="saveName('${d.ip}')"
+        onkeydown="if(event.key==='Enter')saveName('${d.ip}');if(event.key==='Escape')cancelEdit()"></div>`;
+    }
+    const label = d.name || `<span style="color:var(--muted)">${d.hostname || '—'}</span>`;
+    return `<div class="name-cell"><span class="name-view" title="Click to edit" onclick="startEdit('${d.ip}')">${d.name ? d.name : (d.hostname||'—')}</span></div>`;
+  }
+
+  function renderDevices() {
+    const tbody = document.getElementById('device-tbody');
+    if (!_devices.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No devices yet — click Scan Now</td></tr>';
+      return;
+    }
+    tbody.innerHTML = _devices.map(d => `
+      <tr data-ip="${d.ip}">
+        <td>${_statusDot(d)}</td>
+        <td style="font-family:'SF Mono','Fira Code',monospace;font-size:.82rem">${d.ip}</td>
+        <td>${_nameCell(d)}</td>
+        <td style="color:var(--muted);font-size:.82rem">${d.hostname || '—'}</td>
+        <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
+        <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
+        <td>${_latencyCell(d)}</td>
+        <td><label class="mon-toggle ${d.monitored?'active':''}">
+          <input type="checkbox" ${d.monitored?'checked':''} onchange="setMonitor('${d.ip}',this.checked)">
+          ${d.monitored ? 'On' : 'Off'}
+        </label></td>
+        <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
+      </tr>`).join('');
+    if (_editingIp) {
+      const inp = document.getElementById(`name-input-${_editingIp}`);
+      if (inp) { inp.focus(); inp.select(); }
+    }
+  }
+
+  async function loadDevices() {
+    try {
+      _devices = await (await fetch('/api/devices')).json();
+      renderDevices();
+    } catch(_) {}
+  }
+
+  async function setMonitor(ip, on) {
+    await fetch(`/api/devices/${ip}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monitored:on})});
+    const d = _devices.find(d=>d.ip===ip); if (d) d.monitored = on;
+    renderDevices();
+  }
+
+  async function deleteDevice(ip) {
+    await fetch(`/api/devices/${ip}`, {method:'DELETE'});
+    _devices = _devices.filter(d=>d.ip!==ip);
+    renderDevices();
+  }
+
+  function startEdit(ip) { _editingIp = ip; renderDevices(); }
+  function cancelEdit()  { _editingIp = null; renderDevices(); }
+
+  async function saveName(ip) {
+    const inp = document.getElementById(`name-input-${ip}`);
+    if (!inp) return;
+    const name = inp.value.trim();
+    await fetch(`/api/devices/${ip}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
+    const d = _devices.find(d=>d.ip===ip); if (d) d.name = name;
+    _editingIp = null;
+    renderDevices();
+  }
+
+  // ── Scan ───────────────────────────────────────────────────────────────
+  let _scanPoller = null;
+
+  async function startScan() {
+    const btn  = document.getElementById('btn-scan');
+    const net  = document.getElementById('scan-network').value.trim();
+    btn.disabled = true;
+    btn.textContent = 'Scanning…';
+    document.getElementById('scan-info').textContent = 'Starting scan…';
+    await fetch('/api/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({network:net||null})});
+    _pollScan();
+  }
+
+  function _pollScan() {
+    if (_scanPoller) clearInterval(_scanPoller);
+    _scanPoller = setInterval(async () => {
+      try {
+        const d = await (await fetch('/api/scan/status')).json();
+        document.getElementById('scan-info').textContent = d.message || '';
+        if (d.state !== 'running') {
+          clearInterval(_scanPoller);
+          const btn = document.getElementById('btn-scan');
+          btn.disabled = false;
+          btn.textContent = 'Scan Now';
+          loadDevices();
+        }
+      } catch(_) {}
+    }, 1500);
+  }
+
+  async function initScan() {
+    try {
+      const d = await (await fetch('/api/scan/status')).json();
+      if (d.network) document.getElementById('scan-network').placeholder = `Network (auto: ${d.network})`;
+      document.getElementById('scan-info').textContent = d.message || '';
+      if (d.state === 'running') {
+        document.getElementById('btn-scan').disabled = true;
+        document.getElementById('btn-scan').textContent = 'Scanning…';
+        _pollScan();
+      }
+    } catch(_) {}
+  }
+
+  // ── Z2M update ─────────────────────────────────────────────────────────
+  window._z2mUpdating = false;
+  const _z2mMsgEl = document.getElementById('z2m-msg');
+  const _z2mLogEl = document.getElementById('z2m-log');
+  function setMsg(m) { if(_z2mMsgEl) _z2mMsgEl.textContent = m; }
   function setLog(lines) {
-    if (!lines || !lines.length) return;
+    if (!_z2mLogEl || !lines || !lines.length) return;
     _z2mLogEl.innerHTML = lines.map(l => {
-      const cls = l.includes('error') || l.includes('Error') || l.includes('EXCEPTION') ? ' class="log-err"' : '';
+      const cls = /error|Error|EXCEPTION/i.test(l) ? ' class="log-err"' : '';
       return `<div${cls}>${l.replace(/</g,'&lt;')}</div>`;
     }).join('');
     _z2mLogEl.scrollTop = _z2mLogEl.scrollHeight;
   }
-
-  // Restore any previous update log on page load
   (async () => {
     try {
-      const r = await fetch('/api/z2m_update_status');
-      const d = await r.json();
+      const d = await (await fetch('/api/z2m_update_status')).json();
       if (d.log && d.log.length) {
-        document.getElementById('z2m-progress').style.display = 'block';
-        setMsg(d.message || '');
-        setLog(d.log);
-        if (d.state === 'running') {
-          // Update is still in progress \u2014 resume polling
-          window._z2mUpdating = true;
-          document.getElementById('btn-z2m').disabled = true;
-          _resumePoller();
-        }
+        const p = document.getElementById('z2m-progress'); if(p) p.style.display='block';
+        setMsg(d.message||''); setLog(d.log);
+        if (d.state === 'running') { window._z2mUpdating=true; const b=document.getElementById('btn-z2m'); if(b)b.disabled=true; _resumePoller(); }
       }
-    } catch (_) {}
+    } catch(_) {}
   })();
-
   function _resumePoller() {
-    let attempts = 0;
-    const btn = document.getElementById('btn-z2m');
-    const poller = setInterval(async () => {
-      attempts++;
+    let n=0;
+    const p = setInterval(async () => {
+      n++;
       try {
-        const r = await fetch('/api/z2m_update_status');
-        const d = await r.json();
-        setMsg(d.message || 'Working\u2026');
-        if (d.log) setLog(d.log);
-        if (d.state === 'done') {
-          clearInterval(poller);
-          window._z2mUpdating = false;
-          setTimeout(() => location.reload(), 3000);
-        } else if (d.state === 'error') {
-          clearInterval(poller);
-          btn.disabled = false;
-          window._z2mUpdating = false;
-        }
-      } catch (_) {}
-      if (attempts > 120) {
-        clearInterval(poller);
-        setMsg('Timed out \u2014 check HA logs');
-        btn.disabled = false;
-        window._z2mUpdating = false;
-      }
+        const d = await (await fetch('/api/z2m_update_status')).json();
+        setMsg(d.message||'Working…'); if(d.log)setLog(d.log);
+        if (d.state==='done')  { clearInterval(p); window._z2mUpdating=false; setTimeout(()=>location.reload(),3000); }
+        if (d.state==='error') { clearInterval(p); const b=document.getElementById('btn-z2m'); if(b)b.disabled=false; window._z2mUpdating=false; }
+      } catch(_) {}
+      if (n>120) { clearInterval(p); setMsg('Timed out'); const b=document.getElementById('btn-z2m'); if(b)b.disabled=false; window._z2mUpdating=false; }
     }, 5000);
   }
-
   async function updateZ2M() {
     if (window._z2mUpdating) return;
     window._z2mUpdating = true;
-    const btn = document.getElementById('btn-z2m');
-    const progress = document.getElementById('z2m-progress');
-    btn.disabled = true;
-    progress.style.display = 'block';
-
-    setMsg('Backing up config\u2026');
+    const btn=document.getElementById('btn-z2m'); if(btn)btn.disabled=true;
+    const prog=document.getElementById('z2m-progress'); if(prog)prog.style.display='block';
+    setMsg('Backing up config…');
     try {
-      const r = await fetch('/api/update_z2m', { method: 'POST' });
-      const data = await r.json();
-      if (data.status === 'error') {
-        setMsg('Error: ' + data.message);
-        btn.disabled = false;
-        window._z2mUpdating = false;
-        return;
-      }
-    } catch (e) {
-      setMsg('Failed to start update: ' + e);
-      btn.disabled = false;
-      window._z2mUpdating = false;
-      return;
-    }
-
-    setMsg('Update started \u2014 waiting for Z2M Edge to restart\u2026');
-    _resumePoller();
+      const d = await (await fetch('/api/update_z2m',{method:'POST'})).json();
+      if (d.status==='error') { setMsg('Error: '+d.message); if(btn)btn.disabled=false; window._z2mUpdating=false; return; }
+    } catch(e) { setMsg('Failed: '+e); if(btn)btn.disabled=false; window._z2mUpdating=false; return; }
+    setMsg('Update started…'); _resumePoller();
   }
-</script>
 
+  // ── Auto-refresh devices ───────────────────────────────────────────────
+  setInterval(loadDevices, {{ poll_interval }} * 1000);
+
+  // ── HA status badge ────────────────────────────────────────────────────
+  const _haServices = {{ state.services | length }};
+  const _haDown = {{ state.services.values() | selectattr('ok', 'false') | list | length }};
+  if (_haServices) {
+    document.getElementById('ha-badge').textContent = _haDown ? `${_haDown} issue(s)` : `${_haServices} ok`;
+    document.getElementById('ha-badge').style.color = _haDown ? 'var(--red)' : 'var(--muted)';
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────
+  initScan();
+  loadDevices();
+</script>
 </body>
 </html>

@@ -5,11 +5,14 @@ Provides a live web dashboard and email alerts.
 """
 
 import os
+import re
 import time
 import json
 import logging
 import smtplib
+import ipaddress
 import threading
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -111,6 +114,134 @@ def _persist_alerts_enabled(val: bool) -> None:
         pass
 
 alerts_enabled = _load_alerts_enabled()
+
+# ---------------------------------------------------------------------------
+# Network device store
+# ---------------------------------------------------------------------------
+SCAN_NETWORK  = os.environ.get("SCAN_NETWORK", "")   # e.g. 192.168.0.0/24
+PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "30"))
+
+_DEVICES_PATH = os.environ.get("DEVICES_PATH", "/data/devices.json")
+_devices: dict[str, dict] = {}
+_devices_lock = threading.Lock()
+_scan_status: dict = {"state": "idle", "message": ""}
+
+def _load_devices() -> dict:
+    try:
+        with open(_DEVICES_PATH) as fh:
+            return {d["ip"]: d for d in json.load(fh)}
+    except Exception:
+        return {}
+
+def _save_devices() -> None:
+    try:
+        os.makedirs(os.path.dirname(_DEVICES_PATH), exist_ok=True)
+        with open(_DEVICES_PATH, "w") as fh:
+            json.dump(sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")]), fh, indent=2)
+    except Exception as e:
+        log.error("Failed to save devices: %s", e)
+
+_devices = _load_devices()
+
+def _local_network() -> str:
+    if SCAN_NETWORK:
+        return SCAN_NETWORK
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return str(ipaddress.IPv4Network(f"{ip}/24", strict=False))
+    except Exception:
+        return "192.168.0.0/24"
+
+def _parse_nmap_xml(xml: str) -> list[dict]:
+    out = []
+    try:
+        root = ET.fromstring(xml)
+        for host in root.findall("host"):
+            st = host.find("status")
+            if st is None or st.get("state") != "up":
+                continue
+            ip = mac = vendor = hostname = None
+            for addr in host.findall("address"):
+                if addr.get("addrtype") == "ipv4":
+                    ip = addr.get("addr")
+                elif addr.get("addrtype") == "mac":
+                    mac  = addr.get("addr")
+                    vendor = addr.get("vendor", "")
+            hn_el = host.find("hostnames/hostname")
+            if hn_el is not None:
+                hostname = hn_el.get("name")
+            if ip:
+                out.append({"ip": ip, "mac": mac or "", "vendor": vendor or "", "hostname": hostname or ""})
+    except Exception as e:
+        log.error("nmap XML parse error: %s", e)
+    return out
+
+def _do_scan(network: str) -> None:
+    global _scan_status
+    _scan_status = {"state": "running", "message": f"Scanning {network}…"}
+    try:
+        result = subprocess.run(
+            ["nmap", "-sn", "-oX", "-", "--host-timeout", "5s", network],
+            capture_output=True, text=True, timeout=180,
+        )
+        found = _parse_nmap_xml(result.stdout)
+        now = datetime.now(timezone.utc).isoformat()
+        with _devices_lock:
+            for d in found:
+                ip  = d["ip"]
+                old = _devices.get(ip, {})
+                _devices[ip] = {
+                    "ip":             ip,
+                    "mac":            d["mac"]      or old.get("mac", ""),
+                    "vendor":         d["vendor"]   or old.get("vendor", ""),
+                    "hostname":       d["hostname"] or old.get("hostname", ""),
+                    "name":           old.get("name", ""),
+                    "monitored":      old.get("monitored", False),
+                    "status":         "up",
+                    "last_seen":      now,
+                    "ping_latency_ms": old.get("ping_latency_ms"),
+                }
+            _save_devices()
+        _scan_status = {"state": "done", "message": f"Found {len(found)} devices", "count": len(found), "network": network}
+        log.info("Network scan complete: %d devices on %s", len(found), network)
+    except Exception as e:
+        _scan_status = {"state": "error", "message": str(e)}
+        log.error("Network scan failed: %s", e)
+
+def _ping_host(ip: str) -> tuple[bool, float | None]:
+    try:
+        r = subprocess.run(["ping", "-c", "1", "-W", "2", ip],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            m = re.search(r"time=(\d+\.?\d*)", r.stdout)
+            return True, (float(m.group(1)) if m else None)
+        return False, None
+    except Exception:
+        return False, None
+
+def _ping_monitored() -> None:
+    with _devices_lock:
+        targets = [d.copy() for d in _devices.values() if d.get("monitored")]
+    for dev in targets:
+        ip   = dev["ip"]
+        prev = dev.get("status", "unknown")
+        up, latency = _ping_host(ip)
+        now  = datetime.now(timezone.utc).isoformat()
+        with _devices_lock:
+            if ip not in _devices:
+                continue
+            _devices[ip]["status"]          = "up" if up else "down"
+            _devices[ip]["ping_latency_ms"] = latency
+            if up:
+                _devices[ip]["last_seen"] = now
+        label = dev.get("name") or dev.get("hostname") or ip
+        if prev != "down" and not up:
+            maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping")
+        elif prev == "down" and up:
+            log.info("Device %s (%s) is back online", label, ip)
 
 # ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
@@ -593,12 +724,15 @@ def maybe_alert(key: str, subject: str, detail: str):
 # Background poller
 # ---------------------------------------------------------------------------
 def poller_loop():
-    """Continuously poll HA on a fixed interval."""
     while True:
         try:
             poll_once()
         except Exception as e:
             log.exception("Unhandled error in poller: %s", e)
+        try:
+            _ping_monitored()
+        except Exception as e:
+            log.exception("Ping monitoring error: %s", e)
         time.sleep(POLL_INTERVAL)
 
 
@@ -624,6 +758,47 @@ def api_health():
     with state_lock:
         reachable = monitor_state["ha_reachable"]
     return jsonify({"healthy": reachable}), 200 if reachable else 503
+
+
+@app.route("/api/devices")
+def api_devices():
+    with _devices_lock:
+        devs = sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")])
+    return jsonify(devs)
+
+
+@app.route("/api/devices/<ip>", methods=["PATCH"])
+def api_device_patch(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return jsonify({"error": "not found"}), 404
+        for k in ("name", "monitored"):
+            if k in (request.json or {}):
+                _devices[ip][k] = request.json[k]
+        _save_devices()
+        return jsonify(_devices[ip])
+
+
+@app.route("/api/devices/<ip>", methods=["DELETE"])
+def api_device_delete(ip):
+    with _devices_lock:
+        _devices.pop(ip, None)
+        _save_devices()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/scan", methods=["POST"])
+def api_scan():
+    if _scan_status.get("state") == "running":
+        return jsonify({"status": "error", "message": "Scan already running"}), 409
+    network = (request.json or {}).get("network") or _local_network()
+    threading.Thread(target=_do_scan, args=(network,), daemon=True).start()
+    return jsonify({"status": "started", "network": network})
+
+
+@app.route("/api/scan/status")
+def api_scan_status():
+    return jsonify({**_scan_status, "network": _local_network()})
 
 
 
