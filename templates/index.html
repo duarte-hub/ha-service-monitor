@@ -35,6 +35,9 @@
     .btn-scan { background:var(--primary); color:#fff; border:none; border-radius:7px; padding:6px 16px; font-size:.85rem; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity .15s; }
     .btn-scan:hover { opacity:.85; }
     .btn-scan:disabled { opacity:.4; cursor:not-allowed; }
+    .btn-filter { background:transparent; border:1px solid var(--border); border-radius:7px; color:var(--muted); padding:5px 13px; font-size:.8rem; cursor:pointer; white-space:nowrap; transition:background .15s,color .15s,border-color .15s; }
+    .btn-filter:hover { border-color:var(--primary); color:var(--primary); }
+    .btn-filter.active { background:var(--pdim); border-color:var(--primary); color:var(--primary); font-weight:600; }
     .scan-info { font-size:.78rem; color:var(--muted); }
 
     /* ── device table ───────────────────────────────────────────────────── */
@@ -129,6 +132,7 @@
 <div class="scan-bar">
   <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--muted)"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
   <input type="text" id="scan-network" placeholder="Network (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
+  <button class="btn-filter" id="btn-monitored" onclick="toggleMonitoredFilter()">Monitored only</button>
   <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
 </div>
 
@@ -243,6 +247,13 @@
   // ── Device table ───────────────────────────────────────────────────────
   let _devices = [];
   let _editingIp = null;
+  let _monitoredOnly = false;
+
+  function toggleMonitoredFilter() {
+    _monitoredOnly = !_monitoredOnly;
+    document.getElementById('btn-monitored').classList.toggle('active', _monitoredOnly);
+    renderDevices();
+  }
 
   function _statusDot(d) {
     const cls = d.monitored ? (d.status === 'up' ? 'up' : d.status === 'down' ? 'down' : 'unknown') : 'unknown';
@@ -278,11 +289,30 @@
 
   function renderDevices() {
     const tbody = document.getElementById('device-tbody');
-    if (!_devices.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No devices yet — click Scan Now</td></tr>';
+    const visible = _monitoredOnly ? _devices.filter(d => d.monitored) : _devices;
+    if (!visible.length) {
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="9">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
+      if (_monitoredOnly && _devices.length) {
+        // show all devices greyed so user can still toggle
+        tbody.innerHTML += _devices.map(d => `
+          <tr data-ip="${d.ip}" style="opacity:.35">
+            <td>${_statusDot(d)}</td>
+            <td style="font-family:'SF Mono','Fira Code',monospace;font-size:.82rem">${d.ip}</td>
+            <td>${_nameCell(d)}</td>
+            <td style="color:var(--muted);font-size:.82rem">${d.hostname || '—'}</td>
+            <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
+            <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
+            <td>${_latencyCell(d)}</td>
+            <td><label class="mon-toggle">
+              <input type="checkbox" onchange="setMonitor('${d.ip}',this.checked)">
+              Off
+            </label></td>
+            <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
+          </tr>`).join('');
+      }
       return;
     }
-    tbody.innerHTML = _devices.map(d => `
+    tbody.innerHTML = visible.map(d => `
       <tr data-ip="${d.ip}">
         <td>${_statusDot(d)}</td>
         <td style="font-family:'SF Mono','Fira Code',monospace;font-size:.82rem">${d.ip}</td>
