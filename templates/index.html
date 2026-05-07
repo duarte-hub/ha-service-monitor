@@ -207,6 +207,33 @@
       padding-top: 20px;
       border-top: 1px solid var(--border);
     }
+    .alerts-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      user-select: none;
+      opacity: 0.9;
+    }
+    .toggle-track {
+      width: 30px; height: 17px;
+      border-radius: 9px;
+      background: rgba(255,255,255,0.25);
+      position: relative;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .toggle-track.on { background: var(--green); }
+    .toggle-thumb {
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.2s;
+    }
+    .toggle-track.on .toggle-thumb { transform: translateX(13px); }
   </style>
 </head>
 <body>
@@ -220,6 +247,10 @@
     </span>
   </div>
   <div class="topbar-right">
+    <span class="alerts-toggle" id="alerts-toggle" onclick="toggleAlerts()">
+      <span class="toggle-track" id="alerts-track"><span class="toggle-thumb"></span></span>
+      <span id="alerts-label">Alerts</span>
+    </span>
     <span class="live-dot"></span>
     Refresh every {{ poll_interval }}s{% if state.last_poll %} &middot; {{ state.last_poll }}{% endif %}
   </div>
@@ -300,6 +331,35 @@
     } catch (_) {}
   }
   setInterval(refresh, {{ poll_interval }} * 1000);
+
+  // Alerts toggle
+  (async () => {
+    try {
+      const r = await fetch('/api/alerts_enabled');
+      const d = await r.json();
+      _setAlertsUI(d.enabled);
+    } catch (_) {}
+  })();
+
+  function _setAlertsUI(enabled) {
+    const track = document.getElementById('alerts-track');
+    const label = document.getElementById('alerts-label');
+    track.classList.toggle('on', enabled);
+    label.textContent = enabled ? 'Alerts on' : 'Alerts off';
+  }
+
+  async function toggleAlerts() {
+    try {
+      const cur = document.getElementById('alerts-track').classList.contains('on');
+      const r = await fetch('/api/alerts_enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: !cur})
+      });
+      const d = await r.json();
+      _setAlertsUI(d.enabled);
+    } catch (_) {}
+  }
 
   // Z2M Edge update
   window._z2mUpdating = false;

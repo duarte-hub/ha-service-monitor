@@ -19,7 +19,7 @@ import subprocess
 
 import websocket
 import requests
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 
 # ---------------------------------------------------------------------------
 # Configuration (all via environment variables)
@@ -79,6 +79,25 @@ def _persist_z2m_status(status: dict) -> None:
 
 z2m_update_status: dict = _load_z2m_status()
 alert_history: dict[str, float] = {}  # key -> last alert timestamp
+_ALERTS_STATE_PATH = os.environ.get("ALERTS_STATE_PATH", "/data/alerts_enabled.json")
+alerts_enabled: bool = True
+
+def _load_alerts_enabled() -> bool:
+    try:
+        with open(_ALERTS_STATE_PATH) as fh:
+            return json.load(fh).get("enabled", True)
+    except Exception:
+        return True
+
+def _persist_alerts_enabled(val: bool) -> None:
+    try:
+        os.makedirs(os.path.dirname(_ALERTS_STATE_PATH), exist_ok=True)
+        with open(_ALERTS_STATE_PATH, "w") as fh:
+            json.dump({"enabled": val}, fh)
+    except Exception:
+        pass
+
+alerts_enabled = _load_alerts_enabled()
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +498,9 @@ def send_push(subject: str, body: str):
 
 
 def maybe_alert(key: str, subject: str, detail: str):
-    """Send alert if cooldown has elapsed."""
+    """Send alert if cooldown has elapsed and alerts are enabled."""
+    if not alerts_enabled:
+        return
     now = time.time()
     last = alert_history.get(key, 0)
     if now - last >= ALERT_COOLDOWN:
@@ -592,6 +613,15 @@ def api_update():
 @app.route("/api/z2m_update_status")
 def api_z2m_update_status():
     return jsonify(z2m_update_status)
+
+
+@app.route("/api/alerts_enabled", methods=["GET", "POST"])
+def api_alerts_enabled():
+    global alerts_enabled
+    if request.method == "POST":
+        alerts_enabled = bool(request.json.get("enabled", True))
+        _persist_alerts_enabled(alerts_enabled)
+    return jsonify({"enabled": alerts_enabled})
 
 
 @app.route("/api/z2m_backup")
@@ -730,7 +760,7 @@ def api_update_z2m():
                     chk = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
                     addon_state = chk.get("state", "")
                     _dbg(f"Poll {attempt + 1}: addon state={addon_state}")
-                    if addon_state in ("stopped", "started", "running"):
+                    if addon_state in ("stopped", "started", "running", "unknown"):
                         break
                 except Exception as e:
                     _dbg(f"Poll {attempt + 1} error: {e}")
