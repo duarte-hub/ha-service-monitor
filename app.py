@@ -703,7 +703,11 @@ def api_update_z2m():
                     _dbg(f"Install result: {install_result}")
                     break
                 except Exception as ie:
+                    err_str = str(ie)
                     _dbg(f"Install attempt {install_attempt + 1} error: {ie}")
+                    if "already installed" in err_str:
+                        _dbg("Addon already installed — skipping install, continuing with config restore")
+                        break
                     if install_attempt < 2:
                         _set("running", f"Install attempt {install_attempt + 1} failed — retrying in 15 s…")
                         time.sleep(15)
