@@ -3,90 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HA Monitor — Config</title>
+  <title>HA Monitor — Settings</title>
   <style>
-    :root {
-      --bg: #111827;
-      --card-bg: #1c1c1e;
-      --border: rgba(225,225,225,0.12);
-      --text: #e1e1e1;
-      --text-muted: #9b9b9b;
-      --primary: #03a9f4;
-      --green: #4caf50;
-      --red: #db4437;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .topbar {
-      background: var(--primary);
-      color: #fff;
-      padding: 0 24px;
-      height: 52px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 1.1rem;
-      font-weight: 600;
-    }
-    .topbar a { color: #fff; text-decoration: none; font-size: 0.85rem; opacity: 0.9; }
-    .topbar a:hover { opacity: 1; }
-    .content { padding: 28px 24px; max-width: 620px; }
-    .section-title {
-      font-size: 0.7rem;
-      font-weight: 600;
-      margin-bottom: 14px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 20px;
-    }
-    .field { margin-bottom: 16px; }
-    .field:last-child { margin-bottom: 0; }
-    label { display: block; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 5px; }
-    input[type="text"], input[type="password"], input[type="number"] {
-      width: 100%;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      color: var(--text);
-      font-size: 0.88rem;
-      padding: 8px 11px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    input:focus { border-color: var(--primary); }
-    .show-pass { font-size: 0.72rem; color: var(--primary); cursor: pointer; margin-top: 4px; display: inline-block; }
-    .btn-row { margin-top: 22px; display: flex; gap: 10px; align-items: center; }
-    .btn-save {
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 9px 22px;
-      font-size: 0.88rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-    .btn-save:hover { opacity: 0.85; }
-    .btn-test {
-      background: rgba(255,255,255,0.07);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 9px 18px;
-      font-size: 0.88rem;
-      cursor: pointer;
-    }
-    .status-msg { font-size: 0.82rem; }
-    .status-msg.ok  { color: var(--green); }
-    .status-msg.err { color: var(--red); }
+    :root { --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12); --text:#e1e1e1; --text-muted:#9b9b9b; --primary:#03a9f4; --green:#4caf50; --red:#db4437; --yellow:#ff9800; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; font-size:1.1rem; font-weight:600; }
+    .topbar a { color:#fff; text-decoration:none; font-size:.85rem; opacity:.85; }
+    .topbar a:hover { opacity:1; }
+    .content { padding:28px 24px; max-width:640px; }
+    .section-title { font-size:.7rem; font-weight:600; margin-bottom:14px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.08em; }
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; }
+    .field { margin-bottom:14px; }
+    .field:last-child { margin-bottom:0; }
+    label { display:block; font-size:.78rem; color:var(--text-muted); margin-bottom:5px; }
+    input[type="text"],input[type="password"],input[type="number"] { width:100%; background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.88rem; padding:8px 11px; outline:none; transition:border-color .15s; }
+    input:focus { border-color:var(--primary); }
+    .show-pass { font-size:.72rem; color:var(--primary); cursor:pointer; margin-top:4px; display:inline-block; }
+    .btn-row { margin-top:18px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .btn { padding:8px 18px; border-radius:8px; font-size:.85rem; font-weight:600; cursor:pointer; border:none; transition:opacity .15s; }
+    .btn:hover { opacity:.85; }
+    .btn-primary { background:var(--primary); color:#fff; }
+    .btn-secondary { background:rgba(255,255,255,.08); color:var(--text); border:1px solid var(--border); }
+    .btn-danger { background:rgba(219,68,55,.2); color:var(--red); border:1px solid rgba(219,68,55,.3); }
+    .status-msg { font-size:.82rem; }
+    .status-msg.ok  { color:var(--green); }
+    .status-msg.err { color:var(--red); }
+    .gmail-status { display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:8px; margin-bottom:16px; font-size:.85rem; }
+    .gmail-status.connected { background:rgba(76,175,80,.12); border:1px solid rgba(76,175,80,.25); }
+    .gmail-status.disconnected { background:rgba(255,255,255,.04); border:1px solid var(--border); color:var(--text-muted); }
+    .gmail-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .gmail-dot.on  { background:var(--green); }
+    .gmail-dot.off { background:var(--text-muted); }
+    .steps { margin:14px 0 16px; padding:0; list-style:none; counter-reset:step; }
+    .steps li { counter-increment:step; display:flex; gap:10px; margin-bottom:10px; font-size:.82rem; color:var(--text-muted); line-height:1.5; }
+    .steps li::before { content:counter(step); background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:.72rem; font-weight:700; margin-top:1px; }
+    .steps code { background:rgba(255,255,255,.08); padding:1px 6px; border-radius:4px; font-size:.8rem; color:var(--text); }
+    .redirect-uri { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-family:'SF Mono','Fira Code',monospace; font-size:.78rem; color:var(--primary); word-break:break-all; margin:8px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .copy-btn { background:rgba(3,169,244,.15); border:1px solid rgba(3,169,244,.3); color:var(--primary); border-radius:5px; padding:3px 10px; font-size:.72rem; cursor:pointer; flex-shrink:0; }
+    .copy-btn:hover { background:rgba(3,169,244,.25); }
+    .divider { border:none; border-top:1px solid var(--border); margin:18px 0; }
+    .collapse-toggle { font-size:.78rem; color:var(--primary); cursor:pointer; display:flex; align-items:center; gap:4px; }
+    .collapse-body { margin-top:14px; }
+    .hidden { display:none; }
   </style>
 </head>
 <body>
@@ -98,103 +57,240 @@
 
 <div class="content">
 
+  <!-- Push Notifications -->
   <div class="section-title">Push Notifications</div>
   <div class="card">
     <div class="field">
-      <label>HA notify service (e.g. notify.mobile_app_iphone)</label>
-      <input type="text" id="notify_service" value="{{ fields | selectattr('key','eq','notify_service') | map(attribute='value') | first }}">
+      <label>HA notify service</label>
+      <input type="text" id="notify_service" placeholder="notify.mobile_app_iphone">
     </div>
     <div class="field">
-      <label>Alert cooldown (seconds)</label>
-      <input type="number" id="alert_cooldown" value="{{ fields | selectattr('key','eq','alert_cooldown') | map(attribute='value') | first }}" min="0" style="width:120px">
+      <label>Alert cooldown (seconds between repeat alerts for the same issue)</label>
+      <input type="number" id="alert_cooldown" min="0" style="width:110px">
     </div>
     <div class="btn-row">
-      <button class="btn-save" onclick="save(['notify_service','alert_cooldown'])">Save</button>
-      <button class="btn-test" onclick="testPush()">Send test push</button>
+      <button class="btn btn-primary" onclick="savePush()">Save</button>
+      <button class="btn btn-secondary" onclick="testPush()">Send test</button>
       <span class="status-msg" id="push-status"></span>
     </div>
   </div>
 
-  <div class="section-title">Email / Gmail</div>
+  <!-- Email via Gmail OAuth -->
+  <div class="section-title">Email Alerts — Gmail</div>
   <div class="card">
+
+    <div id="gmail-status-bar" class="gmail-status disconnected">
+      <span class="gmail-dot off" id="gmail-dot"></span>
+      <span id="gmail-status-text">Not connected</span>
+      <button class="btn btn-danger hidden" id="btn-disconnect" onclick="disconnectGmail()" style="margin-left:auto;padding:4px 12px;font-size:.78rem;">Disconnect</button>
+    </div>
+
+    <ol class="steps">
+      <li>Go to <strong>Google Cloud Console</strong> → APIs &amp; Services → Credentials → <strong>Create Credentials → OAuth client ID</strong></li>
+      <li>Application type: <strong>Web application</strong></li>
+      <li>Under <em>Authorised redirect URIs</em>, add this exact URL:
+        <div class="redirect-uri" id="redirect-uri-box">
+          <span id="redirect-uri-val">loading…</span>
+          <button class="copy-btn" onclick="copyUri()">Copy</button>
+        </div>
+      </li>
+      <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> below, then click <strong>Save</strong></li>
+      <li>Click <strong>Connect Gmail</strong> and authorise in the browser that opens</li>
+    </ol>
+
     <div class="field">
-      <label>SMTP host (e.g. smtp.gmail.com)</label>
-      <input type="text" id="smtp_host" value="{{ fields | selectattr('key','eq','smtp_host') | map(attribute='value') | first }}">
+      <label>Client ID</label>
+      <input type="text" id="gmail_client_id" placeholder="xxxx.apps.googleusercontent.com">
     </div>
     <div class="field">
-      <label>SMTP port</label>
-      <input type="number" id="smtp_port" value="{{ fields | selectattr('key','eq','smtp_port') | map(attribute='value') | first }}" min="1" max="65535" style="width:100px">
+      <label>Client Secret</label>
+      <input type="password" id="gmail_client_secret">
+      <span class="show-pass" onclick="togglePass('gmail_client_secret')">show</span>
     </div>
-    <div class="field">
-      <label>SMTP user</label>
-      <input type="text" id="smtp_user" value="{{ fields | selectattr('key','eq','smtp_user') | map(attribute='value') | first }}" autocomplete="username">
+
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveGmail()">Save</button>
+      <button class="btn btn-secondary" id="btn-connect" onclick="connectGmail()">Connect Gmail</button>
+      <button class="btn btn-secondary" onclick="testEmail()">Send test email</button>
+      <span class="status-msg" id="email-status"></span>
     </div>
+
+    <hr class="divider">
+
     <div class="field">
-      <label>SMTP password / app password</label>
-      <input type="password" id="smtp_pass" value="{{ fields | selectattr('key','eq','smtp_pass') | map(attribute='value') | first }}" autocomplete="current-password">
-      <span class="show-pass" onclick="togglePass()">show</span>
-    </div>
-    <div class="field">
-      <label>From address</label>
-      <input type="text" id="email_from" value="{{ fields | selectattr('key','eq','email_from') | map(attribute='value') | first }}">
-    </div>
-    <div class="field">
-      <label>To address (alert recipient)</label>
-      <input type="text" id="email_to" value="{{ fields | selectattr('key','eq','email_to') | map(attribute='value') | first }}">
+      <label>Alert recipient email (leave blank to send to the connected Gmail account)</label>
+      <input type="text" id="email_to" placeholder="you@example.com">
     </div>
     <div class="btn-row">
-      <button class="btn-save" onclick="save(['smtp_host','smtp_port','smtp_user','smtp_pass','email_from','email_to'])">Save</button>
-      <button class="btn-test" onclick="testEmail()">Send test email</button>
-      <span class="status-msg" id="email-status"></span>
+      <button class="btn btn-primary" onclick="saveEmailTo()">Save recipient</button>
+    </div>
+  </div>
+
+  <!-- SMTP fallback -->
+  <div class="section-title">Email Alerts — SMTP (alternative to Gmail)</div>
+  <div class="card">
+    <span class="collapse-toggle" onclick="toggleSmtp()">
+      <span id="smtp-arrow">&#9654;</span> Show SMTP settings
+    </span>
+    <div class="collapse-body hidden" id="smtp-body">
+      <div class="field" style="margin-top:4px">
+        <label>SMTP host (e.g. smtp.gmail.com)</label>
+        <input type="text" id="smtp_host">
+      </div>
+      <div class="field">
+        <label>SMTP port</label>
+        <input type="number" id="smtp_port" min="1" max="65535" style="width:100px">
+      </div>
+      <div class="field">
+        <label>SMTP user</label>
+        <input type="text" id="smtp_user" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>SMTP password / app password</label>
+        <input type="password" id="smtp_pass" autocomplete="current-password">
+        <span class="show-pass" onclick="togglePass('smtp_pass')">show</span>
+      </div>
+      <div class="field">
+        <label>From address</label>
+        <input type="text" id="email_from">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveSmtp()">Save SMTP</button>
+        <button class="btn btn-secondary" onclick="testEmail()">Send test email</button>
+        <span class="status-msg" id="smtp-status"></span>
+      </div>
     </div>
   </div>
 
 </div>
 
 <script>
-  function val(id) { return document.getElementById(id).value; }
+  // ── populate fields from server ──────────────────────────────────────────
+  async function loadConfig() {
+    try {
+      const r = await fetch('/api/config');
+      const d = await r.json();
+      setVal('notify_service',    d.notify_service    || '');
+      setVal('alert_cooldown',    d.alert_cooldown    || '300');
+      setVal('gmail_client_id',   d.gmail_client_id   || '');
+      setVal('email_to',          d.email_to          || '');
+      setVal('smtp_host',         d.smtp_host         || '');
+      setVal('smtp_port',         d.smtp_port         || '587');
+      setVal('smtp_user',         d.smtp_user         || '');
+      setVal('email_from',        d.email_from        || '');
+      // don't populate secrets into the form
+    } catch (_) {}
+  }
 
-  async function save(keys) {
-    const payload = {};
-    keys.forEach(k => payload[k] = val(k));
-    const r = await fetch('/api/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    if (r.ok) flash('push-status', 'Saved', 'ok');
+  async function loadGmailStatus() {
+    try {
+      const r = await fetch('/oauth/gmail/status');
+      const d = await r.json();
+      const bar  = document.getElementById('gmail-status-bar');
+      const dot  = document.getElementById('gmail-dot');
+      const txt  = document.getElementById('gmail-status-text');
+      const disc = document.getElementById('btn-disconnect');
+      const conn = document.getElementById('btn-connect');
+      if (d.connected) {
+        bar.className  = 'gmail-status connected';
+        dot.className  = 'gmail-dot on';
+        txt.textContent = 'Connected' + (d.email ? ' as ' + d.email : '');
+        disc.classList.remove('hidden');
+        conn.textContent = 'Reconnect';
+      } else {
+        bar.className  = 'gmail-status disconnected';
+        dot.className  = 'gmail-dot off';
+        txt.textContent = 'Not connected';
+        disc.classList.add('hidden');
+        conn.textContent = 'Connect Gmail';
+      }
+    } catch (_) {}
+  }
+
+  // Redirect URI
+  const redirectUri = window.location.origin + '/oauth/gmail/callback';
+  document.getElementById('redirect-uri-val').textContent = redirectUri;
+
+  function copyUri() {
+    navigator.clipboard.writeText(redirectUri).then(() => flash('email-status','Copied!','ok'));
+  }
+
+  // ── URL param feedback (post-OAuth redirect) ─────────────────────────────
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('gmail') === 'connected') flash('email-status', 'Gmail connected!', 'ok');
+  if (params.get('gmail_error'))           flash('email-status', 'Error: ' + params.get('gmail_error'), 'err');
+
+  // ── actions ──────────────────────────────────────────────────────────────
+  async function savePush() {
+    await save({notify_service: val('notify_service'), alert_cooldown: val('alert_cooldown')});
+    flash('push-status','Saved','ok');
+  }
+
+  async function saveGmail() {
+    const payload = {gmail_client_id: val('gmail_client_id')};
+    const secret = val('gmail_client_secret');
+    if (secret) payload.gmail_client_secret = secret;
+    await save(payload);
+    flash('email-status','Saved — now click Connect Gmail','ok');
+  }
+
+  async function saveEmailTo() {
+    await save({email_to: val('email_to')});
+    flash('email-status','Saved','ok');
+  }
+
+  async function saveSmtp() {
+    const payload = {smtp_host: val('smtp_host'), smtp_port: val('smtp_port'),
+                     smtp_user: val('smtp_user'), email_from: val('email_from')};
+    const p = val('smtp_pass'); if (p) payload.smtp_pass = p;
+    await save(payload);
+    flash('smtp-status','Saved','ok');
+  }
+
+  function connectGmail() { window.location.href = '/oauth/gmail/start'; }
+
+  async function disconnectGmail() {
+    await fetch('/oauth/gmail/disconnect', {method:'POST'});
+    loadGmailStatus();
   }
 
   async function testPush() {
-    const statusEl = document.getElementById('push-status');
-    statusEl.textContent = 'Sending…';
-    statusEl.className = 'status-msg';
-    const r = await fetch('/api/test_push', { method: 'POST' });
+    const r = await fetch('/api/test_push', {method:'POST'});
     const d = await r.json();
     flash('push-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
   }
 
   async function testEmail() {
-    const statusEl = document.getElementById('email-status');
-    statusEl.textContent = 'Sending…';
-    statusEl.className = 'status-msg';
-    const r = await fetch('/api/test_email', { method: 'POST' });
+    flash('email-status','Sending…','');
+    const r = await fetch('/api/test_email', {method:'POST'});
     const d = await r.json();
     flash('email-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
   }
 
+  // ── helpers ───────────────────────────────────────────────────────────────
+  async function save(payload) {
+    await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  }
+  function val(id)  { return document.getElementById(id).value; }
+  function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = v; }
   function flash(id, msg, cls) {
     const el = document.getElementById(id);
-    el.textContent = msg;
-    el.className = 'status-msg ' + cls;
-    setTimeout(() => { el.textContent = ''; el.className = 'status-msg'; }, 4000);
+    el.textContent = msg; el.className = 'status-msg ' + cls;
+    setTimeout(() => { el.textContent=''; el.className='status-msg'; }, 5000);
+  }
+  function togglePass(id) { const el=document.getElementById(id); el.type = el.type==='password'?'text':'password'; }
+  function toggleSmtp() {
+    const body = document.getElementById('smtp-body');
+    const arr  = document.getElementById('smtp-arrow');
+    const open = body.classList.toggle('hidden');
+    arr.textContent = open ? '▶' : '▼';
+    document.querySelector('.collapse-toggle').querySelector('span:last-child') ||
+      (document.querySelector('.collapse-toggle').lastChild.textContent =
+        body.classList.contains('hidden') ? ' Show SMTP settings' : ' Hide SMTP settings');
   }
 
-  function togglePass() {
-    const inp = document.getElementById('smtp_pass');
-    inp.type = inp.type === 'password' ? 'text' : 'password';
-  }
+  loadConfig();
+  loadGmailStatus();
 </script>
-
 </body>
 </html>
