@@ -738,7 +738,22 @@ def api_update_z2m():
             else:
                 raise RuntimeError("Timed out waiting for addon to install")
 
-            # Step 6 — restore saved options; set network port binding
+            # Step 6a — stop addon if it auto-started after install so options apply cleanly
+            _set("running", "Stopping addon before restoring config…")
+            try:
+                chk = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+                addon_state_now = chk.get("state", "")
+                _dbg(f"Pre-options state: {addon_state_now}")
+                if addon_state_now in ("started", "running"):
+                    _dbg("Addon is running — stopping before options restore")
+                    _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/stop")
+                    time.sleep(5)
+                else:
+                    _dbg("Addon already stopped — no need to stop")
+            except Exception as e:
+                _dbg(f"Stop-before-options error: {e} (continuing anyway)")
+
+            # Step 6b — restore saved options; set network port binding
             _set("running", "Restoring config options…")
             options_payload: dict = {"options": saved_options}
             if Z2M_EDGE_PORT:
