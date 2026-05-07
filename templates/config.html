@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA Monitor — Config</title>
+  <style>
+    :root {
+      --bg: #111827;
+      --card-bg: #1c1c1e;
+      --border: rgba(225,225,225,0.12);
+      --text: #e1e1e1;
+      --text-muted: #9b9b9b;
+      --primary: #03a9f4;
+      --green: #4caf50;
+      --red: #db4437;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .topbar {
+      background: var(--primary);
+      color: #fff;
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    .topbar a { color: #fff; text-decoration: none; font-size: 0.85rem; opacity: 0.9; }
+    .topbar a:hover { opacity: 1; }
+    .content { padding: 28px 24px; max-width: 620px; }
+    .section-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .field { margin-bottom: 16px; }
+    .field:last-child { margin-bottom: 0; }
+    label { display: block; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 5px; }
+    input[type="text"], input[type="password"], input[type="number"] {
+      width: 100%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-size: 0.88rem;
+      padding: 8px 11px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--primary); }
+    .show-pass { font-size: 0.72rem; color: var(--primary); cursor: pointer; margin-top: 4px; display: inline-block; }
+    .btn-row { margin-top: 22px; display: flex; gap: 10px; align-items: center; }
+    .btn-save {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 22px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-save:hover { opacity: 0.85; }
+    .btn-test {
+      background: rgba(255,255,255,0.07);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 18px;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .status-msg { font-size: 0.82rem; }
+    .status-msg.ok  { color: var(--green); }
+    .status-msg.err { color: var(--red); }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span>Settings</span>
+  <a href="/">&larr; Dashboard</a>
+</div>
+
+<div class="content">
+
+  <div class="section-title">Push Notifications</div>
+  <div class="card">
+    <div class="field">
+      <label>HA notify service (e.g. notify.mobile_app_iphone)</label>
+      <input type="text" id="notify_service" value="{{ fields | selectattr('key','eq','notify_service') | map(attribute='value') | first }}">
+    </div>
+    <div class="field">
+      <label>Alert cooldown (seconds)</label>
+      <input type="number" id="alert_cooldown" value="{{ fields | selectattr('key','eq','alert_cooldown') | map(attribute='value') | first }}" min="0" style="width:120px">
+    </div>
+    <div class="btn-row">
+      <button class="btn-save" onclick="save(['notify_service','alert_cooldown'])">Save</button>
+      <button class="btn-test" onclick="testPush()">Send test push</button>
+      <span class="status-msg" id="push-status"></span>
+    </div>
+  </div>
+
+  <div class="section-title">Email / Gmail</div>
+  <div class="card">
+    <div class="field">
+      <label>SMTP host (e.g. smtp.gmail.com)</label>
+      <input type="text" id="smtp_host" value="{{ fields | selectattr('key','eq','smtp_host') | map(attribute='value') | first }}">
+    </div>
+    <div class="field">
+      <label>SMTP port</label>
+      <input type="number" id="smtp_port" value="{{ fields | selectattr('key','eq','smtp_port') | map(attribute='value') | first }}" min="1" max="65535" style="width:100px">
+    </div>
+    <div class="field">
+      <label>SMTP user</label>
+      <input type="text" id="smtp_user" value="{{ fields | selectattr('key','eq','smtp_user') | map(attribute='value') | first }}" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>SMTP password / app password</label>
+      <input type="password" id="smtp_pass" value="{{ fields | selectattr('key','eq','smtp_pass') | map(attribute='value') | first }}" autocomplete="current-password">
+      <span class="show-pass" onclick="togglePass()">show</span>
+    </div>
+    <div class="field">
+      <label>From address</label>
+      <input type="text" id="email_from" value="{{ fields | selectattr('key','eq','email_from') | map(attribute='value') | first }}">
+    </div>
+    <div class="field">
+      <label>To address (alert recipient)</label>
+      <input type="text" id="email_to" value="{{ fields | selectattr('key','eq','email_to') | map(attribute='value') | first }}">
+    </div>
+    <div class="btn-row">
+      <button class="btn-save" onclick="save(['smtp_host','smtp_port','smtp_user','smtp_pass','email_from','email_to'])">Save</button>
+      <button class="btn-test" onclick="testEmail()">Send test email</button>
+      <span class="status-msg" id="email-status"></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function val(id) { return document.getElementById(id).value; }
+
+  async function save(keys) {
+    const payload = {};
+    keys.forEach(k => payload[k] = val(k));
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (r.ok) flash('push-status', 'Saved', 'ok');
+  }
+
+  async function testPush() {
+    const statusEl = document.getElementById('push-status');
+    statusEl.textContent = 'Sending…';
+    statusEl.className = 'status-msg';
+    const r = await fetch('/api/test_push', { method: 'POST' });
+    const d = await r.json();
+    flash('push-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
+  }
+
+  async function testEmail() {
+    const statusEl = document.getElementById('email-status');
+    statusEl.textContent = 'Sending…';
+    statusEl.className = 'status-msg';
+    const r = await fetch('/api/test_email', { method: 'POST' });
+    const d = await r.json();
+    flash('email-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
+  }
+
+  function flash(id, msg, cls) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className = 'status-msg ' + cls;
+    setTimeout(() => { el.textContent = ''; el.className = 'status-msg'; }, 4000);
+  }
+
+  function togglePass() {
+    const inp = document.getElementById('smtp_pass');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+</script>
+
+</body>
+</html>

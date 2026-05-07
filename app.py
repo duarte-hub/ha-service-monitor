@@ -99,6 +99,51 @@ def _persist_alerts_enabled(val: bool) -> None:
 
 alerts_enabled = _load_alerts_enabled()
 
+# ---------------------------------------------------------------------------
+# Runtime config overlay (persisted to disk, overrides env vars at runtime)
+# ---------------------------------------------------------------------------
+_CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/monitor_config.json")
+_CONFIG_FIELDS = {
+    "notify_service": {"label": "Push notify service", "default": NOTIFY_SERVICE},
+    "smtp_host":      {"label": "SMTP host",           "default": SMTP_HOST},
+    "smtp_port":      {"label": "SMTP port",           "default": str(SMTP_PORT)},
+    "smtp_user":      {"label": "SMTP user",           "default": SMTP_USER},
+    "smtp_pass":      {"label": "SMTP password",       "default": SMTP_PASS, "secret": True},
+    "email_from":     {"label": "Email from",          "default": EMAIL_FROM},
+    "email_to":       {"label": "Email to",            "default": EMAIL_TO},
+    "alert_cooldown": {"label": "Alert cooldown (s)",  "default": str(ALERT_COOLDOWN)},
+}
+
+def _load_config() -> dict:
+    try:
+        with open(_CONFIG_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+def _save_config(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        with open(_CONFIG_PATH, "w") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception as e:
+        log.error("Failed to save config: %s", e)
+
+def _apply_config(data: dict) -> None:
+    global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN
+    if "notify_service" in data: NOTIFY_SERVICE = data["notify_service"]
+    if "smtp_host"      in data: SMTP_HOST      = data["smtp_host"]
+    if "smtp_port"      in data: SMTP_PORT       = int(data["smtp_port"] or 587)
+    if "smtp_user"      in data: SMTP_USER       = data["smtp_user"]
+    if "smtp_pass"      in data: SMTP_PASS       = data["smtp_pass"]
+    if "email_from"     in data: EMAIL_FROM      = data["email_from"]
+    if "email_to"       in data: EMAIL_TO        = data["email_to"]
+    if "alert_cooldown" in data: ALERT_COOLDOWN  = int(data["alert_cooldown"] or 300)
+
+_runtime_config = _load_config()
+_apply_config(_runtime_config)
+
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -624,6 +669,61 @@ def api_alerts_enabled():
     return jsonify({"enabled": alerts_enabled})
 
 
+@app.route("/config")
+def config_page():
+    fields = []
+    for key, meta in _CONFIG_FIELDS.items():
+        fields.append({
+            "key": key,
+            "label": meta["label"],
+            "value": _runtime_config.get(key, meta["default"]),
+            "secret": meta.get("secret", False),
+        })
+    return render_template("config.html", fields=fields)
+
+
+@app.route("/api/config", methods=["GET", "POST"])
+def api_config():
+    global _runtime_config
+    if request.method == "POST":
+        data = {k: v for k, v in request.json.items() if k in _CONFIG_FIELDS}
+        _runtime_config.update(data)
+        _save_config(_runtime_config)
+        _apply_config(_runtime_config)
+    safe = {k: ("••••••" if _CONFIG_FIELDS[k].get("secret") and v else v)
+            for k, v in _runtime_config.items() if k in _CONFIG_FIELDS}
+    return jsonify(safe)
+
+
+@app.route("/api/test_push", methods=["POST"])
+def api_test_push():
+    try:
+        send_push("Test notification", "HA Monitor push notifications are working.")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/api/test_email", methods=["POST"])
+def api_test_email():
+    try:
+        if not SMTP_HOST or not EMAIL_TO:
+            return jsonify({"ok": False, "error": "SMTP host and Email to are required"})
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_FROM or SMTP_USER
+        msg["To"] = EMAIL_TO
+        msg["Subject"] = "HA Monitor — test email"
+        msg.attach(MIMEText("HA Monitor email alerts are working.", "plain"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+            s.starttls()
+            if SMTP_USER and SMTP_PASS:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(msg["From"], [EMAIL_TO], msg.as_string())
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/z2m_backup")
 def api_z2m_backup():
     backup_path = os.environ.get("Z2M_BACKUP_PATH", "/data/z2m_edge_backup.json")
@@ -792,10 +892,19 @@ def api_update_z2m():
             options_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/options", options_payload)
             _dbg(f"Options result: {options_result}")
 
-            # Step 7 — start
+            # Step 7 — start (HA may return success=False with empty message even when it works)
             _set("running", "Starting Z2M Edge…")
-            start_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/start")
-            _dbg(f"Start result: {start_result}")
+            try:
+                start_result = _ws_sup("POST", f"/addons/{Z2M_EDGE_SLUG}/start")
+                _dbg(f"Start result: {start_result}")
+            except Exception as se:
+                _dbg(f"Start call error: {se} — probing addon state")
+                time.sleep(5)
+                probe = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+                probe_state = probe.get("state", "")
+                _dbg(f"Post-start probe: state={probe_state}")
+                if probe_state not in ("started", "running"):
+                    raise
 
             # Step 8 — wait for bridge to reconnect
             _set("running", "Waiting for Z2M Edge bridge to come online…")
