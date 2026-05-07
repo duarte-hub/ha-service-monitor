@@ -124,7 +124,8 @@ _CONFIG_FIELDS = {
     "smtp_pass":         {"label": "SMTP password",       "default": SMTP_PASS, "secret": True},
     "email_from":        {"label": "Email from",          "default": EMAIL_FROM},
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
-    "alert_cooldown":    {"label": "Alert cooldown (s)",  "default": str(ALERT_COOLDOWN)},
+    "alert_cooldown":       {"label": "Alert cooldown (s)",  "default": str(ALERT_COOLDOWN)},
+    "email_alerts_enabled": {"label": "Email alerts enabled", "default": "false"},
 }
 
 def _load_config() -> dict:
@@ -142,17 +143,20 @@ def _save_config(data: dict) -> None:
     except Exception as e:
         log.error("Failed to save config: %s", e)
 
+email_alerts_enabled: bool = False
+
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN
-    if "notify_service" in data: NOTIFY_SERVICE = data["notify_service"]
-    if "smtp_host"      in data: SMTP_HOST      = data["smtp_host"]
-    if "smtp_port"      in data: SMTP_PORT       = int(data["smtp_port"] or 587)
-    if "smtp_user"      in data: SMTP_USER       = data["smtp_user"]
-    if "smtp_pass"      in data: SMTP_PASS       = data["smtp_pass"]
-    if "email_from"     in data: EMAIL_FROM      = data["email_from"]
-    if "email_to"       in data: EMAIL_TO        = data["email_to"]
-    if "alert_cooldown" in data: ALERT_COOLDOWN  = int(data["alert_cooldown"] or 300)
+    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, email_alerts_enabled
+    if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
+    if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
+    if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
+    if "smtp_user"            in data: SMTP_USER             = data["smtp_user"]
+    if "smtp_pass"            in data: SMTP_PASS             = data["smtp_pass"]
+    if "email_from"           in data: EMAIL_FROM            = data["email_from"]
+    if "email_to"             in data: EMAIL_TO              = data["email_to"]
+    if "alert_cooldown"       in data: ALERT_COOLDOWN        = int(data["alert_cooldown"] or 300)
+    if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
 
 _runtime_config = _load_config()
 _apply_config(_runtime_config)
@@ -552,6 +556,26 @@ def send_push(subject: str, body: str):
         log.error("Failed to send push: %s", e)
 
 
+def send_email(subject: str, body: str):
+    if not SMTP_HOST or not EMAIL_TO:
+        log.warning("Email alert skipped — SMTP not configured")
+        return
+    try:
+        msg = MIMEMultipart()
+        msg["From"]    = EMAIL_FROM or SMTP_USER
+        msg["To"]      = EMAIL_TO
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+            s.starttls()
+            if SMTP_USER and SMTP_PASS:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(msg["From"], [EMAIL_TO], msg.as_string())
+        log.info("Email alert sent: %s", subject)
+    except Exception as e:
+        log.error("Failed to send email alert: %s", e)
+
+
 def maybe_alert(key: str, subject: str, detail: str):
     """Send alert if cooldown has elapsed and alerts are enabled."""
     if not alerts_enabled:
@@ -561,6 +585,8 @@ def maybe_alert(key: str, subject: str, detail: str):
     if now - last >= ALERT_COOLDOWN:
         alert_history[key] = now
         threading.Thread(target=send_push, args=(subject, detail), daemon=True).start()
+        if email_alerts_enabled:
+            threading.Thread(target=send_email, args=(subject, detail), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------

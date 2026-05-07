@@ -58,6 +58,15 @@
 
   <div class="section-title">Email Alerts</div>
   <div class="card">
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
+      <label style="margin:0">Send email alerts when a service goes down</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+        <input type="checkbox" id="email_alerts_enabled" onchange="saveEmailToggle()" style="width:auto;accent-color:var(--primary)">
+        <span id="email-toggle-label" style="font-size:.82rem;color:var(--text-muted)">Off</span>
+      </label>
+    </div>
+  </div>
+  <div class="card">
     <div class="field">
       <label>SMTP host (e.g. smtp.gmail.com)</label>
       <input type="text" id="smtp_host">
@@ -104,7 +113,16 @@
       set('smtp_user',      d.smtp_user      || '');
       set('email_from',     d.email_from     || '');
       set('email_to',       d.email_to       || '');
+      const on = String(d.email_alerts_enabled).toLowerCase() === 'true';
+      document.getElementById('email_alerts_enabled').checked = on;
+      document.getElementById('email-toggle-label').textContent = on ? 'On' : 'Off';
     } catch (_) {}
+  }
+
+  async function saveEmailToggle() {
+    const on = document.getElementById('email_alerts_enabled').checked;
+    document.getElementById('email-toggle-label').textContent = on ? 'On' : 'Off';
+    await post({email_alerts_enabled: String(on)});
   }
 
   async function savePush() {
