@@ -695,7 +695,10 @@ def api_update_z2m():
             _dbg("Waiting 30 s for store cache to warm…")
             time.sleep(30)
 
-            # Step 4 — install latest; retry a few times in case store cache is still warming
+            # Step 4 — install latest; retry a few times in case store cache is still warming.
+            # HA sometimes returns success=False with an empty message even when the install
+            # actually succeeded asynchronously.  After any failure, probe the addon state
+            # before deciding whether to retry.
             _set("running", "Installing latest Z2M Edge…")
             for install_attempt in range(3):
                 try:
@@ -705,9 +708,14 @@ def api_update_z2m():
                 except Exception as ie:
                     err_str = str(ie)
                     _dbg(f"Install attempt {install_attempt + 1} error: {ie}")
-                    if "already installed" in err_str:
-                        _dbg("Addon already installed — skipping install, continuing with config restore")
+                    # Check whether the addon is actually present now (HA async quirk)
+                    try:
+                        probe = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
+                        _dbg(f"Post-install probe: state={probe.get('state')}, version={probe.get('version')}")
+                        _dbg("Addon present after install error — continuing with config restore")
                         break
+                    except Exception as pe:
+                        _dbg(f"Post-install probe failed: {pe}")
                     if install_attempt < 2:
                         _set("running", f"Install attempt {install_attempt + 1} failed — retrying in 15 s…")
                         time.sleep(15)
