@@ -1274,14 +1274,18 @@ def api_update_z2m():
                         raise
 
             # Step 5 — poll addon state until it settles (up to 6 min, fresh WS each poll)
+            # version=None means HA is still downloading; only break when version is populated.
             _set("running", "Waiting for install to complete…")
             for attempt in range(72):
                 time.sleep(5)
                 try:
                     chk = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
-                    addon_state = chk.get("state", "")
-                    _dbg(f"Poll {attempt + 1}: addon state={addon_state}")
-                    if addon_state in ("stopped", "started", "running", "unknown"):
+                    addon_state   = chk.get("state", "")
+                    addon_version = chk.get("version")
+                    _dbg(f"Poll {attempt + 1}: addon state={addon_state}, version={addon_version}")
+                    if addon_state in ("stopped", "started", "running"):
+                        break
+                    if addon_state == "unknown" and addon_version:
                         break
                 except Exception as e:
                     _dbg(f"Poll {attempt + 1} error: {e}")
