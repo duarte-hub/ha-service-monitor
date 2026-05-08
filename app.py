@@ -1271,9 +1271,13 @@ def api_update_z2m():
             except Exception as e:
                 _dbg(f"Stop-before-options error: {e} (continuing anyway)")
 
-            # Step 6b — restore saved options; set network port binding
+            # Step 6b — restore saved options; set network port binding, watchdog, sidebar
             _set("running", "Restoring config options…")
-            options_payload: dict = {"options": saved_options}
+            options_payload: dict = {
+                "options":       saved_options,
+                "watchdog":      True,
+                "ingress_panel": True,
+            }
             if Z2M_EDGE_PORT:
                 options_payload["network"] = {"8485/tcp": Z2M_EDGE_PORT}
             _dbg(f"Options payload: {json.dumps(options_payload)[:500]}")
