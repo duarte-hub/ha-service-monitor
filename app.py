@@ -77,6 +77,14 @@ monitor_state = {
     "ha_version": "",
 }
 state_lock = threading.Lock()
+def _atomic_write(path: str, data) -> None:
+    """Write JSON atomically: write to .tmp then rename so a crash mid-write never corrupts the original."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp, path)
+
 _Z2M_STATUS_PATH = os.environ.get("Z2M_STATUS_PATH", "/data/z2m_last_update_status.json")
 def _load_z2m_status() -> dict:
     try:
@@ -87,9 +95,7 @@ def _load_z2m_status() -> dict:
 
 def _persist_z2m_status(status: dict) -> None:
     try:
-        os.makedirs(os.path.dirname(_Z2M_STATUS_PATH), exist_ok=True)
-        with open(_Z2M_STATUS_PATH, "w") as fh:
-            json.dump(status, fh)
+        _atomic_write(_Z2M_STATUS_PATH, status)
     except Exception:
         pass
 
@@ -107,9 +113,7 @@ def _load_alerts_enabled() -> bool:
 
 def _persist_alerts_enabled(val: bool) -> None:
     try:
-        os.makedirs(os.path.dirname(_ALERTS_STATE_PATH), exist_ok=True)
-        with open(_ALERTS_STATE_PATH, "w") as fh:
-            json.dump({"enabled": val}, fh)
+        _atomic_write(_ALERTS_STATE_PATH, {"enabled": val})
     except Exception:
         pass
 
@@ -136,9 +140,7 @@ def _load_devices() -> dict:
 
 def _save_devices() -> None:
     try:
-        os.makedirs(os.path.dirname(_DEVICES_PATH), exist_ok=True)
-        with open(_DEVICES_PATH, "w") as fh:
-            json.dump(sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")]), fh, indent=2)
+        _atomic_write(_DEVICES_PATH, sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")]))
     except Exception as e:
         log.error("Failed to save devices: %s", e)
 
@@ -416,9 +418,7 @@ def _load_config() -> dict:
 
 def _save_config(data: dict) -> None:
     try:
-        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-        with open(_CONFIG_PATH, "w") as fh:
-            json.dump(data, fh, indent=2)
+        _atomic_write(_CONFIG_PATH, data)
     except Exception as e:
         log.error("Failed to save config: %s", e)
 
