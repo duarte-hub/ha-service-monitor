@@ -70,6 +70,18 @@
     .latency.fast { color:var(--green); }
     .latency.slow { color:var(--yellow); }
 
+    /* ── port chips ─────────────────────────────────────────────────────── */
+    .port-chip { display:inline-flex; align-items:center; gap:3px; font-size:.72rem; font-family:'SF Mono','Fira Code',monospace; border-radius:4px; padding:1px 6px; margin:1px 2px; cursor:pointer; border:1px solid transparent; }
+    .port-chip::before { content:''; width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+    .port-up      { color:var(--green);  border-color:rgba(76,175,80,.25);  background:rgba(76,175,80,.08);  }
+    .port-up::before    { background:var(--green); }
+    .port-down    { color:var(--red);    border-color:rgba(219,68,55,.25);  background:rgba(219,68,55,.08);  }
+    .port-down::before  { background:var(--red); animation:blink 1.5s infinite; }
+    .port-unknown { color:var(--muted);  border-color:var(--border);        background:rgba(255,255,255,.03); }
+    .port-unknown::before { background:var(--muted); }
+    .port-add { color:var(--muted); font-size:.72rem; cursor:pointer; padding:2px 4px; }
+    .port-add:hover { color:var(--primary); }
+
     /* ── delete btn ─────────────────────────────────────────────────────── */
     .btn-del { background:none; border:none; color:var(--muted); cursor:pointer; font-size:.9rem; padding:0 4px; line-height:1; }
     .btn-del:hover { color:var(--red); }
@@ -147,6 +159,7 @@
         <th>Vendor / MAC</th>
         <th>Last Seen</th>
         <th>Latency</th>
+        <th>Ports</th>
         <th>Monitor</th>
         <th></th>
       </tr>
@@ -247,6 +260,7 @@
   // ── Device table ───────────────────────────────────────────────────────
   let _devices = [];
   let _editingIp = null;
+  let _editingPortsIp = null;
   let _monitoredOnly = false;
 
   function toggleMonitoredFilter() {
@@ -287,13 +301,45 @@
     return `<div class="name-cell"><span class="name-view" title="Click to edit" onclick="startEdit('${d.ip}')">${d.name ? d.name : (d.hostname||'—')}</span></div>`;
   }
 
+  function _portsCell(d) {
+    const ports  = d.ports || [];
+    const status = d.port_status || {};
+    if (_editingPortsIp === d.ip) {
+      return `<input class="name-input" id="ports-input-${d.ip}"
+        value="${ports.join(', ')}"
+        onblur="savePorts('${d.ip}')"
+        onkeydown="if(event.key==='Enter')savePorts('${d.ip}');if(event.key==='Escape')cancelPortEdit()"
+        style="width:110px" placeholder="80, 6638">`;
+    }
+    if (!ports.length) {
+      return `<span class="port-add" title="Add ports to monitor" onclick="editPorts('${d.ip}')">+ ports</span>`;
+    }
+    return ports.map(p => {
+      const up = status[String(p)];
+      const cls = up === true ? 'port-up' : up === false ? 'port-down' : 'port-unknown';
+      return `<span class="port-chip ${cls}" title="Click to edit ports" onclick="editPorts('${d.ip}')">${p}</span>`;
+    }).join('');
+  }
+
+  function editPorts(ip)      { _editingPortsIp = ip; renderDevices(); }
+  function cancelPortEdit()   { _editingPortsIp = null; renderDevices(); }
+
+  async function savePorts(ip) {
+    const inp = document.getElementById(`ports-input-${ip}`);
+    if (!inp) return;
+    const ports = inp.value.split(/[,\s]+/).map(s => parseInt(s)).filter(n => !isNaN(n) && n > 0 && n < 65536);
+    await fetch(`/api/devices/${ip}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ports})});
+    const d = _devices.find(d => d.ip === ip); if (d) d.ports = ports;
+    _editingPortsIp = null;
+    renderDevices();
+  }
+
   function renderDevices() {
     const tbody = document.getElementById('device-tbody');
     const visible = _monitoredOnly ? _devices.filter(d => d.monitored) : _devices;
     if (!visible.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="9">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
       if (_monitoredOnly && _devices.length) {
-        // show all devices greyed so user can still toggle
         tbody.innerHTML += _devices.map(d => `
           <tr data-ip="${d.ip}" style="opacity:.35">
             <td>${_statusDot(d)}</td>
@@ -303,6 +349,7 @@
             <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
             <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
             <td>${_latencyCell(d)}</td>
+            <td>${_portsCell(d)}</td>
             <td><label class="mon-toggle">
               <input type="checkbox" onchange="setMonitor('${d.ip}',this.checked)">
               Off
@@ -321,6 +368,7 @@
         <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
         <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
         <td>${_latencyCell(d)}</td>
+        <td>${_portsCell(d)}</td>
         <td><label class="mon-toggle ${d.monitored?'active':''}">
           <input type="checkbox" ${d.monitored?'checked':''} onchange="setMonitor('${d.ip}',this.checked)">
           ${d.monitored ? 'On' : 'Off'}
@@ -329,6 +377,10 @@
       </tr>`).join('');
     if (_editingIp) {
       const inp = document.getElementById(`name-input-${_editingIp}`);
+      if (inp) { inp.focus(); inp.select(); }
+    }
+    if (_editingPortsIp) {
+      const inp = document.getElementById(`ports-input-${_editingPortsIp}`);
       if (inp) { inp.focus(); inp.select(); }
     }
   }

@@ -223,6 +223,25 @@ def _ping_host(ip: str) -> tuple[bool, float | None]:
     except Exception:
         return False, None
 
+def _check_port(ip: str, port: int, timeout: float = 3.0) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def _seed_device(ip: str, name: str, ports: list[int]) -> None:
+    with _devices_lock:
+        if ip not in _devices:
+            _devices[ip] = {
+                "ip": ip, "mac": "", "vendor": "", "hostname": "",
+                "name": name, "monitored": True, "status": "unknown",
+                "last_seen": None, "ping_latency_ms": None,
+                "ports": ports, "port_status": {},
+            }
+            _save_devices()
+            log.info("Seeded device %s (%s) with ports %s", ip, name, ports)
+
 def _ping_monitored() -> None:
     with _devices_lock:
         targets = [d.copy() for d in _devices.values() if d.get("monitored")]
@@ -243,6 +262,20 @@ def _ping_monitored() -> None:
             maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping")
         elif prev == "down" and up:
             log.info("Device %s (%s) is back online", label, ip)
+
+        ports = dev.get("ports") or []
+        if ports:
+            prev_ps = dev.get("port_status", {})
+            new_ps  = {str(p): _check_port(ip, p) for p in ports}
+            with _devices_lock:
+                if ip in _devices:
+                    _devices[ip]["port_status"] = new_ps
+            for p_str, port_up in new_ps.items():
+                prev_up = prev_ps.get(p_str)
+                if prev_up is not False and not port_up:
+                    maybe_alert(f"port_{ip}_{p_str}", f"{label} port {p_str} closed", f"{ip}:{p_str} is not responding")
+                elif prev_up is False and port_up:
+                    log.info("Port %s:%s back online", ip, p_str)
 
 # ---------------------------------------------------------------------------
 # Google Drive backup (device-flow OAuth, no redirect URI needed)
@@ -887,7 +920,7 @@ def api_device_patch(ip):
     with _devices_lock:
         if ip not in _devices:
             return jsonify({"error": "not found"}), 404
-        for k in ("name", "monitored"):
+        for k in ("name", "monitored", "ports"):
             if k in (request.json or {}):
                 _devices[ip][k] = request.json[k]
         _save_devices()
@@ -1333,6 +1366,10 @@ if __name__ == "__main__":
         log.error("HA_TOKEN environment variable is required!")
         log.error("Create a long-lived access token in HA: Profile → Security → Long-Lived Access Tokens")
         exit(1)
+
+    # Pre-seed known devices
+    _seed_device("192.168.0.14", "SLZB-MR1",  [80, 6638])
+    _seed_device("192.168.0.15", "SLZB-MR1U", [80, 6638])
 
     # Start background poller
     t = threading.Thread(target=poller_loop, daemon=True)
