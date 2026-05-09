@@ -41,6 +41,15 @@
 
   <div class="section-title">Push Notifications</div>
   <div class="card">
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
+      <label style="margin:0">Send push notifications when a service goes down</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+        <input type="checkbox" id="push_alerts_enabled" onchange="savePushToggle()" style="width:auto;accent-color:var(--primary)">
+        <span id="push-toggle-label" style="font-size:.82rem;color:var(--text-muted)">Off</span>
+      </label>
+    </div>
+  </div>
+  <div class="card">
     <div class="field">
       <label>HA notify service (e.g. notify.mobile_app_iphone)</label>
       <input type="text" id="notify_service" placeholder="notify.mobile_app_iphone">
@@ -113,10 +122,19 @@
       set('smtp_user',      d.smtp_user      || '');
       set('email_from',     d.email_from     || '');
       set('email_to',       d.email_to       || '');
-      const on = String(d.email_alerts_enabled).toLowerCase() === 'true';
-      document.getElementById('email_alerts_enabled').checked = on;
-      document.getElementById('email-toggle-label').textContent = on ? 'On' : 'Off';
+      const pushOn = String(d.push_alerts_enabled ?? 'true').toLowerCase() !== 'false';
+      document.getElementById('push_alerts_enabled').checked = pushOn;
+      document.getElementById('push-toggle-label').textContent = pushOn ? 'On' : 'Off';
+      const emailOn = String(d.email_alerts_enabled).toLowerCase() === 'true';
+      document.getElementById('email_alerts_enabled').checked = emailOn;
+      document.getElementById('email-toggle-label').textContent = emailOn ? 'On' : 'Off';
     } catch (_) {}
+  }
+
+  async function savePushToggle() {
+    const on = document.getElementById('push_alerts_enabled').checked;
+    document.getElementById('push-toggle-label').textContent = on ? 'On' : 'Off';
+    await post({push_alerts_enabled: String(on)});
   }
 
   async function saveEmailToggle() {

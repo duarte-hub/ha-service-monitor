@@ -293,6 +293,7 @@ _CONFIG_FIELDS = {
     "email_from":        {"label": "Email from",          "default": EMAIL_FROM},
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
     "alert_cooldown":         {"label": "Alert cooldown (s)",              "default": str(ALERT_COOLDOWN)},
+    "push_alerts_enabled":    {"label": "Push alerts enabled",             "default": "true"},
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
 }
 
@@ -309,11 +310,12 @@ def _save_config(data: dict) -> None:
     except Exception as e:
         log.error("Failed to save config: %s", e)
 
+push_alerts_enabled:  bool = True
 email_alerts_enabled: bool = False
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, email_alerts_enabled
+    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, email_alerts_enabled
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -322,6 +324,7 @@ def _apply_config(data: dict) -> None:
     if "email_from"           in data: EMAIL_FROM            = data["email_from"]
     if "email_to"             in data: EMAIL_TO              = data["email_to"]
     if "alert_cooldown"       in data: ALERT_COOLDOWN        = int(data["alert_cooldown"] or 300)
+    if "push_alerts_enabled"  in data: push_alerts_enabled   = str(data["push_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
 
 _runtime_config = _load_config()
@@ -690,7 +693,8 @@ def maybe_alert(key: str, subject: str, detail: str):
     last = alert_history.get(key, 0)
     if now - last >= ALERT_COOLDOWN:
         alert_history[key] = now
-        threading.Thread(target=send_push, args=(subject, detail), daemon=True).start()
+        if push_alerts_enabled:
+            threading.Thread(target=send_push, args=(subject, detail), daemon=True).start()
         if email_alerts_enabled:
             threading.Thread(target=send_email, args=(subject, detail), daemon=True).start()
 
