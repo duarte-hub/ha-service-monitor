@@ -99,10 +99,6 @@
     .ha-badge.stopped { background:rgba(219,68,55,.15); color:var(--red); }
     .ha-badge.skip    { background:rgba(155,155,155,.12); color:var(--muted); }
     .ha-detail { color:var(--muted); font-size:.8rem; }
-    .entity-row { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:.85rem; }
-    .entity-row:last-child { border-bottom:none; }
-    .entity-val.ok   { color:var(--green); font-weight:500; }
-    .entity-val.down { color:var(--red); font-weight:500; }
     .btn-action { background:var(--pdim); color:var(--primary); border:1px solid rgba(3,169,244,.3); border-radius:5px; padding:2px 9px; font-size:.72rem; cursor:pointer; font-family:inherit; }
     .btn-action:hover:not(:disabled) { background:rgba(3,169,244,.28); }
     .btn-action:disabled { opacity:.4; cursor:not-allowed; }
@@ -215,18 +211,6 @@
       {% endif %}
     </div>
 
-    {% if state.entities %}
-    <div class="card" style="margin-top:14px;padding:4px 16px">
-      {% for label, ent in state.entities.items() %}
-      <div class="entity-row">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="dot {{ 'up' if ent.ok else 'down' }}"></span>{{ label }}
-        </div>
-        <span class="entity-val {{ 'ok' if ent.ok else 'down' }}">{{ ent.detail }}</span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
   </div>
 </div>
 

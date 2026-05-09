@@ -72,7 +72,6 @@ monitor_state = {
     "last_poll": None,
     "services": {},
     "coordinators": {},
-    "entities": {},
     "ha_reachable": False,
     "ha_version": "",
 }
@@ -490,18 +489,6 @@ ADDON_CONFIG = {
     },
 }
 
-# Entity IDs to watch
-WATCHED_ENTITIES = {
-    "Zigbee2MQTT Bridge": "binary_sensor.zigbee2mqtt_bridge_connection_state",
-    "Zigbee2MQTT Bridge (Edge)": "binary_sensor.zigbee2mqtt_bridge_connection_state_2",
-    "SLZB-MR1 Zigbee Chip Temp": "sensor.slzb_mr1_zigbee_chip_temp",
-    "SLZB-MR1 Zigbee Type": "sensor.slzb_mr1_zigbee_type_2",
-    "SLZB-MR1U Zigbee Chip Temp": "sensor.slzb_mr1u_zigbee_chip_temp",
-    "SLZB-MR1U Zigbee Type": "sensor.slzb_mr1u_zigbee_type",
-}
-
-TEMP_WARN_THRESHOLD = float(os.environ.get("TEMP_WARN_THRESHOLD", "60"))
-
 # Cache of integration states from config entries
 _integration_states: dict[str, str] = {}
 
@@ -675,47 +662,10 @@ def check_addon(config: dict) -> dict:
     }
 
 
-def check_entity(entity_id: str) -> dict:
-    """Return entity state dict."""
-    try:
-        data = ha_get(f"states/{entity_id}")
-        state = data.get("state", "unknown")
-        attrs = data.get("attributes", {})
-        friendly = attrs.get("friendly_name", entity_id)
-
-        # Determine OK status
-        ok = True
-        if state in ("unavailable", "unknown"):
-            ok = False
-        elif entity_id.startswith("binary_sensor.") and state != "on":
-            ok = False
-
-        # Temperature warning
-        warn = ""
-        if "chip_temp" in entity_id:
-            try:
-                temp = float(state)
-                if temp >= TEMP_WARN_THRESHOLD:
-                    ok = False
-                    warn = f" ⚠ HIGH TEMP"
-            except (ValueError, TypeError):
-                pass
-
-        return {
-            "state": state,
-            "ok": ok,
-            "friendly_name": friendly,
-            "detail": f"{state}{warn}",
-        }
-    except Exception as e:
-        return {"state": "error", "ok": False, "friendly_name": entity_id, "detail": str(e)}
-
-
 def poll_once():
     """Run one monitoring cycle."""
     now = datetime.now(timezone.utc).isoformat()
     services = {}
-    entities = {}
     ha_reachable = False
     ha_version = ""
 
@@ -731,7 +681,6 @@ def poll_once():
                 "last_poll": now,
                 "ha_reachable": False,
                 "services": {},
-                "entities": {},
             })
         maybe_alert("home_assistant", "Home Assistant is unreachable", str(e))
         return
@@ -783,25 +732,15 @@ def poll_once():
             maybe_alert(f"addon_{name}", f"{name} is DOWN", result["detail"])
             log.warning("Add-on %s: %s", name, result["detail"])
 
-    # 3. Check entities
-    for label, eid in WATCHED_ENTITIES.items():
-        result = check_entity(eid)
-        entities[label] = result
-        if not result["ok"]:
-            maybe_alert(f"entity_{eid}", f"{label} issue", result["detail"])
-            log.warning("Entity %s: %s", label, result["detail"])
-
-    # 4. Update shared state
+    # 3. Update shared state
     with state_lock:
         monitor_state.update({
             "last_poll": now,
             "ha_reachable": ha_reachable,
             "ha_version": ha_version,
             "services": services,
-            "entities": entities,
         })
-    log.info("Poll complete — HA reachable, %d add-ons, %d entities checked",
-             len(services), len(entities))
+    log.info("Poll complete — HA reachable, %d add-ons checked", len(services))
 
 
 # ---------------------------------------------------------------------------
