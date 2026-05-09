@@ -265,6 +265,8 @@ def _ping_monitored() -> None:
             maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping")
         elif prev == "down" and up:
             log.info("Device %s (%s) is back online", label, ip)
+            if notify_recovery:
+                maybe_alert(f"device_{ip}_recovery", f"{label} back online", f"{ip} is responding again")
 
         ports = dev.get("ports") or []
         if ports:
@@ -279,6 +281,8 @@ def _ping_monitored() -> None:
                     maybe_alert(f"port_{ip}_{p_str}", f"{label} port {p_str} closed", f"{ip}:{p_str} is not responding")
                 elif prev_up is False and port_up:
                     log.info("Port %s:%s back online", ip, p_str)
+                    if notify_recovery:
+                        maybe_alert(f"port_{ip}_{p_str}_recovery", f"{label} port {p_str} open", f"{ip}:{p_str} is responding again")
 
 # ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
@@ -295,6 +299,8 @@ _CONFIG_FIELDS = {
     "alert_cooldown":         {"label": "Alert cooldown (s)",              "default": str(ALERT_COOLDOWN)},
     "push_alerts_enabled":    {"label": "Push alerts enabled",             "default": "true"},
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
+    "alert_title":            {"label": "Notification title prefix",       "default": "HA Monitor"},
+    "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
 }
 
 def _load_config() -> dict:
@@ -312,10 +318,13 @@ def _save_config(data: dict) -> None:
 
 push_alerts_enabled:  bool = True
 email_alerts_enabled: bool = False
+ALERT_TITLE:          str  = "HA Monitor"
+notify_recovery:      bool = False
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, email_alerts_enabled
+    global ALERT_TITLE, notify_recovery
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -326,6 +335,8 @@ def _apply_config(data: dict) -> None:
     if "alert_cooldown"       in data: ALERT_COOLDOWN        = int(data["alert_cooldown"] or 300)
     if "push_alerts_enabled"  in data: push_alerts_enabled   = str(data["push_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
+    if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "HA Monitor"
+    if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
 
 _runtime_config = _load_config()
 _apply_config(_runtime_config)
@@ -648,7 +659,7 @@ def send_push(subject: str, body: str):
 
         url = f"{HA_URL}/api/services/{domain}/{service}"
         payload = {
-            "title": f"🏠 {subject}",
+            "title": f"{ALERT_TITLE}: {subject}",
             "message": body,
             "data": {
                 "push": {
@@ -673,7 +684,7 @@ def send_email(subject: str, body: str):
         msg = MIMEMultipart()
         msg["From"]    = EMAIL_FROM or SMTP_USER
         msg["To"]      = EMAIL_TO
-        msg["Subject"] = subject
+        msg["Subject"] = f"{ALERT_TITLE}: {subject}"
         msg.attach(MIMEText(body, "plain"))
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
             s.starttls()

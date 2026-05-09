@@ -39,6 +39,29 @@
 
 <div class="content">
 
+  <div class="section-title">Alert Settings</div>
+  <div class="card">
+    <div class="field">
+      <label>Notification title prefix (used in push title and email subject)</label>
+      <input type="text" id="alert_title" placeholder="HA Monitor">
+    </div>
+    <div class="field">
+      <label>Alert cooldown (seconds between repeat alerts for the same issue)</label>
+      <input type="number" id="alert_cooldown" min="0" style="width:110px">
+    </div>
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
+      <label style="margin:0">Notify when a device or port comes back online</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+        <input type="checkbox" id="notify_recovery" onchange="saveRecoveryToggle()" style="width:auto;accent-color:var(--primary)">
+        <span id="recovery-toggle-label" style="font-size:.82rem;color:var(--text-muted)">Off</span>
+      </label>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveAlertSettings()">Save</button>
+      <span class="status-msg" id="alert-settings-status"></span>
+    </div>
+  </div>
+
   <div class="section-title">Push Notifications</div>
   <div class="card">
     <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
@@ -53,10 +76,6 @@
     <div class="field">
       <label>HA notify service (e.g. notify.mobile_app_iphone)</label>
       <input type="text" id="notify_service" placeholder="notify.mobile_app_iphone">
-    </div>
-    <div class="field">
-      <label>Alert cooldown (seconds between repeat alerts for the same issue)</label>
-      <input type="number" id="alert_cooldown" min="0" style="width:110px">
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="savePush()">Save</button>
@@ -115,8 +134,9 @@
     try {
       const r = await fetch('/api/config');
       const d = await r.json();
-      set('notify_service', d.notify_service || '');
+      set('alert_title',    d.alert_title    || 'HA Monitor');
       set('alert_cooldown', d.alert_cooldown || '300');
+      set('notify_service', d.notify_service || '');
       set('smtp_host',      d.smtp_host      || '');
       set('smtp_port',      d.smtp_port      || '587');
       set('smtp_user',      d.smtp_user      || '');
@@ -128,6 +148,9 @@
       const emailOn = String(d.email_alerts_enabled).toLowerCase() === 'true';
       document.getElementById('email_alerts_enabled').checked = emailOn;
       document.getElementById('email-toggle-label').textContent = emailOn ? 'On' : 'Off';
+      const recoveryOn = String(d.notify_recovery).toLowerCase() === 'true';
+      document.getElementById('notify_recovery').checked = recoveryOn;
+      document.getElementById('recovery-toggle-label').textContent = recoveryOn ? 'On' : 'Off';
     } catch (_) {}
   }
 
@@ -143,8 +166,19 @@
     await post({email_alerts_enabled: String(on)});
   }
 
+  async function saveRecoveryToggle() {
+    const on = document.getElementById('notify_recovery').checked;
+    document.getElementById('recovery-toggle-label').textContent = on ? 'On' : 'Off';
+    await post({notify_recovery: String(on)});
+  }
+
+  async function saveAlertSettings() {
+    await post({alert_title: val('alert_title'), alert_cooldown: val('alert_cooldown')});
+    flash('alert-settings-status', 'Saved', 'ok');
+  }
+
   async function savePush() {
-    await post({notify_service: val('notify_service'), alert_cooldown: val('alert_cooldown')});
+    await post({notify_service: val('notify_service')});
     flash('push-status', 'Saved', 'ok');
   }
 
