@@ -240,8 +240,11 @@ def _seed_device(ip: str, name: str, ports: list[int]) -> None:
                 "last_seen": None, "ping_latency_ms": None,
                 "ports": ports, "port_status": {},
             }
-            _save_devices()
             log.info("Seeded device %s (%s) with ports %s", ip, name, ports)
+        else:
+            _devices[ip]["ports"] = ports
+            log.info("Updated seed ports for %s: %s", ip, ports)
+        _save_devices()
 
 def _ping_monitored() -> None:
     with _devices_lock:
@@ -1311,7 +1314,7 @@ if __name__ == "__main__":
         exit(1)
 
     # Pre-seed known devices
-    _seed_device("192.168.0.14", "SLZB-MR1",  [80, 6638])
+    _seed_device("192.168.0.14", "SLZB-MR1",  [80, 7638])
     _seed_device("192.168.0.15", "SLZB-MR1U", [80, 6638])
 
     # Start background poller
