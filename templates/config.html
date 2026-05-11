@@ -127,6 +127,41 @@
     </div>
   </div>
 
+  <div class="section-title">SNMP Devices</div>
+  <div class="card">
+    <div id="snmp-device-list" style="margin-bottom:4px"></div>
+    <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+      <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:10px">Add device</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="field" style="margin:0">
+          <label>Name</label>
+          <input type="text" id="snmp_new_name" placeholder="Main Switch">
+        </div>
+        <div class="field" style="margin:0">
+          <label>Host / IP</label>
+          <input type="text" id="snmp_new_host" placeholder="192.168.0.1">
+        </div>
+        <div class="field" style="margin:0">
+          <label>SNMP community string</label>
+          <input type="text" id="snmp_new_community" placeholder="public">
+        </div>
+        <div class="field" style="margin:0">
+          <label>Type</label>
+          <select id="snmp_new_type" style="width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.88rem;padding:8px 11px;outline:none">
+            <option value="switch">Switch</option>
+            <option value="ap">Access Point</option>
+            <option value="router">Router</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-primary" onclick="addSnmpDevice()">Add</button>
+        <button class="btn btn-secondary" onclick="pollSnmpNow()">Poll now</button>
+        <span class="status-msg" id="snmp-status"></span>
+      </div>
+    </div>
+  </div>
+
   <div class="section-title">Service Monitor</div>
   <div class="card">
     <div class="field">
@@ -254,6 +289,61 @@
     flash('email-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
   }
 
+  async function loadSnmpDevices() {
+    try {
+      const r = await fetch('/api/snmp_devices');
+      const devices = await r.json();
+      const list = document.getElementById('snmp-device-list');
+      if (!devices.length) {
+        list.innerHTML = '<p style="font-size:.82rem;color:var(--text-muted);margin-bottom:0">No SNMP devices configured.</p>';
+        return;
+      }
+      list.innerHTML = devices.map(d => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-size:.88rem;font-weight:600">${d.name}</div>
+            <div style="font-size:.75rem;color:var(--text-muted)">${d.host} &mdash; community: <code style="font-size:.78rem">${d.community}</code> &mdash; ${d.type}</div>
+          </div>
+          <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="deleteSnmpDevice('${d.id}')">Remove</button>
+        </div>`).join('');
+    } catch (_) {}
+  }
+
+  async function addSnmpDevice() {
+    const host = (document.getElementById('snmp_new_host').value || '').trim();
+    if (!host) { flash('snmp-status', 'Host required', 'err'); return; }
+    const r = await fetch('/api/snmp_devices', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name:      val('snmp_new_name') || host,
+        host,
+        community: val('snmp_new_community') || 'public',
+        type:      document.getElementById('snmp_new_type').value,
+      }),
+    });
+    if (r.ok) {
+      ['snmp_new_name','snmp_new_host','snmp_new_community'].forEach(id => set(id, ''));
+      flash('snmp-status', 'Added', 'ok');
+      loadSnmpDevices();
+    } else {
+      const d = await r.json();
+      flash('snmp-status', 'Error: ' + (d.error || r.status), 'err');
+    }
+  }
+
+  async function deleteSnmpDevice(id) {
+    await fetch('/api/snmp_devices/' + id, {method: 'DELETE'});
+    loadSnmpDevices();
+  }
+
+  async function pollSnmpNow() {
+    flash('snmp-status', 'Querying…', '');
+    const r = await fetch('/api/snmp_poll', {method: 'POST'});
+    const d = await r.json();
+    flash('snmp-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
+  }
+
   async function saveServices() {
     await post({
       zwave_update_entity:    val('zwave_update_entity'),
@@ -281,6 +371,7 @@
   function togglePass() { const el = document.getElementById('smtp_pass'); el.type = el.type === 'password' ? 'text' : 'password'; }
 
   loadConfig();
+  loadSnmpDevices();
 </script>
 </body>
 </html>

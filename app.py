@@ -8,6 +8,7 @@ import os
 import re
 import time
 import json
+import uuid
 import logging
 import smtplib
 import ipaddress
@@ -283,6 +284,137 @@ def _ping_monitored() -> None:
                     log.info("Port %s:%s back online", ip, p_str)
                     if notify_recovery:
                         maybe_alert(f"port_{ip}_{p_str}_recovery", f"{label} port {p_str} open", f"{ip}:{p_str} is responding again")
+
+# ---------------------------------------------------------------------------
+# SNMP device discovery
+# ---------------------------------------------------------------------------
+_SNMP_DEVICES_PATH = os.environ.get("SNMP_DEVICES_PATH", "/data/snmp_devices.json")
+_snmp_devices: list[dict] = []
+_snmp_lock = threading.Lock()
+_mac_vendor_cache: dict[str, str] = {}
+
+def _load_snmp_devices() -> list:
+    try:
+        with open(_SNMP_DEVICES_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return []
+
+def _save_snmp_devices() -> None:
+    try:
+        _atomic_write(_SNMP_DEVICES_PATH, _snmp_devices)
+    except Exception as e:
+        log.error("Failed to save SNMP devices: %s", e)
+
+_snmp_devices = _load_snmp_devices()
+
+def _mac_vendor(mac: str) -> str:
+    oui = mac.upper().replace(":", "").replace("-", "")[:6]
+    if oui in _mac_vendor_cache:
+        return _mac_vendor_cache[oui]
+    vendor = ""
+    try:
+        from mac_vendor_lookup import MacLookup
+        vendor = MacLookup().lookup(mac)
+    except Exception:
+        pass
+    _mac_vendor_cache[oui] = vendor
+    return vendor
+
+def _bytes_to_mac(b) -> str:
+    if isinstance(b, (bytes, bytearray)) and len(b) == 6:
+        return ":".join(f"{x:02x}" for x in b)
+    return ""
+
+def _snmp_walk_oid(host: str, community: str, oid: str, timeout: int = 5) -> list[tuple]:
+    try:
+        from puresnmp import Client
+        from puresnmp.credentials import V2C
+        client = Client(host, V2C(community), port=161, timeout=timeout)
+        return [(str(vb.oid), vb.value) for vb in client.walk(oid)]
+    except ImportError:
+        log.warning("puresnmp not installed — SNMP disabled")
+        return []
+    except Exception as e:
+        log.debug("SNMP walk %s [%s]: %s", host, oid, e)
+        return []
+
+def _poll_snmp_devices() -> int:
+    """Query all enabled SNMP devices; return count of newly discovered IPs."""
+    with _snmp_lock:
+        targets = list(_snmp_devices)
+    if not targets:
+        return 0
+    new_count = 0
+    for dev in targets:
+        if not dev.get("enabled", True):
+            continue
+        host = dev["host"]
+        community = dev.get("community", "public")
+        name = dev.get("name", host)
+        log.info("SNMP querying %s (%s)", name, host)
+
+        # ARP table: index is {ifIndex}.{ip}, value is MAC as bytes
+        ip_to_mac: dict[str, str] = {}
+        for oid_str, value in _snmp_walk_oid(host, community, "1.3.6.1.2.1.4.22.1.2"):
+            mac = _bytes_to_mac(value)
+            if not mac:
+                continue
+            parts = oid_str.split(".")
+            if len(parts) >= 4:
+                ip = ".".join(parts[-4:])
+                try:
+                    socket.inet_aton(ip)
+                    ip_to_mac[ip] = mac
+                except Exception:
+                    pass
+
+        # Bridge forwarding table: value is MAC as bytes (also includes wireless clients on APs)
+        bridge_macs: set[str] = set()
+        for _oid, value in _snmp_walk_oid(host, community, "1.3.6.1.2.1.17.4.3.1.1"):
+            mac = _bytes_to_mac(value)
+            if mac:
+                bridge_macs.add(mac)
+
+        log.info("SNMP %s: %d ARP entries, %d bridge MACs", name, len(ip_to_mac), len(bridge_macs))
+
+        changed = False
+        for ip, mac in ip_to_mac.items():
+            if int(mac.split(":")[0], 16) & 0x01:
+                continue  # skip multicast
+            vendor = _mac_vendor(mac)
+            with _devices_lock:
+                if ip not in _devices:
+                    _devices[ip] = {
+                        "ip": ip, "mac": mac, "vendor": vendor,
+                        "hostname": "", "name": "",
+                        "monitored": False, "status": "unknown",
+                        "last_seen": None, "ping_latency_ms": None,
+                        "ports": [], "port_status": {},
+                    }
+                    log.info("SNMP discovered %s — %s (%s)", ip, mac, vendor or "unknown vendor")
+                    new_count += 1
+                    changed = True
+                else:
+                    d = _devices[ip]
+                    if not d.get("mac") and mac:
+                        _devices[ip]["mac"] = mac
+                        changed = True
+                    if not d.get("vendor") and vendor:
+                        _devices[ip]["vendor"] = vendor
+                        changed = True
+        if changed:
+            _save_devices()
+    return new_count
+
+def _snmp_poller_loop() -> None:
+    time.sleep(15)  # let the app fully start before first poll
+    while True:
+        try:
+            _poll_snmp_devices()
+        except Exception as e:
+            log.exception("SNMP poll error: %s", e)
+        time.sleep(300)
 
 # ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
@@ -815,6 +947,47 @@ def api_scan_status():
     return jsonify({**_scan_status, "network": _local_network()})
 
 
+@app.route("/api/snmp_devices", methods=["GET", "POST"])
+def api_snmp_devices():
+    global _snmp_devices
+    if request.method == "POST":
+        data = request.json or {}
+        if not data.get("host"):
+            return jsonify({"ok": False, "error": "host required"}), 400
+        device = {
+            "id":        str(uuid.uuid4()),
+            "name":      data.get("name") or data["host"],
+            "host":      data["host"],
+            "community": data.get("community") or "public",
+            "version":   data.get("version") or "2c",
+            "type":      data.get("type") or "switch",
+            "enabled":   True,
+        }
+        with _snmp_lock:
+            _snmp_devices.append(device)
+            _save_snmp_devices()
+        return jsonify(device)
+    with _snmp_lock:
+        return jsonify(list(_snmp_devices))
+
+
+@app.route("/api/snmp_devices/<device_id>", methods=["DELETE"])
+def api_snmp_device_delete(device_id):
+    global _snmp_devices
+    with _snmp_lock:
+        _snmp_devices = [d for d in _snmp_devices if d["id"] != device_id]
+        _save_snmp_devices()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/snmp_poll", methods=["POST"])
+def api_snmp_poll():
+    with _snmp_lock:
+        if not _snmp_devices:
+            return jsonify({"ok": False, "error": "No SNMP devices configured"}), 400
+    threading.Thread(target=_poll_snmp_devices, daemon=True).start()
+    return jsonify({"ok": True, "message": "Poll started"})
+
 
 @app.route("/api/update", methods=["POST"])
 def api_update():
@@ -1189,9 +1362,10 @@ if __name__ == "__main__":
     _seed_device("192.168.0.14", "SLZB-MR1",  [80, 7638])
     _seed_device("192.168.0.15", "SLZB-MR1U", [80, 6638])
 
-    # Start background poller
+    # Start background pollers
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()
+    threading.Thread(target=_snmp_poller_loop, daemon=True, name="snmp-poller").start()
 
     # Give the first poll a moment
     time.sleep(2)
