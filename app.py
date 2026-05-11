@@ -308,36 +308,82 @@ def _save_snmp_devices() -> None:
 
 _snmp_devices = _load_snmp_devices()
 
+# MAC vendor lookup — calls api.macvendors.com once per OUI, caches to disk
+_MAC_VENDOR_CACHE_PATH = os.environ.get("MAC_VENDOR_CACHE_PATH", "/data/mac_vendor_cache.json")
+_mac_vendor_api_lock = threading.Lock()
+_mac_vendor_last_call: float = 0.0
+
+def _load_mac_vendor_cache() -> None:
+    global _mac_vendor_cache
+    try:
+        with open(_MAC_VENDOR_CACHE_PATH) as fh:
+            _mac_vendor_cache = json.load(fh)
+    except Exception:
+        _mac_vendor_cache = {}
+
+def _save_mac_vendor_cache() -> None:
+    try:
+        _atomic_write(_MAC_VENDOR_CACHE_PATH, _mac_vendor_cache)
+    except Exception:
+        pass
+
+_load_mac_vendor_cache()
+
 def _mac_vendor(mac: str) -> str:
+    global _mac_vendor_last_call
     oui = mac.upper().replace(":", "").replace("-", "")[:6]
     if oui in _mac_vendor_cache:
         return _mac_vendor_cache[oui]
-    vendor = ""
-    try:
-        from mac_vendor_lookup import MacLookup
-        vendor = MacLookup().lookup(mac)
-    except Exception:
-        pass
-    _mac_vendor_cache[oui] = vendor
+    with _mac_vendor_api_lock:
+        if oui in _mac_vendor_cache:
+            return _mac_vendor_cache[oui]
+        # Rate-limit: 1 req/s (free tier limit)
+        wait = 1.1 - (time.time() - _mac_vendor_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        vendor = ""
+        try:
+            resp = requests.get(
+                f"https://api.macvendors.com/{mac[:8]}",
+                timeout=5, headers={"Accept": "text/plain"},
+            )
+            _mac_vendor_last_call = time.time()
+            if resp.status_code == 200:
+                vendor = resp.text.strip()
+        except Exception:
+            pass
+        _mac_vendor_cache[oui] = vendor
+        _save_mac_vendor_cache()
     return vendor
 
-def _bytes_to_mac(b) -> str:
-    if isinstance(b, (bytes, bytearray)) and len(b) == 6:
-        return ":".join(f"{x:02x}" for x in b)
-    return ""
-
-def _snmp_walk_oid(host: str, community: str, oid: str, timeout: int = 5) -> list[tuple]:
+def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10) -> list[tuple[str, str]]:
+    """Run snmpwalk -v2c, return [(oid_str, value_str)] or [] on error."""
     try:
-        from puresnmp import Client
-        from puresnmp.credentials import V2C
-        client = Client(host, V2C(community), port=161, timeout=timeout)
-        return [(str(vb.oid), vb.value) for vb in client.walk(oid)]
-    except ImportError:
-        log.warning("puresnmp not installed — SNMP disabled")
+        r = subprocess.run(
+            ["snmpwalk", "-v2c", "-c", community, "-On", host, oid],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        pairs = []
+        for line in r.stdout.splitlines():
+            if " = " not in line:
+                continue
+            oid_part, val_part = line.split(" = ", 1)
+            pairs.append((oid_part.strip(), val_part.strip()))
+        return pairs
+    except FileNotFoundError:
+        log.warning("snmpwalk not found — install the snmp package")
         return []
     except Exception as e:
-        log.debug("SNMP walk %s [%s]: %s", host, oid, e)
+        log.debug("snmpwalk %s [%s]: %s", host, oid, e)
         return []
+
+def _parse_snmp_mac(val_str: str) -> str:
+    """Extract MAC from 'Hex-STRING: AA BB CC DD EE FF' style value."""
+    hex_part = val_str.split(": ", 1)[-1] if ": " in val_str else val_str
+    parts = re.findall(r"[0-9A-Fa-f]{2}", hex_part)
+    if len(parts) == 6:
+        return ":".join(p.lower() for p in parts)
+    return ""
 
 def _poll_snmp_devices() -> int:
     """Query all enabled SNMP devices; return count of newly discovered IPs."""
@@ -354,13 +400,13 @@ def _poll_snmp_devices() -> int:
         name = dev.get("name", host)
         log.info("SNMP querying %s (%s)", name, host)
 
-        # ARP table: index is {ifIndex}.{ip}, value is MAC as bytes
+        # ARP table: OID index is {ifIndex}.{ip0}.{ip1}.{ip2}.{ip3}, value is MAC
         ip_to_mac: dict[str, str] = {}
-        for oid_str, value in _snmp_walk_oid(host, community, "1.3.6.1.2.1.4.22.1.2"):
-            mac = _bytes_to_mac(value)
+        for oid_str, val_str in _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2"):
+            mac = _parse_snmp_mac(val_str)
             if not mac:
                 continue
-            parts = oid_str.split(".")
+            parts = oid_str.lstrip(".").split(".")
             if len(parts) >= 4:
                 ip = ".".join(parts[-4:])
                 try:
@@ -369,10 +415,10 @@ def _poll_snmp_devices() -> int:
                 except Exception:
                     pass
 
-        # Bridge forwarding table: value is MAC as bytes (also includes wireless clients on APs)
+        # Bridge forwarding table: value is MAC (covers wireless clients on APs too)
         bridge_macs: set[str] = set()
-        for _oid, value in _snmp_walk_oid(host, community, "1.3.6.1.2.1.17.4.3.1.1"):
-            mac = _bytes_to_mac(value)
+        for _oid, val_str in _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1"):
+            mac = _parse_snmp_mac(val_str)
             if mac:
                 bridge_macs.add(mac)
 
