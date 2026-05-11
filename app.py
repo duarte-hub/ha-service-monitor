@@ -403,6 +403,46 @@ def _parse_snmp_mac(val_str: str) -> str:
         return ":".join(p.lower() for p in parts)
     return ""
 
+def _parse_meraki_mac_from_oid(oid_str: str) -> str:
+    """Extract MAC from Meraki OID index (last 6 decimal octets)."""
+    parts = oid_str.lstrip(".").split(".")
+    if len(parts) < 6:
+        return ""
+    try:
+        return ":".join(f"{int(b):02x}" for b in parts[-6:])
+    except (ValueError, IndexError):
+        return ""
+
+# Meraki devTable OIDs (enterprises.29671.1.1.4)
+_MERAKI_OID_DEV_NAME    = "1.3.6.1.4.1.29671.1.1.4.1.2"
+_MERAKI_OID_DEV_STATUS  = "1.3.6.1.4.1.29671.1.1.4.1.3"
+_MERAKI_OID_DEV_PRODUCT = "1.3.6.1.4.1.29671.1.1.4.1.10"
+_MERAKI_OID_DEV_LAN_IP  = "1.3.6.1.4.1.29671.1.1.4.1.12"
+
+def _poll_meraki_devtable(host: str, community: str) -> dict[str, dict]:
+    """Walk Meraki devTable; return {mac: {name, online, product}} per Meraki device."""
+    result: dict[str, dict] = {}
+    for oid_str, val_str in _snmpwalk(host, community, _MERAKI_OID_DEV_NAME):
+        mac = _parse_meraki_mac_from_oid(oid_str)
+        if mac:
+            result.setdefault(mac, {})["name"] = val_str.replace("STRING:", "").strip().strip('"')
+    for oid_str, val_str in _snmpwalk(host, community, _MERAKI_OID_DEV_STATUS):
+        mac = _parse_meraki_mac_from_oid(oid_str)
+        if mac:
+            result.setdefault(mac, {})["online"] = val_str.strip() in ("1", "INTEGER: 1", "online(1)")
+    for oid_str, val_str in _snmpwalk(host, community, _MERAKI_OID_DEV_PRODUCT):
+        mac = _parse_meraki_mac_from_oid(oid_str)
+        if mac:
+            result.setdefault(mac, {})["product"] = val_str.replace("STRING:", "").strip().strip('"')
+    # Also walk devLanIp to discover Meraki infrastructure IPs not already in ARP
+    for oid_str, val_str in _snmpwalk(host, community, _MERAKI_OID_DEV_LAN_IP):
+        mac = _parse_meraki_mac_from_oid(oid_str)
+        if mac:
+            ip_str = val_str.replace("IpAddress:", "").strip()
+            if ip_str and ip_str != "0.0.0.0":
+                result.setdefault(mac, {})["lan_ip"] = ip_str
+    return result
+
 def _poll_snmp_devices() -> int:
     """Query all enabled SNMP devices; return count of newly discovered IPs."""
     with _snmp_lock:
@@ -440,19 +480,43 @@ def _poll_snmp_devices() -> int:
             if mac:
                 bridge_macs.add(mac)
 
+        # Meraki: walk devTable for infrastructure device names/status and LAN IPs
+        meraki_devs: dict[str, dict] = {}
+        if dev.get("type") == "meraki":
+            meraki_devs = _poll_meraki_devtable(host, community)
+            log.info("SNMP Meraki %s: %d infrastructure devices in devTable", name, len(meraki_devs))
+            # Add Meraki infrastructure IPs not already in ARP table
+            for mdev in meraki_devs.values():
+                lan_ip = mdev.get("lan_ip", "")
+                mac    = mdev.get("mac_key", "")  # set below
+                if lan_ip and lan_ip not in ip_to_mac:
+                    for m, d2 in meraki_devs.items():
+                        if d2.get("lan_ip") == lan_ip:
+                            ip_to_mac[lan_ip] = m
+                            break
+
         log.info("SNMP %s: %d ARP entries, %d bridge MACs", name, len(ip_to_mac), len(bridge_macs))
+
+        # Build mac→meraki_devs lookup keyed by MAC string
+        meraki_by_mac = meraki_devs  # already keyed by mac string
 
         changed = False
         for ip, mac in ip_to_mac.items():
             if int(mac.split(":")[0], 16) & 0x01:
                 continue  # skip multicast
             vendor = _mac_vendor(mac)
+            meraki_info = meraki_by_mac.get(mac, {})
+            meraki_dev_name = meraki_info.get("name", "")
+            meraki_online   = meraki_info.get("online")
+            meraki_product  = meraki_info.get("product", "")
             with _devices_lock:
                 if ip not in _devices:
                     _devices[ip] = {
                         "ip": ip, "mac": mac, "vendor": vendor,
-                        "hostname": "", "name": "",
+                        "hostname": "", "name": meraki_dev_name,
                         "learned_from": name,
+                        "meraki_status": ("online" if meraki_online else "offline") if meraki_online is not None else None,
+                        "meraki_product": meraki_product,
                         "monitored": False, "status": "unknown",
                         "last_seen": None, "ping_latency_ms": None,
                         "ports": [], "port_status": {},
@@ -470,6 +534,17 @@ def _poll_snmp_devices() -> int:
                         changed = True
                     if not d.get("learned_from"):
                         _devices[ip]["learned_from"] = name
+                        changed = True
+                    if meraki_dev_name and not d.get("name"):
+                        _devices[ip]["name"] = meraki_dev_name
+                        changed = True
+                    if meraki_online is not None:
+                        new_ms = "online" if meraki_online else "offline"
+                        if d.get("meraki_status") != new_ms:
+                            _devices[ip]["meraki_status"] = new_ms
+                            changed = True
+                    if meraki_product and not d.get("meraki_product"):
+                        _devices[ip]["meraki_product"] = meraki_product
                         changed = True
         if changed:
             _save_devices()
@@ -1067,22 +1142,30 @@ def api_snmp_test():
     data = request.json or {}
     host      = data.get("host", "")
     community = data.get("community", "public")
+    dev_type  = data.get("type", "")
     if not host:
         return jsonify({"ok": False, "error": "host required"}), 400
-    # Quick test: walk sysDescr (1.3.6.1.2.1.1.1.0) — supported by virtually all SNMP devices
     rows = _snmpwalk(host, community, "1.3.6.1.2.1.1.1.0", timeout=5)
-    if rows:
-        descr = rows[0][1].replace("STRING:", "").strip().strip('"')
-        # Also grab a quick ARP count
-        arp = _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", timeout=5)
-        bridge = _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1", timeout=5)
-        return jsonify({
-            "ok": True,
-            "description": descr,
-            "arp_entries": len(arp),
-            "bridge_macs": len(bridge),
-        })
-    return jsonify({"ok": False, "error": f"No SNMP response from {host} (check host, community string, and that SNMP is enabled)"})
+    if not rows:
+        # Meraki MX may not respond to sysDescr but does respond to devTable
+        if dev_type == "meraki":
+            meraki_devs = _poll_meraki_devtable(host, community)
+            if meraki_devs:
+                names = [d.get("name","?") for d in meraki_devs.values()]
+                return jsonify({"ok": True, "description": "Meraki Cloud Controller",
+                                "arp_entries": 0, "bridge_macs": 0,
+                                "meraki_devices": len(meraki_devs),
+                                "meraki_names": ", ".join(names[:5])})
+        return jsonify({"ok": False, "error": f"No SNMP response from {host} (check host, community string, and that SNMP is enabled)"})
+    descr = rows[0][1].replace("STRING:", "").strip().strip('"')
+    arp    = _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", timeout=5)
+    bridge = _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1", timeout=5)
+    result = {"ok": True, "description": descr, "arp_entries": len(arp), "bridge_macs": len(bridge)}
+    if dev_type == "meraki":
+        meraki_devs = _poll_meraki_devtable(host, community)
+        result["meraki_devices"] = len(meraki_devs)
+        result["meraki_names"]   = ", ".join(d.get("name","?") for d in meraki_devs.values())
+    return jsonify(result)
 
 
 @app.route("/api/snmp_poll", methods=["POST"])

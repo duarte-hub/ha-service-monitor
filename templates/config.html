@@ -151,6 +151,7 @@
             <option value="switch">Switch</option>
             <option value="ap">Access Point</option>
             <option value="router">Router</option>
+            <option value="meraki">Meraki</option>
           </select>
         </div>
       </div>
@@ -290,8 +291,9 @@
   }
 
   const SELECT_STYLE = 'width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.82rem;padding:6px 9px;outline:none';
-  const TYPE_OPTIONS = ['switch','ap','router'].map(t =>
-    `<option value="${t}">${t === 'ap' ? 'Access Point' : t.charAt(0).toUpperCase()+t.slice(1)}</option>`
+  const TYPE_LABELS = {switch:'Switch', ap:'Access Point', router:'Router', meraki:'Meraki'};
+  const TYPE_OPTIONS = ['switch','ap','router','meraki'].map(t =>
+    `<option value="${t}">${TYPE_LABELS[t]}</option>`
   ).join('');
 
   function snmpRowHtml(d) {
@@ -303,7 +305,7 @@
             <span style="font-size:.75rem;color:var(--text-muted);margin-left:8px">${d.host} &mdash; <code style="font-size:.78rem">${d.community}</code> &mdash; ${d.type}</span>
           </div>
           <div style="display:flex;gap:6px">
-            <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="testSnmpDevice('${d.id}','${d.host}','${d.community}')">Test</button>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="testSnmpDevice('${d.id}','${d.host}','${d.community}','${d.type}')">Test</button>
             <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="editSnmpDevice('${d.id}')">Edit</button>
             <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem;color:var(--red)" onclick="deleteSnmpDevice('${d.id}')">Remove</button>
           </div>
@@ -367,7 +369,7 @@
     else flash('snmp-status', 'Save failed', 'err');
   }
 
-  async function testSnmpDevice(id, host, community) {
+  async function testSnmpDevice(id, host, community, type) {
     const el = document.getElementById('snmp-test-' + id);
     el.style.display = 'block';
     el.style.color = 'var(--text-muted)';
@@ -375,12 +377,19 @@
     const r = await fetch('/api/snmp_test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, community}),
+      body: JSON.stringify({host, community, type}),
     });
     const d = await r.json();
     if (d.ok) {
       el.style.color = 'var(--green)';
-      el.textContent = `✓ ${d.description || 'OK'} — ${d.arp_entries} ARP entries, ${d.bridge_macs} bridge MACs`;
+      let msg = `✓ ${d.description || 'OK'}`;
+      if (d.meraki_devices != null) {
+        msg += ` — ${d.meraki_devices} Meraki device(s)`;
+        if (d.meraki_names) msg += `: ${d.meraki_names}`;
+      } else {
+        msg += ` — ${d.arp_entries} ARP entries, ${d.bridge_macs} bridge MACs`;
+      }
+      el.textContent = msg;
     } else {
       el.style.color = 'var(--red)';
       el.textContent = `✗ ${d.error}`;
