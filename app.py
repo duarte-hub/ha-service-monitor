@@ -354,7 +354,7 @@ def _mac_vendor(mac: str) -> str:
         wait = 1.1 - (time.time() - _mac_vendor_last_call)
         if wait > 0:
             time.sleep(wait)
-        vendor = ""
+        vendor = None
         try:
             resp = requests.get(
                 f"https://api.macvendors.com/{mac[:8]}",
@@ -363,12 +363,15 @@ def _mac_vendor(mac: str) -> str:
             _mac_vendor_last_call = time.time()
             if resp.status_code == 200:
                 vendor = resp.text.strip()
+            elif resp.status_code == 404:
+                vendor = ""  # genuinely unknown OUI — cache permanently
         except Exception:
             pass
-        _mac_vendor_cache[oui] = vendor
-        _save_mac_vendor_cache()
+        if vendor is not None:  # don't cache on 429/timeout — retry next time
+            _mac_vendor_cache[oui] = vendor
+            _save_mac_vendor_cache()
         log.debug("MAC vendor %s → %s", oui, vendor or "(unknown)")
-    return vendor
+    return _mac_vendor_cache.get(oui, "")
 
 def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10) -> list[tuple[str, str]]:
     """Run snmpwalk -v2c, return [(oid_str, value_str)] or [] on error."""
@@ -449,11 +452,12 @@ def _poll_snmp_devices() -> int:
                     _devices[ip] = {
                         "ip": ip, "mac": mac, "vendor": vendor,
                         "hostname": "", "name": "",
+                        "learned_from": name,
                         "monitored": False, "status": "unknown",
                         "last_seen": None, "ping_latency_ms": None,
                         "ports": [], "port_status": {},
                     }
-                    log.info("SNMP discovered %s — %s (%s)", ip, mac, vendor or "unknown vendor")
+                    log.info("SNMP discovered %s — %s (%s) via %s", ip, mac, vendor or "unknown vendor", name)
                     new_count += 1
                     changed = True
                 else:
@@ -463,6 +467,9 @@ def _poll_snmp_devices() -> int:
                         changed = True
                     if not d.get("vendor") and vendor:
                         _devices[ip]["vendor"] = vendor
+                        changed = True
+                    if not d.get("learned_from"):
+                        _devices[ip]["learned_from"] = name
                         changed = True
         if changed:
             _save_devices()

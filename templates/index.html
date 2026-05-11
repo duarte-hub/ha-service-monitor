@@ -153,6 +153,7 @@
         <th>Name</th>
         <th>Hostname</th>
         <th>Vendor / MAC</th>
+        <th>Source</th>
         <th>Last Seen</th>
         <th>Latency</th>
         <th>Ports</th>
@@ -161,7 +162,7 @@
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="9">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="11">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -322,7 +323,7 @@
     const tbody = document.getElementById('device-tbody');
     const visible = _monitoredOnly ? _devices.filter(d => d.monitored) : _devices;
     if (!visible.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="11">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML += _devices.map(d => `
           <tr data-ip="${d.ip}" style="opacity:.35">
@@ -331,6 +332,7 @@
             <td>${_nameCell(d)}</td>
             <td style="color:var(--muted);font-size:.82rem">${d.hostname || '—'}</td>
             <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
+            <td style="color:var(--muted);font-size:.78rem">${d.learned_from || '—'}</td>
             <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
             <td>${_latencyCell(d)}</td>
             <td>${_portsCell(d)}</td>
@@ -350,6 +352,7 @@
         <td>${_nameCell(d)}</td>
         <td style="color:var(--muted);font-size:.82rem">${d.hostname || '—'}</td>
         <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
+        <td style="color:var(--muted);font-size:.78rem">${d.learned_from || '—'}</td>
         <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
         <td>${_latencyCell(d)}</td>
         <td>${_portsCell(d)}</td>
