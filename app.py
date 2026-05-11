@@ -301,6 +301,13 @@ _CONFIG_FIELDS = {
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
     "alert_title":            {"label": "Notification title prefix",       "default": "HA Monitor"},
     "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
+    # Service monitor knobs
+    "z2m_mqtt_prefix":        {"label": "Z2M MQTT prefix",                 "default": "zigbee2mqtt"},
+    "z2m_health_entity":      {"label": "Z2M bridge health entity",        "default": "binary_sensor.zigbee2mqtt_bridge_connection_state"},
+    "z2m_edge_mqtt_prefix":   {"label": "Z2M Edge MQTT prefix",            "default": "zigbee2mqtt2"},
+    "z2m_edge_health_entity": {"label": "Z2M Edge bridge health entity",   "default": "binary_sensor.zigbee2mqtt_bridge_connection_state_2"},
+    "mqtt_probe_host":        {"label": "Mosquitto probe host",            "default": HA_URL.split("://")[-1].split(":")[0]},
+    "mqtt_probe_port":        {"label": "Mosquitto probe port",            "default": "1883"},
 }
 
 def _load_config() -> dict:
@@ -337,6 +344,18 @@ def _apply_config(data: dict) -> None:
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "HA Monitor"
     if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
+    if "z2m_mqtt_prefix"        in data:
+        ADDON_CONFIG["Zigbee2MQTT"]["mqtt_prefix"]      = data["z2m_mqtt_prefix"] or "zigbee2mqtt"
+    if "z2m_health_entity"      in data:
+        ADDON_CONFIG["Zigbee2MQTT"]["health_entity"]    = data["z2m_health_entity"] or None
+    if "z2m_edge_mqtt_prefix"   in data:
+        ADDON_CONFIG["Zigbee2MQTT Edge"]["mqtt_prefix"] = data["z2m_edge_mqtt_prefix"] or "zigbee2mqtt2"
+    if "z2m_edge_health_entity" in data:
+        ADDON_CONFIG["Zigbee2MQTT Edge"]["health_entity"] = data["z2m_edge_health_entity"] or None
+    if "mqtt_probe_host"        in data:
+        ADDON_CONFIG["Mosquitto Broker"]["health_port"]["host"] = data["mqtt_probe_host"] or "192.168.0.20"
+    if "mqtt_probe_port"        in data:
+        ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
 
 _runtime_config = _load_config()
 _apply_config(_runtime_config)

@@ -127,6 +127,40 @@
     </div>
   </div>
 
+  <div class="section-title">Service Monitor</div>
+  <div class="card">
+    <div class="field">
+      <label>Zigbee2MQTT — MQTT topic prefix</label>
+      <input type="text" id="z2m_mqtt_prefix" placeholder="zigbee2mqtt">
+    </div>
+    <div class="field">
+      <label>Zigbee2MQTT — bridge health entity</label>
+      <input type="text" id="z2m_health_entity" placeholder="binary_sensor.zigbee2mqtt_bridge_connection_state">
+    </div>
+    <div class="field">
+      <label>Zigbee2MQTT Edge — MQTT topic prefix</label>
+      <input type="text" id="z2m_edge_mqtt_prefix" placeholder="zigbee2mqtt2">
+    </div>
+    <div class="field">
+      <label>Zigbee2MQTT Edge — bridge health entity</label>
+      <input type="text" id="z2m_edge_health_entity" placeholder="binary_sensor.zigbee2mqtt_bridge_connection_state_2">
+    </div>
+    <div class="field" style="display:flex;gap:12px;align-items:flex-end;">
+      <div style="flex:1">
+        <label>Mosquitto probe host</label>
+        <input type="text" id="mqtt_probe_host" placeholder="192.168.0.20">
+      </div>
+      <div>
+        <label>Port</label>
+        <input type="number" id="mqtt_probe_port" min="1" max="65535" style="width:90px" placeholder="1883">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveServices()">Save</button>
+      <span class="status-msg" id="services-status"></span>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -151,6 +185,12 @@
       const recoveryOn = String(d.notify_recovery).toLowerCase() === 'true';
       document.getElementById('notify_recovery').checked = recoveryOn;
       document.getElementById('recovery-toggle-label').textContent = recoveryOn ? 'On' : 'Off';
+      set('z2m_mqtt_prefix',        d.z2m_mqtt_prefix        || 'zigbee2mqtt');
+      set('z2m_health_entity',      d.z2m_health_entity      || 'binary_sensor.zigbee2mqtt_bridge_connection_state');
+      set('z2m_edge_mqtt_prefix',   d.z2m_edge_mqtt_prefix   || 'zigbee2mqtt2');
+      set('z2m_edge_health_entity', d.z2m_edge_health_entity || 'binary_sensor.zigbee2mqtt_bridge_connection_state_2');
+      set('mqtt_probe_host',        d.mqtt_probe_host        || '');
+      set('mqtt_probe_port',        d.mqtt_probe_port        || '1883');
     } catch (_) {}
   }
 
@@ -202,6 +242,18 @@
     const r = await fetch('/api/test_email', {method:'POST'});
     const d = await r.json();
     flash('email-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
+  }
+
+  async function saveServices() {
+    await post({
+      z2m_mqtt_prefix:        val('z2m_mqtt_prefix'),
+      z2m_health_entity:      val('z2m_health_entity'),
+      z2m_edge_mqtt_prefix:   val('z2m_edge_mqtt_prefix'),
+      z2m_edge_health_entity: val('z2m_edge_health_entity'),
+      mqtt_probe_host:        val('mqtt_probe_host'),
+      mqtt_probe_port:        val('mqtt_probe_port'),
+    });
+    flash('services-status', 'Saved', 'ok');
   }
 
   async function post(payload) {
