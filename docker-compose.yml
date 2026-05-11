@@ -9,33 +9,28 @@ services:
       - "9099:9099"
     environment:
       # === REQUIRED ===
-      # Home Assistant URL (use your HA IP/hostname)
       HA_URL: "http://192.168.0.20:8123"
-      # Long-lived access token from HA → Profile → Security → Long-Lived Access Tokens
       HA_TOKEN: "${HA_TOKEN}"
 
       # === POLLING ===
       POLL_INTERVAL: "30"              # seconds between checks
 
-      # === EMAIL ALERTS (optional — remove if not needed) ===
-      SMTP_HOST: "${SMTP_HOST}"        # e.g. smtp.gmail.com
+      # === EMAIL ALERTS (optional) ===
+      SMTP_HOST: "${SMTP_HOST}"
       SMTP_PORT: "587"
       SMTP_USER: "${SMTP_USER}"
       SMTP_PASS: "${SMTP_PASS}"
       EMAIL_FROM: "${EMAIL_FROM}"
-      EMAIL_TO: "${EMAIL_TO}"          # comma-separated for multiple recipients
-      ALERT_COOLDOWN: "300"            # seconds between repeat alerts for same issue
+      EMAIL_TO: "${EMAIL_TO}"
+      ALERT_COOLDOWN: "300"
 
-      # === COORDINATOR TEMP THRESHOLD ===
-      TEMP_WARN_THRESHOLD: "60"        # Celsius — alert if SLZB chip temp exceeds this
-
-      # === ADD-ON SLUGS (defaults should work, override if custom) ===
+      # === ADD-ON SLUGS (defaults should work) ===
       # ZWAVE_ADDON_SLUG: "a0d7b954_zwavejs2mqtt"
       # Z2M_ADDON_SLUG: "45df7312_zigbee2mqtt"
       # Z2M_EDGE_ADDON_SLUG: "45df7312_zigbee2mqtt_edge"
       # MQTT_ADDON_SLUG: "core_mosquitto"
     volumes:
-      - ha-monitor-data:/data
-
-volumes:
-  ha-monitor-data:
+      # Host path bind mount — survives container rebuilds and Docker resets.
+      # Unraid:  /mnt/user/appdata/ha-service-monitor:/data
+      # Other:   ./data:/data  (creates a local data/ folder next to this file)
+      - ${DATA_DIR:-/mnt/user/appdata/ha-service-monitor}:/data
