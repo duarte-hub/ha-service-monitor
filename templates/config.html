@@ -289,6 +289,43 @@
     flash('email-status', d.ok ? 'Sent!' : 'Error: ' + d.error, d.ok ? 'ok' : 'err');
   }
 
+  const SELECT_STYLE = 'width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.82rem;padding:6px 9px;outline:none';
+  const TYPE_OPTIONS = ['switch','ap','router'].map(t =>
+    `<option value="${t}">${t === 'ap' ? 'Access Point' : t.charAt(0).toUpperCase()+t.slice(1)}</option>`
+  ).join('');
+
+  function snmpRowHtml(d) {
+    return `
+      <div id="snmp-row-${d.id}" style="border-bottom:1px solid var(--border);padding:8px 0">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <span style="font-size:.88rem;font-weight:600">${d.name}</span>
+            <span style="font-size:.75rem;color:var(--text-muted);margin-left:8px">${d.host} &mdash; <code style="font-size:.78rem">${d.community}</code> &mdash; ${d.type}</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="testSnmpDevice('${d.id}','${d.host}','${d.community}')">Test</button>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="editSnmpDevice('${d.id}')">Edit</button>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem;color:var(--red)" onclick="deleteSnmpDevice('${d.id}')">Remove</button>
+          </div>
+        </div>
+        <div id="snmp-test-${d.id}" style="font-size:.78rem;margin-top:4px;display:none"></div>
+        <div id="snmp-edit-${d.id}" style="display:none;margin-top:10px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="field" style="margin:0"><label>Name</label><input type="text" id="snmp-edit-name-${d.id}" value="${d.name}" style="font-size:.82rem"></div>
+            <div class="field" style="margin:0"><label>Host / IP</label><input type="text" id="snmp-edit-host-${d.id}" value="${d.host}" style="font-size:.82rem"></div>
+            <div class="field" style="margin:0"><label>Community</label><input type="text" id="snmp-edit-community-${d.id}" value="${d.community}" style="font-size:.82rem"></div>
+            <div class="field" style="margin:0"><label>Type</label>
+              <select id="snmp-edit-type-${d.id}" style="${SELECT_STYLE}">${TYPE_OPTIONS}</select>
+            </div>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-primary" style="padding:5px 14px;font-size:.82rem" onclick="saveSnmpEdit('${d.id}')">Save</button>
+            <button class="btn btn-secondary" style="padding:5px 14px;font-size:.82rem" onclick="cancelSnmpEdit('${d.id}')">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   async function loadSnmpDevices() {
     try {
       const r = await fetch('/api/snmp_devices');
@@ -298,15 +335,56 @@
         list.innerHTML = '<p style="font-size:.82rem;color:var(--text-muted);margin-bottom:0">No SNMP devices configured.</p>';
         return;
       }
-      list.innerHTML = devices.map(d => `
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div>
-            <div style="font-size:.88rem;font-weight:600">${d.name}</div>
-            <div style="font-size:.75rem;color:var(--text-muted)">${d.host} &mdash; community: <code style="font-size:.78rem">${d.community}</code> &mdash; ${d.type}</div>
-          </div>
-          <button class="btn btn-secondary" style="padding:4px 10px;font-size:.75rem" onclick="deleteSnmpDevice('${d.id}')">Remove</button>
-        </div>`).join('');
+      list.innerHTML = devices.map(snmpRowHtml).join('');
+      // Set type selects to saved values
+      devices.forEach(d => {
+        const sel = document.getElementById('snmp-edit-type-' + d.id);
+        if (sel) sel.value = d.type;
+      });
     } catch (_) {}
+  }
+
+  function editSnmpDevice(id) {
+    document.getElementById('snmp-edit-' + id).style.display = 'block';
+  }
+
+  function cancelSnmpEdit(id) {
+    document.getElementById('snmp-edit-' + id).style.display = 'none';
+  }
+
+  async function saveSnmpEdit(id) {
+    const r = await fetch('/api/snmp_devices/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name:      document.getElementById('snmp-edit-name-' + id).value,
+        host:      document.getElementById('snmp-edit-host-' + id).value,
+        community: document.getElementById('snmp-edit-community-' + id).value,
+        type:      document.getElementById('snmp-edit-type-' + id).value,
+      }),
+    });
+    if (r.ok) loadSnmpDevices();
+    else flash('snmp-status', 'Save failed', 'err');
+  }
+
+  async function testSnmpDevice(id, host, community) {
+    const el = document.getElementById('snmp-test-' + id);
+    el.style.display = 'block';
+    el.style.color = 'var(--text-muted)';
+    el.textContent = 'Testing…';
+    const r = await fetch('/api/snmp_test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host, community}),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      el.style.color = 'var(--green)';
+      el.textContent = `✓ ${d.description || 'OK'} — ${d.arp_entries} ARP entries, ${d.bridge_macs} bridge MACs`;
+    } else {
+      el.style.color = 'var(--red)';
+      el.textContent = `✗ ${d.error}`;
+    }
   }
 
   async function addSnmpDevice() {

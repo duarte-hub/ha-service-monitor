@@ -1032,13 +1032,50 @@ def api_snmp_devices():
         return jsonify(list(_snmp_devices))
 
 
-@app.route("/api/snmp_devices/<device_id>", methods=["DELETE"])
-def api_snmp_device_delete(device_id):
+@app.route("/api/snmp_devices/<device_id>", methods=["PUT", "DELETE"])
+def api_snmp_device(device_id):
     global _snmp_devices
+    if request.method == "DELETE":
+        with _snmp_lock:
+            _snmp_devices = [d for d in _snmp_devices if d["id"] != device_id]
+            _save_snmp_devices()
+        return jsonify({"ok": True})
+    # PUT — update existing device
+    data = request.json or {}
     with _snmp_lock:
-        _snmp_devices = [d for d in _snmp_devices if d["id"] != device_id]
-        _save_snmp_devices()
-    return jsonify({"ok": True})
+        for d in _snmp_devices:
+            if d["id"] == device_id:
+                d["name"]      = data.get("name")      or d["name"]
+                d["host"]      = data.get("host")      or d["host"]
+                d["community"] = data.get("community") or d["community"]
+                d["version"]   = data.get("version")   or d["version"]
+                d["type"]      = data.get("type")      or d["type"]
+                _save_snmp_devices()
+                return jsonify(d)
+    return jsonify({"ok": False, "error": "not found"}), 404
+
+
+@app.route("/api/snmp_test", methods=["POST"])
+def api_snmp_test():
+    data = request.json or {}
+    host      = data.get("host", "")
+    community = data.get("community", "public")
+    if not host:
+        return jsonify({"ok": False, "error": "host required"}), 400
+    # Quick test: walk sysDescr (1.3.6.1.2.1.1.1.0) — supported by virtually all SNMP devices
+    rows = _snmpwalk(host, community, "1.3.6.1.2.1.1.1.0", timeout=5)
+    if rows:
+        descr = rows[0][1].replace("STRING:", "").strip().strip('"')
+        # Also grab a quick ARP count
+        arp = _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", timeout=5)
+        bridge = _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1", timeout=5)
+        return jsonify({
+            "ok": True,
+            "description": descr,
+            "arp_entries": len(arp),
+            "bridge_macs": len(bridge),
+        })
+    return jsonify({"ok": False, "error": f"No SNMP response from {host} (check host, community string, and that SNMP is enabled)"})
 
 
 @app.route("/api/snmp_poll", methods=["POST"])
