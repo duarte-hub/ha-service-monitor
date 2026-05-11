@@ -357,10 +357,6 @@ def _apply_config(data: dict) -> None:
     if "mqtt_probe_port"        in data:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
 
-_runtime_config = _load_config()
-_apply_config(_runtime_config)
-
-
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
 # ---------------------------------------------------------------------------
@@ -409,6 +405,9 @@ ADDON_CONFIG = {
         "health_port": {"host": "192.168.0.20", "port": 1883},
     },
 }
+
+_runtime_config = _load_config()
+_apply_config(_runtime_config)
 
 # Cache of integration states from config entries
 _integration_states: dict[str, str] = {}
