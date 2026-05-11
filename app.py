@@ -46,7 +46,7 @@ NOTIFY_SERVICE = os.environ.get("NOTIFY_SERVICE", "notify.mobile_app_iphoned")
 # Logging
 # ---------------------------------------------------------------------------
 _LOG_BUFFER: list[str] = []
-_LOG_BUFFER_MAX = 500
+_LOG_BUFFER_MAX = 2000
 
 class _BufferHandler(logging.Handler):
     def emit(self, record):
@@ -61,7 +61,13 @@ logging.basicConfig(
 log = logging.getLogger("ha-monitor")
 _buf_handler = _BufferHandler()
 _buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_buf_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(_buf_handler)
+
+def _set_verbose(enabled: bool) -> None:
+    level = logging.DEBUG if enabled else logging.INFO
+    logging.getLogger().setLevel(level)
+    _buf_handler.setLevel(level)
 
 # ---------------------------------------------------------------------------
 # Flask app
@@ -219,16 +225,22 @@ def _ping_host(ip: str) -> tuple[bool, float | None]:
                            capture_output=True, text=True, timeout=5)
         if r.returncode == 0:
             m = re.search(r"time=(\d+\.?\d*)", r.stdout)
-            return True, (float(m.group(1)) if m else None)
+            latency = float(m.group(1)) if m else None
+            log.debug("ping %s: up  %.1fms", ip, latency or 0)
+            return True, latency
+        log.debug("ping %s: down", ip)
         return False, None
     except Exception:
+        log.debug("ping %s: error", ip)
         return False, None
 
 def _check_port(ip: str, port: int, timeout: float = 3.0) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout):
+            log.debug("port %s:%s: open", ip, port)
             return True
     except Exception:
+        log.debug("port %s:%s: closed", ip, port)
         return False
 
 def _seed_device(ip: str, name: str, ports: list[int]) -> None:
@@ -262,6 +274,7 @@ def _ping_monitored() -> None:
             if up:
                 _devices[ip]["last_seen"] = now
         label = dev.get("name") or dev.get("hostname") or ip
+        log.debug("monitored %s (%s): %s", label, ip, "up" if up else "down")
         if prev != "down" and not up:
             maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping")
         elif prev == "down" and up:
@@ -354,6 +367,7 @@ def _mac_vendor(mac: str) -> str:
             pass
         _mac_vendor_cache[oui] = vendor
         _save_mac_vendor_cache()
+        log.debug("MAC vendor %s → %s", oui, vendor or "(unknown)")
     return vendor
 
 def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10) -> list[tuple[str, str]]:
@@ -369,6 +383,7 @@ def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10) -> list[tu
                 continue
             oid_part, val_part = line.split(" = ", 1)
             pairs.append((oid_part.strip(), val_part.strip()))
+        log.debug("snmpwalk %s [%s]: %d rows", host, oid.split(".")[-1], len(pairs))
         return pairs
     except FileNotFoundError:
         log.warning("snmpwalk not found — install the snmp package")
@@ -1145,8 +1160,16 @@ def logs_page():
 
 @app.route("/api/logs")
 def api_logs():
-    n = min(int(request.args.get("n", 200)), _LOG_BUFFER_MAX)
-    return jsonify({"lines": _LOG_BUFFER[-n:]})
+    n = min(int(request.args.get("n", 500)), _LOG_BUFFER_MAX)
+    return jsonify({"lines": _LOG_BUFFER[-n:], "verbose": _buf_handler.level == logging.DEBUG})
+
+
+@app.route("/api/logs/level", methods=["POST"])
+def api_logs_level():
+    enabled = (request.json or {}).get("verbose", False)
+    _set_verbose(enabled)
+    log.info("Verbose logging %s", "enabled" if enabled else "disabled")
+    return jsonify({"verbose": enabled})
 
 
 @app.route("/api/test_push", methods=["POST"])
