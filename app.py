@@ -302,6 +302,8 @@ _CONFIG_FIELDS = {
     "alert_title":            {"label": "Notification title prefix",       "default": "HA Monitor"},
     "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
     # Service monitor knobs
+    "zwave_update_entity":    {"label": "Z-Wave update entity",            "default": "update.z_wave_js_ui_update"},
+    "zwave_integration":      {"label": "Z-Wave HA integration domain",    "default": "zwave_js"},
     "z2m_mqtt_prefix":        {"label": "Z2M MQTT prefix",                 "default": "zigbee2mqtt"},
     "z2m_health_entity":      {"label": "Z2M bridge health entity",        "default": "binary_sensor.zigbee2mqtt_bridge_connection_state"},
     "z2m_edge_mqtt_prefix":   {"label": "Z2M Edge MQTT prefix",            "default": "zigbee2mqtt2"},
@@ -344,6 +346,10 @@ def _apply_config(data: dict) -> None:
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "HA Monitor"
     if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
+    if "zwave_update_entity"    in data:
+        ADDON_CONFIG["Z-Wave JS UI"]["update_entity"]   = data["zwave_update_entity"] or "update.z_wave_js_ui_update"
+    if "zwave_integration"      in data:
+        ADDON_CONFIG["Z-Wave JS UI"]["integration"]     = data["zwave_integration"] or "zwave_js"
     if "z2m_mqtt_prefix"        in data:
         ADDON_CONFIG["Zigbee2MQTT"]["mqtt_prefix"]      = data["z2m_mqtt_prefix"] or "zigbee2mqtt"
     if "z2m_health_entity"      in data:

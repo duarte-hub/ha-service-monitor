@@ -130,6 +130,14 @@
   <div class="section-title">Service Monitor</div>
   <div class="card">
     <div class="field">
+      <label>Z-Wave JS UI — update entity</label>
+      <input type="text" id="zwave_update_entity" placeholder="update.z_wave_js_ui_update">
+    </div>
+    <div class="field">
+      <label>Z-Wave JS UI — HA integration domain</label>
+      <input type="text" id="zwave_integration" placeholder="zwave_js">
+    </div>
+    <div class="field">
       <label>Zigbee2MQTT — MQTT topic prefix</label>
       <input type="text" id="z2m_mqtt_prefix" placeholder="zigbee2mqtt">
     </div>
@@ -185,6 +193,8 @@
       const recoveryOn = String(d.notify_recovery).toLowerCase() === 'true';
       document.getElementById('notify_recovery').checked = recoveryOn;
       document.getElementById('recovery-toggle-label').textContent = recoveryOn ? 'On' : 'Off';
+      set('zwave_update_entity',    d.zwave_update_entity    || 'update.z_wave_js_ui_update');
+      set('zwave_integration',      d.zwave_integration      || 'zwave_js');
       set('z2m_mqtt_prefix',        d.z2m_mqtt_prefix        || 'zigbee2mqtt');
       set('z2m_health_entity',      d.z2m_health_entity      || 'binary_sensor.zigbee2mqtt_bridge_connection_state');
       set('z2m_edge_mqtt_prefix',   d.z2m_edge_mqtt_prefix   || 'zigbee2mqtt2');
@@ -246,6 +256,8 @@
 
   async function saveServices() {
     await post({
+      zwave_update_entity:    val('zwave_update_entity'),
+      zwave_integration:      val('zwave_integration'),
       z2m_mqtt_prefix:        val('z2m_mqtt_prefix'),
       z2m_health_entity:      val('z2m_health_entity'),
       z2m_edge_mqtt_prefix:   val('z2m_edge_mqtt_prefix'),
