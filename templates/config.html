@@ -483,8 +483,9 @@
       `<option value="${n.id}">${n.org ? n.org+' — ' : ''}${n.name} (${n.id})</option>`
     ).join('');
     document.getElementById('meraki-network-picker').style.display = 'block';
-    if (d.networks.length === 1) document.getElementById('meraki_network_id').value = d.networks[0].id;
-    flash('meraki-api-status', d.networks.length + ' network(s) found', 'ok');
+    // Pre-populate input with the first (auto-selected) option immediately
+    if (d.networks.length) document.getElementById('meraki_network_id').value = d.networks[0].id;
+    flash('meraki-api-status', d.networks.length + ' network(s) found — select one below', 'ok');
   }
 
   async function saveMerakiApi() {
