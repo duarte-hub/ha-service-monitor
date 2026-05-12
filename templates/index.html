@@ -5,117 +5,148 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Network Monitor</title>
   <style>
-    :root { --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12); --text:#e1e1e1; --muted:#9b9b9b; --primary:#03a9f4; --pdim:rgba(3,169,244,.15); --green:#4caf50; --red:#db4437; --yellow:#ff9800; }
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.10); --border2:rgba(225,225,225,.05);
+      --text:#e1e1e1; --muted:#9b9b9b; --muted2:#6b7280;
+      --primary:#03a9f4; --pdim:rgba(3,169,244,.13);
+      --green:#4caf50; --red:#e53935; --yellow:#ff9800;
+    }
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
 
-    /* ── topbar ─────────────────────────────────────────────────────────── */
-    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:52px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+    /* ── Topbar ──────────────────────────────────────────────────────────── */
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 12px rgba(0,0,0,.5); }
     .topbar-left { display:flex; align-items:center; gap:10px; font-size:1rem; font-weight:700; }
-    .topbar-right { display:flex; align-items:center; gap:12px; font-size:.8rem; }
-    .topbar-right a { color:#fff; text-decoration:none; opacity:.85; }
-    .topbar-right a:hover { opacity:1; }
-    .live-dot { width:6px; height:6px; background:#fff; border-radius:50%; animation:blink 2s infinite; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-    .alerts-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
-    .toggle-track { width:28px; height:16px; border-radius:8px; background:rgba(255,255,255,.3); position:relative; transition:background .2s; flex-shrink:0; }
-    .toggle-track.on { background:var(--green); }
-    .toggle-thumb { position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; transition:transform .2s; }
-    .toggle-track.on .toggle-thumb { transform:translateX(12px); }
+    .topbar-right { display:flex; align-items:center; gap:16px; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; font-weight:500; }
+    .topbar-right a:hover { color:#fff; }
+    .live-dot { width:6px; height:6px; background:rgba(255,255,255,.8); border-radius:50%; animation:pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(.7)} }
+    .alerts-toggle { display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+    .toggle-track { width:30px; height:17px; border-radius:9px; background:rgba(255,255,255,.25); position:relative; transition:background .2s; flex-shrink:0; }
+    .toggle-track.on { background:rgba(255,255,255,.5); }
+    .toggle-thumb { position:absolute; top:2.5px; left:2.5px; width:12px; height:12px; border-radius:50%; background:#fff; transition:transform .2s; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+    .toggle-track.on .toggle-thumb { transform:translateX(13px); }
 
-    /* ── layout ─────────────────────────────────────────────────────────── */
-    .content { padding:20px; max-width:1200px; margin:0 auto; }
-    .section-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-    .section-title { font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+    /* ── Stats bar ───────────────────────────────────────────────────────── */
+    .stats-bar { background:var(--card-bg); border-bottom:1px solid var(--border); padding:0 24px; display:flex; }
+    .stat { padding:11px 24px; border-right:1px solid var(--border); display:flex; flex-direction:column; gap:1px; }
+    .stat:first-child { padding-left:0; }
+    .stat:last-child { border-right:none; }
+    .stat-val { font-size:1.25rem; font-weight:700; line-height:1.15; }
+    .stat-label { font-size:.62rem; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; }
+    #stat-monitored { color:var(--primary); }
+    #stat-up  { color:var(--green); }
+    #stat-down { color:var(--red); }
 
-    /* ── scan bar ───────────────────────────────────────────────────────── */
-    .scan-bar { display:flex; align-items:center; gap:10px; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:10px 16px; margin-bottom:16px; }
-    .scan-bar input { flex:1; background:transparent; border:none; color:var(--text); font-size:.88rem; outline:none; font-family:inherit; }
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    .content { padding:24px; }
+    .section-hdr { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+    .section-title { font-size:.65rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; }
+
+    /* ── Scan bar ────────────────────────────────────────────────────────── */
+    .scan-bar { display:flex; align-items:center; gap:8px; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:8px 14px; margin-bottom:14px; }
+    .scan-bar input { flex:1; background:transparent; border:none; color:var(--text); font-size:.85rem; outline:none; font-family:inherit; min-width:0; }
     .scan-bar input::placeholder { color:var(--muted); }
-    .btn-scan { background:var(--primary); color:#fff; border:none; border-radius:7px; padding:6px 16px; font-size:.85rem; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity .15s; }
+    .btn-scan { background:var(--primary); color:#fff; border:none; border-radius:7px; padding:6px 16px; font-size:.82rem; font-weight:600; cursor:pointer; transition:opacity .15s; }
     .btn-scan:hover { opacity:.85; }
-    .btn-scan:disabled { opacity:.4; cursor:not-allowed; }
-    .btn-filter { background:transparent; border:1px solid var(--border); border-radius:7px; color:var(--muted); padding:5px 13px; font-size:.8rem; cursor:pointer; white-space:nowrap; transition:background .15s,color .15s,border-color .15s; }
+    .btn-scan:disabled { opacity:.35; cursor:not-allowed; }
+    .btn-filter { background:transparent; border:1px solid var(--border); border-radius:7px; color:var(--muted); padding:5px 12px; font-size:.78rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
     .btn-filter:hover { border-color:var(--primary); color:var(--primary); }
     .btn-filter.active { background:var(--pdim); border-color:var(--primary); color:var(--primary); font-weight:600; }
-    .scan-info { font-size:.78rem; color:var(--muted); }
+    .scan-info { font-size:.75rem; color:var(--muted); margin-left:auto; }
 
-    /* ── device table ───────────────────────────────────────────────────── */
-    .device-table { width:100%; border-collapse:collapse; }
-    .device-table th { font-size:.68rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; padding:6px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
-    .device-table td { padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.04); font-size:.85rem; vertical-align:middle; }
-    .device-table tr:last-child td { border-bottom:none; }
-    .device-table tr:hover td { background:rgba(255,255,255,.02); }
+    /* ── Device table ────────────────────────────────────────────────────── */
     .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+    .device-table { width:100%; border-collapse:collapse; }
+    .device-table th { font-size:.63rem; font-weight:600; color:var(--muted2); text-transform:uppercase; letter-spacing:.07em; padding:9px 12px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; background:rgba(255,255,255,.018); }
+    .device-table td { padding:9px 12px; border-bottom:1px solid var(--border2); font-size:.84rem; vertical-align:middle; }
+    .device-table tr:last-child td { border-bottom:none; }
+    .device-table tbody tr:hover td { background:rgba(255,255,255,.022); }
 
-    /* ── status dot ─────────────────────────────────────────────────────── */
-    .dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex-shrink:0; }
-    .dot.up      { background:var(--green); box-shadow:0 0 5px rgba(76,175,80,.6); }
-    .dot.down    { background:var(--red);   box-shadow:0 0 5px rgba(219,68,55,.6); animation:blink 1.5s infinite; }
-    .dot.unknown { background:var(--muted); }
+    /* ── Status dot ──────────────────────────────────────────────────────── */
+    .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .dot.up      { background:var(--green); box-shadow:0 0 6px rgba(76,175,80,.55); }
+    .dot.down    { background:var(--red);   box-shadow:0 0 6px rgba(229,57,53,.65); animation:pulse 1.4s infinite; }
+    .dot.unknown { background:var(--muted); opacity:.5; }
 
-    /* ── name edit ──────────────────────────────────────────────────────── */
-    .name-cell { display:flex; align-items:center; gap:6px; }
-    .name-view { cursor:pointer; }
+    /* ── IP pill ─────────────────────────────────────────────────────────── */
+    .ip-pill { font-family:'SF Mono','Fira Code',Menlo,monospace; font-size:.79rem; background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; padding:2px 7px; color:var(--text); display:inline-block; letter-spacing:.01em; }
+
+    /* ── Name edit ───────────────────────────────────────────────────────── */
+    .name-cell { display:flex; align-items:center; gap:5px; }
+    .name-view { cursor:pointer; font-weight:500; }
     .name-view:hover { color:var(--primary); }
-    .name-input { background:rgba(255,255,255,.07); border:1px solid var(--primary); border-radius:5px; color:var(--text); font-size:.85rem; padding:2px 7px; outline:none; width:140px; font-family:inherit; }
+    .name-input { background:rgba(255,255,255,.07); border:1px solid var(--primary); border-radius:5px; color:var(--text); font-size:.84rem; padding:3px 8px; outline:none; width:140px; font-family:inherit; }
 
-    /* ── monitor toggle ─────────────────────────────────────────────────── */
-    .mon-toggle { display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:.78rem; color:var(--muted); }
+    /* ── Monitor toggle ──────────────────────────────────────────────────── */
+    .mon-toggle { display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:.78rem; color:var(--muted); white-space:nowrap; }
     .mon-toggle input { accent-color:var(--primary); cursor:pointer; }
     .mon-toggle.active { color:var(--primary); }
 
-    /* ── latency ────────────────────────────────────────────────────────── */
-    .latency { font-size:.78rem; color:var(--muted); font-family:'SF Mono','Fira Code',monospace; }
+    /* ── Latency ─────────────────────────────────────────────────────────── */
+    .latency { font-size:.77rem; color:var(--muted); font-family:'SF Mono','Fira Code',monospace; }
     .latency.fast { color:var(--green); }
     .latency.slow { color:var(--yellow); }
 
-    /* ── port chips ─────────────────────────────────────────────────────── */
-    .port-chip { display:inline-flex; align-items:center; gap:3px; font-size:.72rem; font-family:'SF Mono','Fira Code',monospace; border-radius:4px; padding:1px 6px; margin:1px 2px; cursor:pointer; border:1px solid transparent; }
+    /* ── Port chips ──────────────────────────────────────────────────────── */
+    .port-chip { display:inline-flex; align-items:center; gap:3px; font-size:.69rem; font-family:'SF Mono','Fira Code',monospace; border-radius:4px; padding:2px 6px; margin:1px 2px; cursor:pointer; border:1px solid transparent; }
     .port-chip::before { content:''; width:5px; height:5px; border-radius:50%; flex-shrink:0; }
-    .port-up      { color:var(--green);  border-color:rgba(76,175,80,.25);  background:rgba(76,175,80,.08);  }
+    .port-up      { color:var(--green);  border-color:rgba(76,175,80,.25);  background:rgba(76,175,80,.08); }
     .port-up::before    { background:var(--green); }
-    .port-down    { color:var(--red);    border-color:rgba(219,68,55,.25);  background:rgba(219,68,55,.08);  }
-    .port-down::before  { background:var(--red); animation:blink 1.5s infinite; }
+    .port-down    { color:var(--red);    border-color:rgba(229,57,53,.3);   background:rgba(229,57,53,.08); }
+    .port-down::before  { background:var(--red); animation:pulse 1.4s infinite; }
     .port-unknown { color:var(--muted);  border-color:var(--border);        background:rgba(255,255,255,.03); }
-    .port-unknown::before { background:var(--muted); }
-    .port-add { color:var(--muted); font-size:.72rem; cursor:pointer; padding:2px 4px; }
-    .port-add:hover { color:var(--primary); }
+    .port-unknown::before { background:var(--muted); opacity:.5; }
+    .port-add { color:var(--muted); font-size:.72rem; cursor:pointer; padding:2px 4px; opacity:.6; }
+    .port-add:hover { color:var(--primary); opacity:1; }
 
-    /* ── delete btn ─────────────────────────────────────────────────────── */
-    .btn-del { background:none; border:none; color:var(--muted); cursor:pointer; font-size:.9rem; padding:0 4px; line-height:1; }
-    .btn-del:hover { color:var(--red); }
-
-    /* ── alert mode select ──────────────────────────────────────────────── */
-    .alert-sel { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; color:var(--muted); font-size:.7rem; padding:2px 4px; cursor:pointer; outline:none; margin-top:4px; width:100%; }
+    /* ── Alert select ────────────────────────────────────────────────────── */
+    .alert-sel { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; color:var(--muted); font-size:.7rem; padding:2px 4px; cursor:pointer; outline:none; margin-top:3px; width:100%; }
     .alert-sel:focus { border-color:var(--primary); }
     .alert-sel.critical { color:#ff5252; border-color:rgba(255,82,82,.35); background:rgba(255,82,82,.06); }
     .alert-sel.push     { color:var(--primary); border-color:rgba(3,169,244,.35); background:rgba(3,169,244,.06); }
     .alert-sel.email    { color:var(--yellow); border-color:rgba(255,152,0,.35); background:rgba(255,152,0,.06); }
 
-    /* ── HA section (collapsible) ───────────────────────────────────────── */
-    .collapse-hdr { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
-    .collapse-arrow { font-size:.7rem; color:var(--muted); transition:transform .2s; }
+    /* ── Delete btn ──────────────────────────────────────────────────────── */
+    .btn-del { background:none; border:none; color:transparent; cursor:pointer; font-size:.82rem; padding:2px 5px; border-radius:4px; transition:all .12s; }
+    tr:hover .btn-del { color:var(--muted); }
+    .btn-del:hover { color:var(--red) !important; background:rgba(229,57,53,.1); }
+
+    /* ── HA section ──────────────────────────────────────────────────────── */
+    .ha-section-hdr { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; padding:3px 0; }
+    .ha-section-hdr:hover .section-title { color:var(--text); }
+    .collapse-arrow { font-size:.62rem; color:var(--muted); transition:transform .2s; display:inline-block; }
     .collapse-arrow.open { transform:rotate(90deg); }
-    .ha-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; margin-top:14px; }
-    .ha-card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
-    .ha-card-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-    .ha-card-title { font-weight:600; font-size:.9rem; display:flex; align-items:center; gap:7px; }
-    .ha-badge { font-size:.72rem; font-weight:500; padding:2px 8px; border-radius:5px; }
-    .ha-badge.running { background:rgba(76,175,80,.15); color:var(--green); }
-    .ha-badge.stopped { background:rgba(219,68,55,.15); color:var(--red); }
-    .ha-badge.skip    { background:rgba(155,155,155,.12); color:var(--muted); }
-    .ha-detail { color:var(--muted); font-size:.8rem; }
-    .btn-action { background:var(--pdim); color:var(--primary); border:1px solid rgba(3,169,244,.3); border-radius:5px; padding:2px 9px; font-size:.72rem; cursor:pointer; font-family:inherit; }
-    .btn-action:hover:not(:disabled) { background:rgba(3,169,244,.28); }
+    .ha-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; margin-top:16px; }
+
+    /* ── HA cards ────────────────────────────────────────────────────────── */
+    .ha-card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+    .ha-card-strip { height:3px; flex-shrink:0; }
+    .ha-card-strip.ok   { background:var(--green); }
+    .ha-card-strip.down { background:var(--red); }
+    .ha-card-strip.skip { background:rgba(155,155,155,.2); }
+    .ha-card-inner { padding:14px 16px; flex:1; }
+    .ha-card-hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:5px; }
+    .ha-card-title { font-weight:600; font-size:.88rem; }
+    .ha-badge { font-size:.68rem; font-weight:600; padding:2px 8px; border-radius:5px; white-space:nowrap; text-transform:uppercase; letter-spacing:.04em; }
+    .ha-badge.running { background:rgba(76,175,80,.14); color:var(--green); }
+    .ha-badge.stopped { background:rgba(229,57,53,.14); color:var(--red); }
+    .ha-badge.skip    { background:rgba(155,155,155,.1); color:var(--muted); }
+    .ha-detail { color:var(--muted); font-size:.78rem; line-height:1.45; }
+    .vtag { font-size:.67rem; padding:2px 7px; border-radius:4px; background:rgba(255,255,255,.05); color:var(--muted); border:1px solid var(--border); }
+    .vtag b { color:var(--text); font-weight:600; }
+    .btn-action { background:var(--pdim); color:var(--primary); border:1px solid rgba(3,169,244,.28); border-radius:5px; padding:3px 10px; font-size:.72rem; cursor:pointer; font-family:inherit; font-weight:500; transition:background .15s; }
+    .btn-action:hover:not(:disabled) { background:rgba(3,169,244,.22); }
     .btn-action:disabled { opacity:.4; cursor:not-allowed; }
-    .update-progress { margin-top:10px; padding:8px 12px; background:rgba(3,169,244,.07); border:1px solid rgba(3,169,244,.18); border-radius:7px; font-size:.78rem; color:var(--muted); display:none; }
-    .update-log { margin-top:5px; max-height:200px; overflow-y:auto; font-size:.7rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; }
+    .update-progress { margin-top:10px; padding:8px 12px; background:rgba(3,169,244,.06); border:1px solid rgba(3,169,244,.14); border-radius:7px; font-size:.78rem; color:var(--muted); display:none; }
+    .update-log { margin-top:5px; max-height:160px; overflow-y:auto; font-size:.67rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; line-height:1.5; }
     .update-log .log-err { color:var(--red); }
-    .vtag { font-size:.68rem; padding:2px 6px; border-radius:4px; background:rgba(255,255,255,.05); color:var(--muted); border:1px solid var(--border); }
-    .vtag b { color:var(--text); }
-    .empty-row td { text-align:center; color:var(--muted); padding:32px; font-size:.88rem; }
-    .footer { text-align:center; color:var(--muted); font-size:.72rem; padding:20px 0 8px; }
+
+    /* ── Misc ────────────────────────────────────────────────────────────── */
+    .empty-row td { text-align:center; color:var(--muted); padding:40px; font-size:.88rem; }
+    .footer { text-align:center; color:var(--muted2); font-size:.68rem; padding:28px 0 10px; }
+    .td-muted { color:var(--muted); font-size:.78rem; }
   </style>
 </head>
 <body>
@@ -136,17 +167,36 @@
   </div>
 </div>
 
+<div class="stats-bar">
+  <div class="stat">
+    <span class="stat-val" id="stat-total">—</span>
+    <span class="stat-label">Devices</span>
+  </div>
+  <div class="stat">
+    <span class="stat-val" id="stat-monitored">—</span>
+    <span class="stat-label">Monitored</span>
+  </div>
+  <div class="stat">
+    <span class="stat-val" id="stat-up">—</span>
+    <span class="stat-label">Up</span>
+  </div>
+  <div class="stat">
+    <span class="stat-val" id="stat-down">—</span>
+    <span class="stat-label">Down</span>
+  </div>
+</div>
+
 <div class="content">
 
-<!-- ── Network Devices ───────────────────────────────────────────────────── -->
-<div class="section-hdr" style="margin-top:4px">
+<!-- Network Devices -->
+<div class="section-hdr">
   <span class="section-title">Network Devices</span>
   <span class="scan-info" id="scan-info"></span>
 </div>
 
 <div class="scan-bar">
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--muted)"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-  <input type="text" id="scan-network" placeholder="Network (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="var(--muted)" style="flex-shrink:0"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+  <input type="text" id="scan-network" placeholder="Network CIDR (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
   <button class="btn-filter" id="btn-monitored" onclick="toggleMonitoredFilter()">Monitored only</button>
   <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
 </div>
@@ -155,8 +205,8 @@
   <table class="device-table" id="device-table">
     <thead>
       <tr>
-        <th></th>
-        <th>IP Address</th>
+        <th style="width:28px"></th>
+        <th>IP</th>
         <th>Name</th>
         <th>Vendor / MAC</th>
         <th>Source</th>
@@ -164,7 +214,7 @@
         <th>Latency</th>
         <th>Ports</th>
         <th>Monitor</th>
-        <th></th>
+        <th style="width:32px"></th>
       </tr>
     </thead>
     <tbody id="device-tbody">
@@ -173,51 +223,54 @@
   </table>
 </div>
 
-<!-- ── HA Services (collapsible) ─────────────────────────────────────────── -->
-<div style="margin-top:28px">
-  <div class="collapse-hdr" onclick="toggleHA()">
-    <span class="collapse-arrow" id="ha-arrow">&#9654;</span>
-    <span class="section-title" style="margin:0">HA Add-on Services</span>
+<!-- HA Services -->
+<div style="margin-top:32px">
+  <div class="ha-section-hdr" onclick="toggleHA()">
+    <span class="collapse-arrow open" id="ha-arrow">&#9654;</span>
+    <span class="section-title">HA Add-on Services</span>
     <span class="scan-info" id="ha-badge" style="margin-left:8px"></span>
   </div>
 
-  <div id="ha-section" style="display:none">
+  <div id="ha-section">
     <div class="ha-grid" id="ha-services-grid">
       {% for name, svc in state.services.items() %}
+      {% set strip_cls = 'ok' if svc.ok else ('skip' if svc.status == 'not_installed' else 'down') %}
       <div class="ha-card">
-        <div class="ha-card-hdr">
-          <span class="ha-card-title">
-            <span class="dot {{ 'up' if svc.ok else ('unknown' if svc.status == 'not_installed' else 'down') }}"></span>
-            {{ name }}
-          </span>
-          <div style="display:flex;gap:6px;align-items:center">
-            {% if name == 'Zigbee2MQTT Edge' %}
-            <button class="btn-action" id="btn-z2m" onclick="updateZ2M()">Update</button>
-            {% endif %}
-            <span class="ha-badge {{ 'running' if svc.ok else ('skip' if svc.status == 'not_installed' else 'stopped') }}">{{ svc.status }}</span>
+        <div class="ha-card-strip {{ strip_cls }}"></div>
+        <div class="ha-card-inner">
+          <div class="ha-card-hdr">
+            <span class="ha-card-title">{{ name }}</span>
+            <div style="display:flex;gap:6px;align-items:center">
+              {% if name == 'Zigbee2MQTT Edge' %}
+              <button class="btn-action" id="btn-z2m" onclick="updateZ2M()">Update</button>
+              {% endif %}
+              <span class="ha-badge {{ 'running' if svc.ok else ('skip' if svc.status == 'not_installed' else 'stopped') }}">{{ svc.status }}</span>
+            </div>
           </div>
+          <div class="ha-detail">{{ svc.detail }}</div>
+          {% if svc.versions %}
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">
+            {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
+            {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
+            {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
+          </div>
+          {% endif %}
+          {% if name == 'Zigbee2MQTT Edge' %}
+          <div class="update-progress" id="z2m-progress">
+            <div id="z2m-msg"></div>
+            <div class="update-log" id="z2m-log"></div>
+          </div>
+          {% endif %}
         </div>
-        <div class="ha-detail">{{ svc.detail }}</div>
-        {% if svc.versions %}
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
-          {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
-          {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
-          {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
-        </div>
-        {% endif %}
-        {% if name == 'Zigbee2MQTT Edge' %}
-        <div class="update-progress" id="z2m-progress">
-          <div id="z2m-msg"></div>
-          <div class="update-log" id="z2m-log"></div>
-        </div>
-        {% endif %}
       </div>
       {% endfor %}
       {% if not state.services %}
-      <div class="ha-card"><div class="ha-detail">Waiting for first poll…</div></div>
+      <div class="ha-card">
+        <div class="ha-card-strip skip"></div>
+        <div class="ha-card-inner"><div class="ha-detail">Waiting for first poll…</div></div>
+      </div>
       {% endif %}
     </div>
-
   </div>
 </div>
 
@@ -243,9 +296,21 @@
   function toggleHA() {
     const sec = document.getElementById('ha-section');
     const arr = document.getElementById('ha-arrow');
-    const open = sec.style.display === 'none';
-    sec.style.display = open ? '' : 'none';
-    arr.classList.toggle('open', open);
+    const opening = sec.style.display === 'none';
+    sec.style.display = opening ? '' : 'none';
+    arr.classList.toggle('open', opening);
+  }
+
+  // ── Stats bar ──────────────────────────────────────────────────────────
+  function updateStats() {
+    const total     = _devices.length;
+    const monitored = _devices.filter(d => d.monitored).length;
+    const up        = _devices.filter(d => d.monitored && d.status === 'up').length;
+    const down      = _devices.filter(d => d.monitored && d.status === 'down').length;
+    document.getElementById('stat-total').textContent     = total     || '—';
+    document.getElementById('stat-monitored').textContent = monitored || '—';
+    document.getElementById('stat-up').textContent        = monitored ? up   : '—';
+    document.getElementById('stat-down').textContent      = monitored ? down : '—';
   }
 
   // ── Device table ───────────────────────────────────────────────────────
@@ -288,8 +353,9 @@
         onblur="saveName('${d.ip}')"
         onkeydown="if(event.key==='Enter')saveName('${d.ip}');if(event.key==='Escape')cancelEdit()"></div>`;
     }
-    const label = d.name || `<span style="color:var(--muted)">${d.hostname || '—'}</span>`;
-    return `<div class="name-cell"><span class="name-view" title="Click to edit" onclick="startEdit('${d.ip}')">${d.name ? d.name : (d.hostname||'—')}</span></div>`;
+    const label = d.name || d.hostname || '—';
+    const style = (!d.name && d.hostname) ? ' style="color:var(--muted)"' : '';
+    return `<div class="name-cell"><span class="name-view" title="Click to rename"${style} onclick="startEdit('${d.ip}')">${label}</span></div>`;
   }
 
   function _portsCell(d) {
@@ -300,20 +366,18 @@
         value="${ports.join(', ')}"
         onblur="savePorts('${d.ip}')"
         onkeydown="if(event.key==='Enter')savePorts('${d.ip}');if(event.key==='Escape')cancelPortEdit()"
-        style="width:110px" placeholder="80, 6638">`;
+        style="width:120px" placeholder="80, 443">`;
     }
-    if (!ports.length) {
-      return `<span class="port-add" title="Add ports to monitor" onclick="editPorts('${d.ip}')">+ ports</span>`;
-    }
+    if (!ports.length) return `<span class="port-add" onclick="editPorts('${d.ip}')">+ ports</span>`;
     return ports.map(p => {
       const up = status[String(p)];
       const cls = up === true ? 'port-up' : up === false ? 'port-down' : 'port-unknown';
-      return `<span class="port-chip ${cls}" title="Click to edit ports" onclick="editPorts('${d.ip}')">${p}</span>`;
+      return `<span class="port-chip ${cls}" onclick="editPorts('${d.ip}')">${p}</span>`;
     }).join('');
   }
 
-  function editPorts(ip)      { _editingPortsIp = ip; renderDevices(); }
-  function cancelPortEdit()   { _editingPortsIp = null; renderDevices(); }
+  function editPorts(ip)    { _editingPortsIp = ip;   renderDevices(); }
+  function cancelPortEdit() { _editingPortsIp = null;  renderDevices(); }
 
   function _alertSelClass(mode) {
     if (mode === 'push_critical') return 'critical';
@@ -323,23 +387,38 @@
   }
 
   function _monitorCell(d) {
-    const checked = d.monitored ? 'checked' : '';
-    const onLabel = d.monitored ? 'On' : 'Off';
+    const checked  = d.monitored ? 'checked' : '';
     const toggle = `<label class="mon-toggle ${d.monitored?'active':''}">
       <input type="checkbox" ${checked} onchange="setMonitor('${d.ip}',this.checked)">
-      ${onLabel}
+      ${d.monitored ? 'On' : 'Off'}
     </label>`;
     if (!d.monitored) return toggle;
     const mode = d.alert_mode || 'default';
     const cls  = _alertSelClass(mode);
-    const sel  = `<select class="alert-sel ${cls}" onchange="setAlertMode('${d.ip}',this)" title="Alert channel for this device">
+    const sel  = `<select class="alert-sel ${cls}" onchange="setAlertMode('${d.ip}',this)">
       <option value="default"${mode==='default'?' selected':''}>Default</option>
       <option value="push_critical"${mode==='push_critical'?' selected':''}>Critical push</option>
       <option value="push_normal"${mode==='push_normal'?' selected':''}>Normal push</option>
       <option value="email"${mode==='email'?' selected':''}>Email</option>
       <option value="none"${mode==='none'?' selected':''}>Silent</option>
     </select>`;
-    return `<div style="display:flex;flex-direction:column;gap:2px">${toggle}${sel}</div>`;
+    return `<div style="display:flex;flex-direction:column;gap:3px">${toggle}${sel}</div>`;
+  }
+
+  function _rowHtml(d, dim) {
+    const dimStyle = dim ? ' style="opacity:.3"' : '';
+    return `<tr data-ip="${d.ip}"${dimStyle}>
+      <td>${_statusDot(d)}</td>
+      <td><span class="ip-pill">${d.ip}</span></td>
+      <td>${_nameCell(d)}</td>
+      <td class="td-muted">${d.vendor ? `${d.vendor}${d.mac ? ' <span style="opacity:.55">· '+d.mac+'</span>' : ''}` : (d.mac || '—')}</td>
+      <td class="td-muted">${d.learned_from || '—'}</td>
+      <td class="td-muted">${_lastSeen(d.last_seen)}</td>
+      <td>${_latencyCell(d)}</td>
+      <td>${_portsCell(d)}</td>
+      <td>${_monitorCell(d)}</td>
+      <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
+    </tr>`;
   }
 
   async function setAlertMode(ip, selectEl) {
@@ -362,38 +441,19 @@
   function renderDevices() {
     const tbody = document.getElementById('device-tbody');
     const visible = _monitoredOnly ? _devices.filter(d => d.monitored) : _devices;
+
     if (!visible.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices — toggle Monitor on a device below' : 'No devices yet — click Scan Now'}</td></tr>`;
       if (_monitoredOnly && _devices.length) {
-        tbody.innerHTML += _devices.map(d => `
-          <tr data-ip="${d.ip}" style="opacity:.35">
-            <td>${_statusDot(d)}</td>
-            <td style="font-family:'SF Mono','Fira Code',monospace;font-size:.82rem">${d.ip}</td>
-            <td>${_nameCell(d)}</td>
-            <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
-            <td style="color:var(--muted);font-size:.78rem">${d.learned_from || '—'}</td>
-            <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
-            <td>${_latencyCell(d)}</td>
-            <td>${_portsCell(d)}</td>
-            <td>${_monitorCell(d)}</td>
-            <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
-          </tr>`).join('');
+        tbody.innerHTML =
+          `<tr class="empty-row"><td colspan="10">No monitored devices yet</td></tr>` +
+          _devices.map(d => _rowHtml(d, true)).join('');
+      } else {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
-      return;
+    } else {
+      tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');
     }
-    tbody.innerHTML = visible.map(d => `
-      <tr data-ip="${d.ip}">
-        <td>${_statusDot(d)}</td>
-        <td style="font-family:'SF Mono','Fira Code',monospace;font-size:.82rem">${d.ip}</td>
-        <td>${_nameCell(d)}</td>
-        <td style="color:var(--muted);font-size:.78rem">${d.vendor ? `${d.vendor}${d.mac?' · <span style="opacity:.6">'+d.mac+'</span>':''}` : (d.mac || '—')}</td>
-        <td style="color:var(--muted);font-size:.78rem">${d.learned_from || '—'}</td>
-        <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
-        <td>${_latencyCell(d)}</td>
-        <td>${_portsCell(d)}</td>
-        <td>${_monitorCell(d)}</td>
-        <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
-      </tr>`).join('');
+
     if (_editingIp) {
       const inp = document.getElementById(`name-input-${_editingIp}`);
       if (inp) { inp.focus(); inp.select(); }
@@ -402,13 +462,11 @@
       const inp = document.getElementById(`ports-input-${_editingPortsIp}`);
       if (inp) { inp.focus(); inp.select(); }
     }
+    updateStats();
   }
 
   async function loadDevices() {
-    try {
-      _devices = await (await fetch('/api/devices')).json();
-      renderDevices();
-    } catch(_) {}
+    try { _devices = await (await fetch('/api/devices')).json(); renderDevices(); } catch(_) {}
   }
 
   async function setMonitor(ip, on) {
@@ -440,10 +498,9 @@
   let _scanPoller = null;
 
   async function startScan() {
-    const btn  = document.getElementById('btn-scan');
-    const net  = document.getElementById('scan-network').value.trim();
-    btn.disabled = true;
-    btn.textContent = 'Scanning…';
+    const btn = document.getElementById('btn-scan');
+    const net = document.getElementById('scan-network').value.trim();
+    btn.disabled = true; btn.textContent = 'Scanning…';
     document.getElementById('scan-info').textContent = 'Starting scan…';
     await fetch('/api/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({network:net||null})});
     _pollScan();
@@ -458,8 +515,7 @@
         if (d.state !== 'running') {
           clearInterval(_scanPoller);
           const btn = document.getElementById('btn-scan');
-          btn.disabled = false;
-          btn.textContent = 'Scan Now';
+          btn.disabled = false; btn.textContent = 'Scan Now';
           loadDevices();
         }
       } catch(_) {}
@@ -469,7 +525,7 @@
   async function initScan() {
     try {
       const d = await (await fetch('/api/scan/status')).json();
-      if (d.network) document.getElementById('scan-network').placeholder = `Network (auto: ${d.network})`;
+      if (d.network) document.getElementById('scan-network').placeholder = `Network CIDR (auto: ${d.network})`;
       document.getElementById('scan-info').textContent = d.message || '';
       if (d.state === 'running') {
         document.getElementById('btn-scan').disabled = true;
@@ -483,7 +539,7 @@
   window._z2mUpdating = false;
   const _z2mMsgEl = document.getElementById('z2m-msg');
   const _z2mLogEl = document.getElementById('z2m-log');
-  function setMsg(m) { if(_z2mMsgEl) _z2mMsgEl.textContent = m; }
+  function setMsg(m) { if (_z2mMsgEl) _z2mMsgEl.textContent = m; }
   function setLog(lines) {
     if (!_z2mLogEl || !lines || !lines.length) return;
     _z2mLogEl.innerHTML = lines.map(l => {
@@ -496,50 +552,49 @@
     try {
       const d = await (await fetch('/api/z2m_update_status')).json();
       if (d.log && d.log.length) {
-        const p = document.getElementById('z2m-progress'); if(p) p.style.display='block';
+        const p = document.getElementById('z2m-progress'); if (p) p.style.display = 'block';
         setMsg(d.message||''); setLog(d.log);
-        if (d.state === 'running') { window._z2mUpdating=true; const b=document.getElementById('btn-z2m'); if(b)b.disabled=true; _resumePoller(); }
+        if (d.state === 'running') { window._z2mUpdating = true; const b = document.getElementById('btn-z2m'); if (b) b.disabled = true; _resumePoller(); }
       }
     } catch(_) {}
   })();
   function _resumePoller() {
-    let n=0;
+    let n = 0;
     const p = setInterval(async () => {
       n++;
       try {
         const d = await (await fetch('/api/z2m_update_status')).json();
-        setMsg(d.message||'Working…'); if(d.log)setLog(d.log);
-        if (d.state==='done')  { clearInterval(p); window._z2mUpdating=false; setTimeout(()=>location.reload(),3000); }
-        if (d.state==='error') { clearInterval(p); const b=document.getElementById('btn-z2m'); if(b)b.disabled=false; window._z2mUpdating=false; }
+        setMsg(d.message||'Working…'); if (d.log) setLog(d.log);
+        if (d.state === 'done')  { clearInterval(p); window._z2mUpdating = false; setTimeout(() => location.reload(), 3000); }
+        if (d.state === 'error') { clearInterval(p); const b = document.getElementById('btn-z2m'); if (b) b.disabled = false; window._z2mUpdating = false; }
       } catch(_) {}
-      if (n>120) { clearInterval(p); setMsg('Timed out'); const b=document.getElementById('btn-z2m'); if(b)b.disabled=false; window._z2mUpdating=false; }
+      if (n > 120) { clearInterval(p); setMsg('Timed out'); const b = document.getElementById('btn-z2m'); if (b) b.disabled = false; window._z2mUpdating = false; }
     }, 5000);
   }
   async function updateZ2M() {
     if (window._z2mUpdating) return;
     window._z2mUpdating = true;
-    const btn=document.getElementById('btn-z2m'); if(btn)btn.disabled=true;
-    const prog=document.getElementById('z2m-progress'); if(prog)prog.style.display='block';
+    const btn  = document.getElementById('btn-z2m');  if (btn)  btn.disabled  = true;
+    const prog = document.getElementById('z2m-progress'); if (prog) prog.style.display = 'block';
     setMsg('Backing up config…');
     try {
-      const d = await (await fetch('/api/update_z2m',{method:'POST'})).json();
-      if (d.status==='error') { setMsg('Error: '+d.message); if(btn)btn.disabled=false; window._z2mUpdating=false; return; }
-    } catch(e) { setMsg('Failed: '+e); if(btn)btn.disabled=false; window._z2mUpdating=false; return; }
+      const d = await (await fetch('/api/update_z2m', {method:'POST'})).json();
+      if (d.status === 'error') { setMsg('Error: ' + d.message); if (btn) btn.disabled = false; window._z2mUpdating = false; return; }
+    } catch(e) { setMsg('Failed: ' + e); if (btn) btn.disabled = false; window._z2mUpdating = false; return; }
     setMsg('Update started…'); _resumePoller();
   }
 
-  // ── Auto-refresh devices ───────────────────────────────────────────────
-  setInterval(loadDevices, {{ poll_interval }} * 1000);
-
-  // ── HA status badge ────────────────────────────────────────────────────
+  // ── HA badge ───────────────────────────────────────────────────────────
   const _haServices = {{ state.services | length }};
   const _haDown = {{ state.services.values() | selectattr('ok', 'false') | list | length }};
   if (_haServices) {
-    document.getElementById('ha-badge').textContent = _haDown ? `${_haDown} issue(s)` : `${_haServices} ok`;
-    document.getElementById('ha-badge').style.color = _haDown ? 'var(--red)' : 'var(--muted)';
+    const el = document.getElementById('ha-badge');
+    el.textContent = _haDown ? `${_haDown} issue(s)` : `${_haServices} ok`;
+    el.style.color  = _haDown ? 'var(--red)' : 'var(--muted)';
   }
 
   // ── Init ───────────────────────────────────────────────────────────────
+  setInterval(loadDevices, {{ poll_interval }} * 1000);
   initScan();
   loadDevices();
 </script>
