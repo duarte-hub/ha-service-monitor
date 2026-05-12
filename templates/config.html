@@ -18,10 +18,11 @@
     .topbar a { color:#fff; text-decoration:none; font-size:.85rem; opacity:.85; }
     .topbar a:hover { opacity:1; }
 
-    .content { padding:24px; max-width:640px; }
+    .content { padding:24px; }
+    .card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(480px,1fr)); gap:20px; align-items:start; }
 
     /* Cards */
-    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; margin-bottom:20px; overflow:hidden; }
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
     .card-header { padding:11px 20px; display:flex; align-items:center; }
     .card-header h2 { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.09em; }
     .card-body { padding:20px; }
@@ -91,6 +92,7 @@
 </div>
 
 <div class="content">
+<div class="card-grid">
 
   <!-- Connections -->
   <div class="card card-blue">
@@ -300,7 +302,8 @@
     </div>
   </div>
 
-</div>
+</div><!-- card-grid -->
+</div><!-- content -->
 
 <script>
   async function loadConfig() {
