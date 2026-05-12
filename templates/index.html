@@ -188,43 +188,8 @@
 
 <div class="content">
 
-<!-- Network Devices -->
-<div class="section-hdr">
-  <span class="section-title">Network Devices</span>
-  <span class="scan-info" id="scan-info"></span>
-</div>
-
-<div class="scan-bar">
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="var(--muted)" style="flex-shrink:0"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-  <input type="text" id="scan-network" placeholder="Network CIDR (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
-  <button class="btn-filter" id="btn-monitored" onclick="toggleMonitoredFilter()">Monitored only</button>
-  <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
-</div>
-
-<div class="card">
-  <table class="device-table" id="device-table">
-    <thead>
-      <tr>
-        <th style="width:28px"></th>
-        <th>IP</th>
-        <th>Name</th>
-        <th>Vendor / MAC</th>
-        <th>Source</th>
-        <th>Last Seen</th>
-        <th>Latency</th>
-        <th>Ports</th>
-        <th>Monitor</th>
-        <th style="width:32px"></th>
-      </tr>
-    </thead>
-    <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="10">No devices yet — click Scan Now</td></tr>
-    </tbody>
-  </table>
-</div>
-
 <!-- HA Services -->
-<div style="margin-top:32px">
+<div style="margin-bottom:32px">
   <div class="ha-section-hdr" onclick="toggleHA()">
     <span class="collapse-arrow open" id="ha-arrow">&#9654;</span>
     <span class="section-title">HA Add-on Services</span>
@@ -274,6 +239,41 @@
   </div>
 </div>
 
+<!-- Network Devices -->
+<div class="section-hdr">
+  <span class="section-title">Network Devices</span>
+  <span class="scan-info" id="scan-info"></span>
+</div>
+
+<div class="scan-bar">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="var(--muted)" style="flex-shrink:0"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+  <input type="text" id="scan-network" placeholder="Network CIDR (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
+  <button class="btn-filter active" id="btn-monitored" onclick="toggleMonitoredFilter()">Monitored only</button>
+  <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
+</div>
+
+<div class="card">
+  <table class="device-table" id="device-table">
+    <thead>
+      <tr>
+        <th style="width:28px"></th>
+        <th>IP</th>
+        <th>Name</th>
+        <th>Vendor / MAC</th>
+        <th>Source</th>
+        <th>Last Seen</th>
+        <th>Latency</th>
+        <th>Ports</th>
+        <th>Monitor</th>
+        <th style="width:32px"></th>
+      </tr>
+    </thead>
+    <tbody id="device-tbody">
+      <tr class="empty-row"><td colspan="10">No devices yet — click Scan Now</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <div class="footer">Network Monitor &middot; {{ state.services|length }} HA add-ons &middot; polling every {{ poll_interval }}s</div>
 </div>
 
@@ -317,7 +317,7 @@
   let _devices = [];
   let _editingIp = null;
   let _editingPortsIp = null;
-  let _monitoredOnly = false;
+  let _monitoredOnly = true;
 
   function toggleMonitoredFilter() {
     _monitoredOnly = !_monitoredOnly;
