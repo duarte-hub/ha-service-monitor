@@ -737,7 +737,10 @@ def _meraki_api_poller_loop() -> None:
 # ---------------------------------------------------------------------------
 _CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/monitor_config.json")
 _CONFIG_FIELDS = {
-    "notify_service":    {"label": "Push notify service", "default": NOTIFY_SERVICE},
+    # Home Assistant connection
+    "ha_url":             {"label": "Home Assistant URL",              "default": HA_URL},
+    "ha_token":           {"label": "HA long-lived access token",      "default": HA_TOKEN, "secret": True},
+    "notify_service":     {"label": "Push notify service",             "default": NOTIFY_SERVICE},
     "smtp_host":         {"label": "SMTP host",           "default": SMTP_HOST},
     "smtp_port":         {"label": "SMTP port",           "default": str(SMTP_PORT)},
     "smtp_user":         {"label": "SMTP user",           "default": SMTP_USER},
@@ -797,9 +800,12 @@ _peer_fail_streak:    int  = 0
 _peer_ok_streak:      int  = 0
 
 def _apply_config(data: dict) -> None:
+    global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
     global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE
+    if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
+    if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
