@@ -460,7 +460,7 @@ def _poll_snmp_devices() -> int:
         name = dev.get("name", host)
         log.info("SNMP querying %s (%s:%d)", name, host, port)
 
-        # ARP table: OID index is {ifIndex}.{ip0}.{ip1}.{ip2}.{ip3}, value is MAC
+        # ARP table (ipNetToMedia): OID index is {ifIndex}.{ip0..3}, value is MAC
         ip_to_mac: dict[str, str] = {}
         for oid_str, val_str in _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", port=port):
             mac = _parse_snmp_mac(val_str)
@@ -474,6 +474,23 @@ def _poll_snmp_devices() -> int:
                     ip_to_mac[ip] = mac
                 except Exception:
                     pass
+
+        # Fallback: ipNetToPhysical (newer RFC 4293 table, supported by AOS-CX etc.)
+        # OID index: {ifIndex}.{addrType}.{addrLen}.{ip octets}  — IPv4: addrType=1, len=4
+        if not ip_to_mac:
+            for oid_str, val_str in _snmpwalk(host, community, "1.3.6.1.2.1.4.35.1.4", port=port):
+                mac = _parse_snmp_mac(val_str)
+                if not mac:
+                    continue
+                parts = oid_str.lstrip(".").split(".")
+                # IPv4 entries have addressType=1, addressLen=4 before the 4 IP octets
+                if len(parts) >= 6 and parts[-6] == "1" and parts[-5] == "4":
+                    ip = ".".join(parts[-4:])
+                    try:
+                        socket.inet_aton(ip)
+                        ip_to_mac[ip] = mac
+                    except Exception:
+                        pass
 
         # Bridge forwarding table: value is MAC (covers wireless clients on APs too)
         bridge_macs: set[str] = set()
@@ -1164,6 +1181,9 @@ def api_snmp_test():
         return jsonify({"ok": False, "error": f"No SNMP response from {host}:{port} (check host, community string, and that SNMP is enabled)"})
     descr = rows[0][1].replace("STRING:", "").strip().strip('"')
     arp    = _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", timeout=5, port=port)
+    if not arp:
+        arp = [r for r in _snmpwalk(host, community, "1.3.6.1.2.1.4.35.1.4", timeout=5, port=port)
+               if r[0].split(".")[-6] == "1" and r[0].split(".")[-5] == "4"]
     bridge = _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1", timeout=5, port=port)
     result = {"ok": True, "description": descr, "arp_entries": len(arp), "bridge_macs": len(bridge)}
     if dev_type == "meraki":
