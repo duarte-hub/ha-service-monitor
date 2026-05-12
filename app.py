@@ -583,6 +583,88 @@ def _snmp_poller_loop() -> None:
         time.sleep(300)
 
 # ---------------------------------------------------------------------------
+# Meraki Dashboard API
+# ---------------------------------------------------------------------------
+_MERAKI_API_BASE = "https://api.meraki.com/api/v1"
+
+def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list | dict | None:
+    try:
+        resp = requests.get(
+            f"{_MERAKI_API_BASE}{path}",
+            headers={"X-Cisco-Meraki-API-Key": api_key, "Accept": "application/json"},
+            params=params or {},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        log.warning("Meraki API %s → %d: %s", path, resp.status_code, resp.text[:200])
+    except Exception as e:
+        log.warning("Meraki API %s failed: %s", path, e)
+    return None
+
+def _poll_meraki_api_clients() -> int:
+    """Fetch clients from Meraki Dashboard API; enrich _devices with MAC/vendor/hostname."""
+    key     = MERAKI_API_KEY
+    net_id  = MERAKI_NETWORK_ID
+    if not key or not net_id:
+        return 0
+    clients = _meraki_api_get(f"/networks/{net_id}/clients", key, {"timespan": 86400, "perPage": 1000})
+    if not clients:
+        return 0
+    updated = 0
+    for c in clients:
+        ip  = c.get("ip") or ""
+        mac = (c.get("mac") or "").lower()
+        if not ip or not mac:
+            continue
+        vendor   = c.get("manufacturer") or ""
+        hostname = c.get("description") or ""
+        online   = (c.get("status") or "").lower() == "online"
+        with _devices_lock:
+            if ip not in _devices:
+                _devices[ip] = {
+                    "ip": ip, "mac": mac, "vendor": vendor,
+                    "hostname": hostname, "name": "",
+                    "learned_from": "Meraki API",
+                    "meraki_status": "online" if online else "offline",
+                    "meraki_product": "",
+                    "monitored": False, "status": "unknown",
+                    "last_seen": None, "ping_latency_ms": None,
+                    "ports": [], "port_status": {},
+                }
+                log.info("Meraki API discovered %s — %s (%s)", ip, mac, vendor or "unknown")
+                updated += 1
+            else:
+                d = _devices[ip]
+                changed = False
+                if mac and not d.get("mac"):
+                    _devices[ip]["mac"] = mac;     changed = True
+                if vendor and not d.get("vendor"):
+                    _devices[ip]["vendor"] = vendor; changed = True
+                if hostname and not d.get("hostname"):
+                    _devices[ip]["hostname"] = hostname; changed = True
+                ms = "online" if online else "offline"
+                if d.get("meraki_status") != ms:
+                    _devices[ip]["meraki_status"] = ms; changed = True
+                if not d.get("learned_from"):
+                    _devices[ip]["learned_from"] = "Meraki API"; changed = True
+                if changed:
+                    updated += 1
+        _save_devices()
+    log.info("Meraki API: %d clients, %d updated", len(clients), updated)
+    return updated
+
+def _meraki_api_poller_loop() -> None:
+    time.sleep(20)
+    while True:
+        try:
+            if MERAKI_API_KEY and MERAKI_NETWORK_ID:
+                _poll_meraki_api_clients()
+        except Exception as e:
+            log.exception("Meraki API poll error: %s", e)
+        time.sleep(300)
+
+# ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
 # ---------------------------------------------------------------------------
 _CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/monitor_config.json")
@@ -608,6 +690,9 @@ _CONFIG_FIELDS = {
     "z2m_edge_health_entity": {"label": "Z2M Edge bridge health entity",   "default": "binary_sensor.zigbee2mqtt_bridge_connection_state_2"},
     "mqtt_probe_host":        {"label": "Mosquitto probe host",            "default": HA_URL.split("://")[-1].split(":")[0]},
     "mqtt_probe_port":        {"label": "Mosquitto probe port",            "default": "1883"},
+    # Meraki Dashboard API
+    "meraki_api_key":         {"label": "Meraki API key",                  "default": "", "secret": True},
+    "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
 }
 
 def _load_config() -> dict:
@@ -627,11 +712,13 @@ push_alerts_enabled:  bool = True
 email_alerts_enabled: bool = False
 ALERT_TITLE:          str  = "HA Monitor"
 notify_recovery:      bool = False
+MERAKI_API_KEY:       str  = ""
+MERAKI_NETWORK_ID:    str  = ""
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -660,6 +747,8 @@ def _apply_config(data: dict) -> None:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["host"] = data["mqtt_probe_host"] or "192.168.0.20"
     if "mqtt_probe_port"        in data:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
+    if "meraki_api_key"         in data: MERAKI_API_KEY     = data["meraki_api_key"]    or ""
+    if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -1208,6 +1297,67 @@ def api_snmp_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
+@app.route("/api/meraki_api/orgs")
+def api_meraki_orgs():
+    key = request.args.get("api_key") or MERAKI_API_KEY
+    if not key:
+        return jsonify({"ok": False, "error": "API key required"}), 400
+    orgs = _meraki_api_get("/organizations", key)
+    if orgs is None:
+        return jsonify({"ok": False, "error": "API key invalid or request failed"}), 400
+    return jsonify({"ok": True, "orgs": [{"id": o["id"], "name": o["name"]} for o in orgs]})
+
+
+@app.route("/api/meraki_api/networks")
+def api_meraki_networks():
+    key    = request.args.get("api_key") or MERAKI_API_KEY
+    org_id = request.args.get("org_id", "")
+    if not key:
+        return jsonify({"ok": False, "error": "API key required"}), 400
+    if org_id:
+        nets = _meraki_api_get(f"/organizations/{org_id}/networks", key)
+    else:
+        orgs = _meraki_api_get("/organizations", key)
+        if not orgs:
+            return jsonify({"ok": False, "error": "No organisations found"}), 400
+        nets = []
+        for org in orgs:
+            n = _meraki_api_get(f"/organizations/{org['id']}/networks", key)
+            if n:
+                for net in n:
+                    net["_org_name"] = org["name"]
+                nets.extend(n)
+    if nets is None:
+        return jsonify({"ok": False, "error": "Failed to fetch networks"}), 400
+    return jsonify({"ok": True, "networks": [{"id": n["id"], "name": n["name"],
+                                               "org": n.get("_org_name", "")} for n in nets]})
+
+
+@app.route("/api/meraki_api/test", methods=["POST"])
+def api_meraki_api_test():
+    data   = request.json or {}
+    key    = data.get("api_key") or MERAKI_API_KEY
+    net_id = data.get("network_id") or MERAKI_NETWORK_ID
+    if not key:
+        return jsonify({"ok": False, "error": "API key required"}), 400
+    if not net_id:
+        return jsonify({"ok": False, "error": "Network ID required"}), 400
+    clients = _meraki_api_get(f"/networks/{net_id}/clients", key, {"timespan": 3600, "perPage": 5})
+    if clients is None:
+        return jsonify({"ok": False, "error": "API request failed — check key and network ID"}), 400
+    net_info = _meraki_api_get(f"/networks/{net_id}", key)
+    net_name = net_info.get("name", net_id) if net_info else net_id
+    return jsonify({"ok": True, "network_name": net_name, "client_sample": len(clients)})
+
+
+@app.route("/api/meraki_api/poll", methods=["POST"])
+def api_meraki_api_poll():
+    if not MERAKI_API_KEY or not MERAKI_NETWORK_ID:
+        return jsonify({"ok": False, "error": "Meraki API not configured"}), 400
+    threading.Thread(target=_poll_meraki_api_clients, daemon=True).start()
+    return jsonify({"ok": True, "message": "Poll started"})
+
+
 @app.route("/api/update", methods=["POST"])
 def api_update():
     """Rebuild image from /app-src and restart with preserved settings."""
@@ -1592,7 +1742,8 @@ if __name__ == "__main__":
     # Start background pollers
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()
-    threading.Thread(target=_snmp_poller_loop, daemon=True, name="snmp-poller").start()
+    threading.Thread(target=_snmp_poller_loop,        daemon=True, name="snmp-poller").start()
+    threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
 
     # Give the first poll a moment
     time.sleep(2)

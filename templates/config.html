@@ -167,6 +167,33 @@
     </div>
   </div>
 
+  <div class="section-title">Meraki API</div>
+  <div class="card">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field" style="margin:0">
+        <label>API Key</label>
+        <input type="password" id="meraki_api_key" placeholder="••••••••••••••••••••••••••••••••••••••••">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Network ID</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="meraki_network_id" placeholder="N_xxxxxxxxxxxx" style="flex:1">
+          <button class="btn btn-secondary" style="white-space:nowrap" onclick="fetchMerakiNetworks()">Fetch Networks</button>
+        </div>
+      </div>
+    </div>
+    <div id="meraki-network-picker" style="display:none;margin-top:10px">
+      <label style="font-size:.75rem;color:var(--text-muted);display:block;margin-bottom:4px">Select network</label>
+      <select id="meraki-network-select" style="width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.88rem;padding:8px 11px;outline:none" onchange="document.getElementById('meraki_network_id').value=this.value"></select>
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" onclick="saveMerakiApi()">Save</button>
+      <button class="btn btn-secondary" onclick="testMerakiApi()">Test</button>
+      <button class="btn btn-secondary" onclick="pollMerakiNow()">Poll now</button>
+      <span class="status-msg" id="meraki-api-status"></span>
+    </div>
+  </div>
+
   <div class="section-title">Service Monitor</div>
   <div class="card">
     <div class="field">
@@ -241,6 +268,8 @@
       set('z2m_edge_health_entity', d.z2m_edge_health_entity || 'binary_sensor.zigbee2mqtt_bridge_connection_state_2');
       set('mqtt_probe_host',        d.mqtt_probe_host        || '');
       set('mqtt_probe_port',        d.mqtt_probe_port        || '1883');
+      set('meraki_network_id',      d.meraki_network_id      || '');
+      if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to change)';
     } catch (_) {}
   }
 
@@ -436,6 +465,51 @@
     const r = await fetch('/api/snmp_poll', {method: 'POST'});
     const d = await r.json();
     flash('snmp-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
+  }
+
+  async function fetchMerakiNetworks() {
+    const key = document.getElementById('meraki_api_key').value.trim();
+    if (!key) { flash('meraki-api-status', 'Enter API key first', 'err'); return; }
+    flash('meraki-api-status', 'Fetching networks…', '');
+    const r = await fetch('/api/meraki_api/networks?api_key=' + encodeURIComponent(key));
+    const d = await r.json();
+    if (!d.ok) { flash('meraki-api-status', d.error, 'err'); return; }
+    const sel = document.getElementById('meraki-network-select');
+    sel.innerHTML = d.networks.map(n =>
+      `<option value="${n.id}">${n.org ? n.org+' — ' : ''}${n.name} (${n.id})</option>`
+    ).join('');
+    document.getElementById('meraki-network-picker').style.display = 'block';
+    if (d.networks.length === 1) document.getElementById('meraki_network_id').value = d.networks[0].id;
+    flash('meraki-api-status', d.networks.length + ' network(s) found', 'ok');
+  }
+
+  async function saveMerakiApi() {
+    const key    = document.getElementById('meraki_api_key').value.trim();
+    const net_id = document.getElementById('meraki_network_id').value.trim();
+    if (!key || !net_id) { flash('meraki-api-status', 'API key and network ID required', 'err'); return; }
+    await post({meraki_api_key: key, meraki_network_id: net_id});
+    flash('meraki-api-status', 'Saved', 'ok');
+  }
+
+  async function testMerakiApi() {
+    const key    = document.getElementById('meraki_api_key').value.trim();
+    const net_id = document.getElementById('meraki_network_id').value.trim();
+    flash('meraki-api-status', 'Testing…', '');
+    const r = await fetch('/api/meraki_api/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({api_key: key, network_id: net_id}),
+    });
+    const d = await r.json();
+    if (d.ok) flash('meraki-api-status', `✓ ${d.network_name} — API responding`, 'ok');
+    else flash('meraki-api-status', '✗ ' + d.error, 'err');
+  }
+
+  async function pollMerakiNow() {
+    flash('meraki-api-status', 'Polling clients…', '');
+    const r = await fetch('/api/meraki_api/poll', {method: 'POST'});
+    const d = await r.json();
+    flash('meraki-api-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
   }
 
   async function saveServices() {
