@@ -386,7 +386,11 @@ def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10, port: int 
             if " = " not in line:
                 continue
             oid_part, val_part = line.split(" = ", 1)
-            pairs.append((oid_part.strip(), val_part.strip()))
+            val_part = val_part.strip()
+            # Skip SNMP agent error responses that snmpwalk emits as result lines
+            if val_part.startswith("No ") or val_part.startswith("NULL"):
+                continue
+            pairs.append((oid_part.strip(), val_part))
         log.debug("snmpwalk %s [%s]: %d rows", host, oid.split(".")[-1], len(pairs))
         return pairs
     except FileNotFoundError:
@@ -1180,17 +1184,19 @@ def api_snmp_test():
                                 "meraki_names": ", ".join(names[:5])})
         return jsonify({"ok": False, "error": f"No SNMP response from {host}:{port} (check host, community string, and that SNMP is enabled)"})
     descr = rows[0][1].replace("STRING:", "").strip().strip('"')
+    if dev_type == "meraki":
+        # Meraki MX blocks standard ARP/bridge OIDs — go straight to devTable
+        meraki_devs = _poll_meraki_devtable(host, community, port=port)
+        names = ", ".join(d.get("name", "?") for d in meraki_devs.values())
+        return jsonify({"ok": True, "description": descr,
+                        "meraki_devices": len(meraki_devs),
+                        "meraki_names": names or "none found"})
     arp    = _snmpwalk(host, community, "1.3.6.1.2.1.4.22.1.2", timeout=5, port=port)
     if not arp:
         arp = [r for r in _snmpwalk(host, community, "1.3.6.1.2.1.4.35.1.4", timeout=5, port=port)
-               if r[0].split(".")[-6] == "1" and r[0].split(".")[-5] == "4"]
+               if len(r[0].split(".")) >= 6 and r[0].split(".")[-6] == "1" and r[0].split(".")[-5] == "4"]
     bridge = _snmpwalk(host, community, "1.3.6.1.2.1.17.4.3.1.1", timeout=5, port=port)
-    result = {"ok": True, "description": descr, "arp_entries": len(arp), "bridge_macs": len(bridge)}
-    if dev_type == "meraki":
-        meraki_devs = _poll_meraki_devtable(host, community, port=port)
-        result["meraki_devices"] = len(meraki_devs)
-        result["meraki_names"]   = ", ".join(d.get("name","?") for d in meraki_devs.values())
-    return jsonify(result)
+    return jsonify({"ok": True, "description": descr, "arp_entries": len(arp), "bridge_macs": len(bridge)})
 
 
 @app.route("/api/snmp_poll", methods=["POST"])
