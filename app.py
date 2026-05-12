@@ -130,6 +130,7 @@ alerts_enabled = _load_alerts_enabled()
 # ---------------------------------------------------------------------------
 SCAN_NETWORK  = os.environ.get("SCAN_NETWORK", "")   # e.g. 192.168.0.0/24
 PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "30"))
+SCAN_PORTS    = os.environ.get("SCAN_PORTS", "22,80,443,8080,8123,1883,8883")
 
 _DEVICES_PATH = os.environ.get("DEVICES_PATH", "/data/devices.json")
 _devices: dict[str, dict] = {}
@@ -187,6 +188,68 @@ def _parse_nmap_xml(xml: str) -> list[dict]:
         log.error("nmap XML parse error: %s", e)
     return out
 
+def _parse_nmap_ports_xml(xml: str) -> dict[str, list[int]]:
+    """Return {ip: [open_port, ...]} from an nmap port-scan XML blob."""
+    out: dict[str, list[int]] = {}
+    try:
+        root = ET.fromstring(xml)
+        for host in root.findall("host"):
+            st = host.find("status")
+            if st is None or st.get("state") != "up":
+                continue
+            ip = None
+            for addr in host.findall("address"):
+                if addr.get("addrtype") == "ipv4":
+                    ip = addr.get("addr")
+            if not ip:
+                continue
+            ports_el = host.find("ports")
+            if ports_el is None:
+                continue
+            open_ports = []
+            for port_el in ports_el.findall("port"):
+                state_el = port_el.find("state")
+                if state_el is not None and state_el.get("state") == "open":
+                    try:
+                        open_ports.append(int(port_el.get("portid", 0)))
+                    except ValueError:
+                        pass
+            if open_ports:
+                out[ip] = open_ports
+    except Exception as e:
+        log.error("nmap ports XML parse error: %s", e)
+    return out
+
+
+def _do_port_scan(ips: list[str], ports_str: str) -> None:
+    """Scan specific ports on a list of IPs; merge any open ports into device records."""
+    if not ips or not ports_str.strip():
+        return
+    try:
+        result = subprocess.run(
+            ["nmap", "-p", ports_str.strip(), "-T4", "--host-timeout", "10s", "-oX", "-"] + ips,
+            capture_output=True, text=True, timeout=300,
+        )
+        port_map = _parse_nmap_ports_xml(result.stdout)
+        log.info("Port scan: %d/%d hosts had open ports in [%s]", len(port_map), len(ips), ports_str)
+        with _devices_lock:
+            changed = False
+            for ip, open_ports in port_map.items():
+                if ip not in _devices:
+                    continue
+                existing = set(_devices[ip].get("ports") or [])
+                merged = sorted(existing | set(open_ports))
+                if merged != sorted(existing):
+                    new_ports = sorted(set(open_ports) - existing)
+                    log.info("Port scan %s: discovered open ports %s", ip, new_ports)
+                    _devices[ip]["ports"] = merged
+                    changed = True
+            if changed:
+                _save_devices()
+    except Exception as e:
+        log.error("Port scan failed: %s", e)
+
+
 def _do_scan(network: str) -> None:
     global _scan_status
     _scan_status = {"state": "running", "message": f"Scanning {network}…"}
@@ -213,6 +276,9 @@ def _do_scan(network: str) -> None:
                     "ping_latency_ms": old.get("ping_latency_ms"),
                 }
             _save_devices()
+        if found and SCAN_PORTS:
+            _scan_status = {"state": "running", "message": f"Port scanning {len(found)} hosts…"}
+            _do_port_scan([d["ip"] for d in found], SCAN_PORTS)
         _scan_status = {"state": "done", "message": f"Found {len(found)} devices", "count": len(found), "network": network}
         log.info("Network scan complete: %d devices on %s", len(found), network)
     except Exception as e:
@@ -693,6 +759,8 @@ _CONFIG_FIELDS = {
     # Meraki Dashboard API
     "meraki_api_key":         {"label": "Meraki API key",                  "default": "", "secret": True},
     "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
+    # Network scan
+    "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
 }
 
 def _load_config() -> dict:
@@ -718,7 +786,7 @@ MERAKI_NETWORK_ID:    str  = ""
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -749,6 +817,7 @@ def _apply_config(data: dict) -> None:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
     if "meraki_api_key"         in data: MERAKI_API_KEY     = data["meraki_api_key"]    or ""
     if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
+    if "scan_ports"             in data: SCAN_PORTS         = data["scan_ports"]        or ""
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers

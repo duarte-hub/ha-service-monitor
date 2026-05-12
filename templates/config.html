@@ -127,6 +127,19 @@
     </div>
   </div>
 
+  <div class="section-title">Network Scan</div>
+  <div class="card">
+    <div class="field">
+      <label>Ports to probe on each discovered host (comma-separated)</label>
+      <input type="text" id="scan_ports" placeholder="22,80,443,8080,8123,1883,8883">
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px">Any open ports are automatically added to the device's monitored port list after each scan.</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveScanSettings()">Save</button>
+      <span class="status-msg" id="scan-settings-status"></span>
+    </div>
+  </div>
+
   <div class="section-title">SNMP Devices</div>
   <div class="card">
     <div id="snmp-device-list" style="margin-bottom:4px"></div>
@@ -270,6 +283,7 @@
       set('mqtt_probe_port',        d.mqtt_probe_port        || '1883');
       set('meraki_network_id',      d.meraki_network_id      || '');
       if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to change)';
+      set('scan_ports', d.scan_ports || '22,80,443,8080,8123,1883,8883');
     } catch (_) {}
   }
 
@@ -515,6 +529,11 @@
     const r = await fetch('/api/meraki_api/poll', {method: 'POST'});
     const d = await r.json();
     flash('meraki-api-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
+  }
+
+  async function saveScanSettings() {
+    await post({scan_ports: val('scan_ports')});
+    flash('scan-settings-status', 'Saved', 'ok');
   }
 
   async function saveServices() {
