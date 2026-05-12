@@ -766,6 +766,7 @@ _CONFIG_FIELDS = {
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
     # Sync
     "peer_url":               {"label": "Peer instance URL",               "default": ""},
+    "alert_role":             {"label": "Alert role",                      "default": "standalone"},
 }
 
 def _load_config() -> dict:
@@ -789,11 +790,16 @@ notify_recovery:      bool = False
 MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
 PEER_URL:             str  = ""
+ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
+
+_peer_reachable:      bool = True   # updated by _peer_health_loop
+_peer_fail_streak:    int  = 0
+_peer_ok_streak:      int  = 0
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -827,6 +833,7 @@ def _apply_config(data: dict) -> None:
     if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
     if "scan_ports"             in data: SCAN_PORTS         = data["scan_ports"]        or ""
     if "peer_url"               in data: PEER_URL           = data["peer_url"]          or ""
+    if "alert_role"             in data: ALERT_ROLE         = data["alert_role"]        or "standalone"
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -1193,6 +1200,9 @@ def maybe_alert(key: str, subject: str, detail: str, mode: str | None = None):
     mode values: 'default', 'push_critical', 'push_normal', 'email', 'none'."""
     if not alerts_enabled:
         return
+    if ALERT_ROLE == "secondary" and _peer_reachable:
+        log.debug("Alert suppressed (secondary, peer reachable): %s", subject)
+        return
     now = time.time()
     last = alert_history.get(key, 0)
     if now - last < ALERT_COOLDOWN:
@@ -1445,6 +1455,36 @@ def api_meraki_api_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
+def _peer_health_loop() -> None:
+    """Periodically check primary health; flip _peer_reachable for secondary failover."""
+    global _peer_reachable, _peer_fail_streak, _peer_ok_streak
+    while True:
+        time.sleep(30)
+        if ALERT_ROLE != "secondary" or not PEER_URL:
+            # Not in secondary mode — reset to reachable so guards don't block
+            if not _peer_reachable:
+                _peer_reachable = True
+                _peer_fail_streak = 0
+                _peer_ok_streak = 0
+            continue
+        try:
+            resp = requests.get(f"{PEER_URL.rstrip('/')}/api/health", timeout=5)
+            if resp.status_code == 200:
+                _peer_fail_streak = 0
+                _peer_ok_streak += 1
+                if not _peer_reachable and _peer_ok_streak >= 2:
+                    _peer_reachable = True
+                    log.info("Primary peer %s recovered — secondary resuming standby", PEER_URL)
+            else:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+        except Exception as e:
+            _peer_ok_streak = 0
+            _peer_fail_streak += 1
+            if _peer_reachable and _peer_fail_streak >= 2:
+                _peer_reachable = False
+                log.warning("Primary peer %s unreachable (%d checks) — secondary taking over alerts", PEER_URL, _peer_fail_streak)
+
+
 def _build_sync_bundle() -> dict:
     """Collect all syncable settings into a portable bundle."""
     with _devices_lock:
@@ -1454,8 +1494,9 @@ def _build_sync_bundle() -> dict:
         ]
     with _snmp_lock:
         snmp = list(_snmp_devices)
-    # Exclude peer_url — it's instance-specific and must not propagate
-    config_export = {k: v for k, v in _runtime_config.items() if k in _CONFIG_FIELDS and k != "peer_url"}
+    # Exclude instance-specific keys that must not propagate to the peer
+    _SYNC_EXCLUDE = {"peer_url", "alert_role"}
+    config_export = {k: v for k, v in _runtime_config.items() if k in _CONFIG_FIELDS and k not in _SYNC_EXCLUDE}
     return {"config": config_export, "snmp_devices": snmp, "devices": device_settings}
 
 
@@ -1465,7 +1506,7 @@ def _apply_sync_bundle(data: dict) -> dict:
     counts: dict = {}
     cfg = data.get("config", {})
     if cfg:
-        merged = {k: v for k, v in cfg.items() if k in _CONFIG_FIELDS and k != "peer_url"}
+        merged = {k: v for k, v in cfg.items() if k in _CONFIG_FIELDS and k not in {"peer_url", "alert_role"}}
         _runtime_config.update(merged)
         _save_config(_runtime_config)
         _apply_config(_runtime_config)
@@ -1497,6 +1538,16 @@ def _apply_sync_bundle(data: dict) -> dict:
         _save_devices()
     counts["devices"] = len(devices)
     return counts
+
+
+@app.route("/api/sync/status")
+def api_sync_status():
+    return jsonify({
+        "role":           ALERT_ROLE,
+        "peer_url":       PEER_URL,
+        "peer_reachable": _peer_reachable,
+        "alerting":       ALERT_ROLE != "secondary" or not _peer_reachable,
+    })
 
 
 @app.route("/api/sync/export")
@@ -1930,6 +1981,7 @@ if __name__ == "__main__":
     t.start()
     threading.Thread(target=_snmp_poller_loop,        daemon=True, name="snmp-poller").start()
     threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
+    threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()
 
     # Give the first poll a moment
     time.sleep(2)

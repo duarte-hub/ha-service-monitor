@@ -42,12 +42,24 @@
   <div class="section-title">Instance Sync</div>
   <div class="card">
     <div class="field">
-      <label>Peer instance URL (the other Docker's address)</label>
+      <label>Alert role for this instance</label>
+      <select id="alert_role" onchange="updateRoleHint()" style="width:100%;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.88rem;padding:8px 11px;outline:none">
+        <option value="standalone">Standalone — this instance alerts independently</option>
+        <option value="primary">Primary — this instance sends all alerts</option>
+        <option value="secondary">Secondary — silent while primary is reachable; takes over if primary goes down</option>
+      </select>
+      <div id="sync-role-hint" style="font-size:.72rem;color:var(--text-muted);margin-top:5px"></div>
+    </div>
+    <div class="field" style="margin-top:4px">
+      <label>Peer instance URL</label>
       <input type="text" id="peer_url" placeholder="http://192.168.0.X:9099">
-      <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px">Syncs: notification settings, SNMP devices, device names/ports/alert modes. Does not sync runtime state (status, last seen, MAC).</div>
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px">Required for Secondary role (health checks) and for Push/Pull sync.</div>
+    </div>
+    <div id="peer-health-row" style="display:none;font-size:.8rem;margin:6px 0 2px">
+      Peer: <span id="peer-health-indicator" style="font-weight:600">checking…</span>
     </div>
     <div class="btn-row" style="flex-wrap:wrap;gap:8px">
-      <button class="btn btn-primary" onclick="savePeerUrl()">Save URL</button>
+      <button class="btn btn-primary" onclick="saveInstanceSync()">Save</button>
       <button class="btn btn-secondary" onclick="syncPush()">Push to peer &rarr;</button>
       <button class="btn btn-secondary" onclick="syncPull()">&larr; Pull from peer</button>
       <span class="status-msg" id="sync-status"></span>
@@ -311,6 +323,10 @@
       if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to change)';
       set('scan_ports', d.scan_ports || '22,80,443,8080,8123,1883,8883');
       set('peer_url',   d.peer_url   || '');
+      const roleEl = document.getElementById('alert_role');
+      if (roleEl) roleEl.value = d.alert_role || 'standalone';
+      updateRoleHint();
+      loadSyncStatus();
     } catch (_) {}
   }
 
@@ -564,9 +580,38 @@
     flash('meraki-api-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
   }
 
-  async function savePeerUrl() {
-    await post({peer_url: val('peer_url')});
+  function updateRoleHint() {
+    const role  = document.getElementById('alert_role').value;
+    const hint  = document.getElementById('sync-role-hint');
+    const row   = document.getElementById('peer-health-row');
+    const hints = {
+      standalone: 'Both instances alert independently — you will receive duplicate notifications.',
+      primary:    'This instance sends all alerts. Set the other instance to Secondary.',
+      secondary:  'Alerts suppressed while primary is reachable. Activates automatically if primary goes offline.',
+    };
+    hint.textContent = hints[role] || '';
+    hint.style.color = role === 'standalone' ? 'var(--red)' : 'var(--text-muted)';
+    row.style.display = role === 'secondary' ? '' : 'none';
+  }
+
+  async function loadSyncStatus() {
+    try {
+      const d = await (await fetch('/api/sync/status')).json();
+      if (d.role !== 'secondary') return;
+      const el = document.getElementById('peer-health-indicator');
+      if (!el) return;
+      el.textContent  = d.peer_reachable ? '✓ reachable — alerts suppressed here' : '✗ unreachable — this instance is alerting';
+      el.style.color  = d.peer_reachable ? 'var(--green)' : 'var(--red)';
+      document.getElementById('peer-health-row').style.display = '';
+    } catch (_) {}
+  }
+
+  async function saveInstanceSync() {
+    const role = document.getElementById('alert_role').value;
+    await post({peer_url: val('peer_url'), alert_role: role});
     flash('sync-status', 'Saved', 'ok');
+    updateRoleHint();
+    setTimeout(loadSyncStatus, 500);
   }
 
   async function syncPush() {
