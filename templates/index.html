@@ -86,6 +86,13 @@
     .btn-del { background:none; border:none; color:var(--muted); cursor:pointer; font-size:.9rem; padding:0 4px; line-height:1; }
     .btn-del:hover { color:var(--red); }
 
+    /* ── alert mode select ──────────────────────────────────────────────── */
+    .alert-sel { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; color:var(--muted); font-size:.7rem; padding:2px 4px; cursor:pointer; outline:none; margin-top:4px; width:100%; }
+    .alert-sel:focus { border-color:var(--primary); }
+    .alert-sel.critical { color:#ff5252; border-color:rgba(255,82,82,.35); background:rgba(255,82,82,.06); }
+    .alert-sel.push     { color:var(--primary); border-color:rgba(3,169,244,.35); background:rgba(3,169,244,.06); }
+    .alert-sel.email    { color:var(--yellow); border-color:rgba(255,152,0,.35); background:rgba(255,152,0,.06); }
+
     /* ── HA section (collapsible) ───────────────────────────────────────── */
     .collapse-hdr { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
     .collapse-arrow { font-size:.7rem; color:var(--muted); transition:transform .2s; }
@@ -309,6 +316,40 @@
   function editPorts(ip)      { _editingPortsIp = ip; renderDevices(); }
   function cancelPortEdit()   { _editingPortsIp = null; renderDevices(); }
 
+  function _alertSelClass(mode) {
+    if (mode === 'push_critical') return 'critical';
+    if (mode === 'push_normal')   return 'push';
+    if (mode === 'email')         return 'email';
+    return '';
+  }
+
+  function _monitorCell(d) {
+    const checked = d.monitored ? 'checked' : '';
+    const onLabel = d.monitored ? 'On' : 'Off';
+    const toggle = `<label class="mon-toggle ${d.monitored?'active':''}">
+      <input type="checkbox" ${checked} onchange="setMonitor('${d.ip}',this.checked)">
+      ${onLabel}
+    </label>`;
+    if (!d.monitored) return toggle;
+    const mode = d.alert_mode || 'default';
+    const cls  = _alertSelClass(mode);
+    const sel  = `<select class="alert-sel ${cls}" onchange="setAlertMode('${d.ip}',this)" title="Alert channel for this device">
+      <option value="default"${mode==='default'?' selected':''}>Default</option>
+      <option value="push_critical"${mode==='push_critical'?' selected':''}>Critical push</option>
+      <option value="push_normal"${mode==='push_normal'?' selected':''}>Normal push</option>
+      <option value="email"${mode==='email'?' selected':''}>Email</option>
+      <option value="none"${mode==='none'?' selected':''}>Silent</option>
+    </select>`;
+    return `<div style="display:flex;flex-direction:column;gap:2px">${toggle}${sel}</div>`;
+  }
+
+  async function setAlertMode(ip, selectEl) {
+    const mode = selectEl.value;
+    selectEl.className = 'alert-sel ' + _alertSelClass(mode);
+    await fetch(`/api/devices/${ip}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({alert_mode: mode})});
+    const d = _devices.find(d => d.ip === ip); if (d) d.alert_mode = mode;
+  }
+
   async function savePorts(ip) {
     const inp = document.getElementById(`ports-input-${ip}`);
     if (!inp) return;
@@ -336,10 +377,7 @@
             <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
             <td>${_latencyCell(d)}</td>
             <td>${_portsCell(d)}</td>
-            <td><label class="mon-toggle">
-              <input type="checkbox" onchange="setMonitor('${d.ip}',this.checked)">
-              Off
-            </label></td>
+            <td>${_monitorCell(d)}</td>
             <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
           </tr>`).join('');
       }
@@ -356,10 +394,7 @@
         <td style="color:var(--muted);font-size:.78rem">${_lastSeen(d.last_seen)}</td>
         <td>${_latencyCell(d)}</td>
         <td>${_portsCell(d)}</td>
-        <td><label class="mon-toggle ${d.monitored?'active':''}">
-          <input type="checkbox" ${d.monitored?'checked':''} onchange="setMonitor('${d.ip}',this.checked)">
-          ${d.monitored ? 'On' : 'Off'}
-        </label></td>
+        <td>${_monitorCell(d)}</td>
         <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
       </tr>`).join('');
     if (_editingIp) {

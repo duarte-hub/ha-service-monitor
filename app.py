@@ -271,6 +271,7 @@ def _do_scan(network: str) -> None:
                     "hostname":       d["hostname"] or old.get("hostname", ""),
                     "name":           old.get("name", ""),
                     "monitored":      old.get("monitored", False),
+                    "alert_mode":     old.get("alert_mode", "default"),
                     "status":         "up",
                     "last_seen":      now,
                     "ping_latency_ms": old.get("ping_latency_ms"),
@@ -314,8 +315,8 @@ def _seed_device(ip: str, name: str, ports: list[int]) -> None:
         if ip not in _devices:
             _devices[ip] = {
                 "ip": ip, "mac": "", "vendor": "", "hostname": "",
-                "name": name, "monitored": True, "status": "unknown",
-                "last_seen": None, "ping_latency_ms": None,
+                "name": name, "monitored": True, "alert_mode": "default",
+                "status": "unknown", "last_seen": None, "ping_latency_ms": None,
                 "ports": ports, "port_status": {},
             }
             log.info("Seeded device %s (%s) with ports %s", ip, name, ports)
@@ -340,13 +341,14 @@ def _ping_monitored() -> None:
             if up:
                 _devices[ip]["last_seen"] = now
         label = dev.get("name") or dev.get("hostname") or ip
+        mode  = dev.get("alert_mode") or "default"
         log.debug("monitored %s (%s): %s", label, ip, "up" if up else "down")
         if prev != "down" and not up:
-            maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping")
+            maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping", mode=mode)
         elif prev == "down" and up:
             log.info("Device %s (%s) is back online", label, ip)
             if notify_recovery:
-                maybe_alert(f"device_{ip}_recovery", f"{label} back online", f"{ip} is responding again")
+                maybe_alert(f"device_{ip}_recovery", f"{label} back online", f"{ip} is responding again", mode=mode)
 
         ports = dev.get("ports") or []
         if ports:
@@ -358,11 +360,11 @@ def _ping_monitored() -> None:
             for p_str, port_up in new_ps.items():
                 prev_up = prev_ps.get(p_str)
                 if prev_up is not False and not port_up:
-                    maybe_alert(f"port_{ip}_{p_str}", f"{label} port {p_str} closed", f"{ip}:{p_str} is not responding")
+                    maybe_alert(f"port_{ip}_{p_str}", f"{label} port {p_str} closed", f"{ip}:{p_str} is not responding", mode=mode)
                 elif prev_up is False and port_up:
                     log.info("Port %s:%s back online", ip, p_str)
                     if notify_recovery:
-                        maybe_alert(f"port_{ip}_{p_str}_recovery", f"{label} port {p_str} open", f"{ip}:{p_str} is responding again")
+                        maybe_alert(f"port_{ip}_{p_str}_recovery", f"{label} port {p_str} open", f"{ip}:{p_str} is responding again", mode=mode)
 
 # ---------------------------------------------------------------------------
 # SNMP device discovery
@@ -606,7 +608,7 @@ def _poll_snmp_devices() -> int:
                         "learned_from": name,
                         "meraki_status": ("online" if meraki_online else "offline") if meraki_online is not None else None,
                         "meraki_product": meraki_product,
-                        "monitored": False, "status": "unknown",
+                        "monitored": False, "alert_mode": "default", "status": "unknown",
                         "last_seen": None, "ping_latency_ms": None,
                         "ports": [], "port_status": {},
                     }
@@ -694,7 +696,7 @@ def _poll_meraki_api_clients() -> int:
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
-                    "monitored": False, "status": "unknown",
+                    "monitored": False, "alert_mode": "default", "status": "unknown",
                     "last_seen": None, "ping_latency_ms": None,
                     "ports": [], "port_status": {},
                 }
@@ -1131,8 +1133,9 @@ def poll_once():
 # ---------------------------------------------------------------------------
 # Alerts — via Home Assistant companion app push notifications
 # ---------------------------------------------------------------------------
-def send_push(subject: str, body: str):
-    """Send a push notification via the HA companion app."""
+def send_push(subject: str, body: str, critical: bool | None = None):
+    """Send a push notification via the HA companion app.
+    critical=None uses the global push_critical setting; True/False overrides it."""
     try:
         service_parts = NOTIFY_SERVICE.split(".", 1)
         if len(service_parts) != 2:
@@ -1140,9 +1143,10 @@ def send_push(subject: str, body: str):
             return
         domain, service = service_parts
 
+        use_critical = push_critical if critical is None else critical
         url = f"{HA_URL}/api/services/{domain}/{service}"
         push_data: dict = {"group": "ha-monitor"}
-        if push_critical:
+        if use_critical:
             push_data["sound"] = {"name": "default", "critical": 1, "volume": 0.8}
         payload = {
             "title": f"{ALERT_TITLE}: {subject}",
@@ -1155,7 +1159,7 @@ def send_push(subject: str, body: str):
         }
         resp = requests.post(url, headers=ha_headers(), json=payload, timeout=10)
         resp.raise_for_status()
-        log.info("Push notification sent (%s): %s", "critical" if push_critical else "normal", subject)
+        log.info("Push notification sent (%s): %s", "critical" if use_critical else "normal", subject)
     except Exception as e:
         log.error("Failed to send push: %s", e)
 
@@ -1180,18 +1184,32 @@ def send_email(subject: str, body: str):
         log.error("Failed to send email alert: %s", e)
 
 
-def maybe_alert(key: str, subject: str, detail: str):
-    """Send alert if cooldown has elapsed and alerts are enabled."""
+def maybe_alert(key: str, subject: str, detail: str, mode: str | None = None):
+    """Send alert if cooldown has elapsed. mode overrides global push/email settings.
+    mode values: 'default', 'push_critical', 'push_normal', 'email', 'none'."""
     if not alerts_enabled:
         return
     now = time.time()
     last = alert_history.get(key, 0)
-    if now - last >= ALERT_COOLDOWN:
-        alert_history[key] = now
-        if push_alerts_enabled:
-            threading.Thread(target=send_push, args=(subject, detail), daemon=True).start()
-        if email_alerts_enabled:
-            threading.Thread(target=send_email, args=(subject, detail), daemon=True).start()
+    if now - last < ALERT_COOLDOWN:
+        return
+    alert_history[key] = now
+    if not mode or mode == "default":
+        do_push    = push_alerts_enabled
+        do_email   = email_alerts_enabled
+        critical   = None  # use global push_critical
+    elif mode == "push_critical":
+        do_push, do_email, critical = True, False, True
+    elif mode == "push_normal":
+        do_push, do_email, critical = True, False, False
+    elif mode == "email":
+        do_push, do_email, critical = False, True, False
+    else:  # "none" or unknown
+        return
+    if do_push:
+        threading.Thread(target=send_push, args=(subject, detail, critical), daemon=True).start()
+    if do_email:
+        threading.Thread(target=send_email, args=(subject, detail), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -1246,7 +1264,7 @@ def api_device_patch(ip):
     with _devices_lock:
         if ip not in _devices:
             return jsonify({"error": "not found"}), 404
-        for k in ("name", "monitored", "ports"):
+        for k in ("name", "monitored", "ports", "alert_mode"):
             if k in (request.json or {}):
                 _devices[ip][k] = request.json[k]
         _save_devices()
