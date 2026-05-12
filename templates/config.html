@@ -471,7 +471,11 @@
     const key = document.getElementById('meraki_api_key').value.trim();
     if (!key) { flash('meraki-api-status', 'Enter API key first', 'err'); return; }
     flash('meraki-api-status', 'Fetching networks…', '');
-    const r = await fetch('/api/meraki_api/networks?api_key=' + encodeURIComponent(key));
+    const r = await fetch('/api/meraki_api/networks', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({api_key: key}),
+    });
     const d = await r.json();
     if (!d.ok) { flash('meraki-api-status', d.error, 'err'); return; }
     const sel = document.getElementById('meraki-network-select');

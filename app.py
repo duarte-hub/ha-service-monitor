@@ -1297,29 +1297,23 @@ def api_snmp_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
-@app.route("/api/meraki_api/orgs")
-def api_meraki_orgs():
-    key = request.args.get("api_key") or MERAKI_API_KEY
-    if not key:
-        return jsonify({"ok": False, "error": "API key required"}), 400
-    orgs = _meraki_api_get("/organizations", key)
-    if orgs is None:
-        return jsonify({"ok": False, "error": "API key invalid or request failed"}), 400
-    return jsonify({"ok": True, "orgs": [{"id": o["id"], "name": o["name"]} for o in orgs]})
-
-
-@app.route("/api/meraki_api/networks")
+@app.route("/api/meraki_api/networks", methods=["POST"])
 def api_meraki_networks():
-    key    = request.args.get("api_key") or MERAKI_API_KEY
-    org_id = request.args.get("org_id", "")
+    data   = request.json or {}
+    key    = data.get("api_key") or MERAKI_API_KEY
+    org_id = data.get("org_id", "")
     if not key:
         return jsonify({"ok": False, "error": "API key required"}), 400
     if org_id:
         nets = _meraki_api_get(f"/organizations/{org_id}/networks", key)
+        if nets is None:
+            return jsonify({"ok": False, "error": "Failed to fetch networks — check key and org ID"}), 400
     else:
         orgs = _meraki_api_get("/organizations", key)
+        if orgs is None:
+            return jsonify({"ok": False, "error": "API key rejected (401) — verify the key in your Meraki dashboard under My Profile → API access"}), 401
         if not orgs:
-            return jsonify({"ok": False, "error": "No organisations found"}), 400
+            return jsonify({"ok": False, "error": "No organisations found for this API key"}), 400
         nets = []
         for org in orgs:
             n = _meraki_api_get(f"/organizations/{org['id']}/networks", key)
@@ -1327,8 +1321,6 @@ def api_meraki_networks():
                 for net in n:
                     net["_org_name"] = org["name"]
                 nets.extend(n)
-    if nets is None:
-        return jsonify({"ok": False, "error": "Failed to fetch networks"}), 400
     return jsonify({"ok": True, "networks": [{"id": n["id"], "name": n["name"],
                                                "org": n.get("_org_name", "")} for n in nets]})
 
