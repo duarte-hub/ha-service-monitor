@@ -65,15 +65,23 @@
   <div class="section-title">Push Notifications</div>
   <div class="card">
     <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
-      <label style="margin:0">Send push notifications when a service goes down</label>
+      <label style="margin:0">Enable push notifications</label>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
         <input type="checkbox" id="push_alerts_enabled" onchange="savePushToggle()" style="width:auto;accent-color:var(--primary)">
         <span id="push-toggle-label" style="font-size:.82rem;color:var(--text-muted)">Off</span>
       </label>
     </div>
-  </div>
-  <div class="card">
-    <div class="field">
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+      <div>
+        <label style="margin:0">Critical alerts</label>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:3px">Bypasses mute / Focus mode and plays a loud sound. Turn off for silent push only.</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;flex-shrink:0;margin-left:16px">
+        <input type="checkbox" id="push_critical" onchange="savePushCriticalToggle()" style="width:auto;accent-color:var(--primary)">
+        <span id="push-critical-label" style="font-size:.82rem;color:var(--text-muted)">Off</span>
+      </label>
+    </div>
+    <div class="field" style="margin-top:12px">
       <label>HA notify service (e.g. notify.mobile_app_iphone)</label>
       <input type="text" id="notify_service" placeholder="notify.mobile_app_iphone">
     </div>
@@ -267,6 +275,9 @@
       const pushOn = String(d.push_alerts_enabled ?? 'true').toLowerCase() !== 'false';
       document.getElementById('push_alerts_enabled').checked = pushOn;
       document.getElementById('push-toggle-label').textContent = pushOn ? 'On' : 'Off';
+      const criticalOn = String(d.push_critical ?? 'true').toLowerCase() !== 'false';
+      document.getElementById('push_critical').checked = criticalOn;
+      document.getElementById('push-critical-label').textContent = criticalOn ? 'On' : 'Off';
       const emailOn = String(d.email_alerts_enabled).toLowerCase() === 'true';
       document.getElementById('email_alerts_enabled').checked = emailOn;
       document.getElementById('email-toggle-label').textContent = emailOn ? 'On' : 'Off';
@@ -291,6 +302,12 @@
     const on = document.getElementById('push_alerts_enabled').checked;
     document.getElementById('push-toggle-label').textContent = on ? 'On' : 'Off';
     await post({push_alerts_enabled: String(on)});
+  }
+
+  async function savePushCriticalToggle() {
+    const on = document.getElementById('push_critical').checked;
+    document.getElementById('push-critical-label').textContent = on ? 'On' : 'Off';
+    await post({push_critical: String(on)});
   }
 
   async function saveEmailToggle() {

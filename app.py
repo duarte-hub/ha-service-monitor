@@ -744,6 +744,7 @@ _CONFIG_FIELDS = {
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
     "alert_cooldown":         {"label": "Alert cooldown (s)",              "default": str(ALERT_COOLDOWN)},
     "push_alerts_enabled":    {"label": "Push alerts enabled",             "default": "true"},
+    "push_critical":          {"label": "Send push as critical alert",     "default": "true"},
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
     "alert_title":            {"label": "Notification title prefix",       "default": "HA Monitor"},
     "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
@@ -777,6 +778,7 @@ def _save_config(data: dict) -> None:
         log.error("Failed to save config: %s", e)
 
 push_alerts_enabled:  bool = True
+push_critical:        bool = True
 email_alerts_enabled: bool = False
 ALERT_TITLE:          str  = "HA Monitor"
 notify_recovery:      bool = False
@@ -785,7 +787,7 @@ MERAKI_NETWORK_ID:    str  = ""
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, email_alerts_enabled
+    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
     global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
@@ -796,6 +798,7 @@ def _apply_config(data: dict) -> None:
     if "email_to"             in data: EMAIL_TO              = data["email_to"]
     if "alert_cooldown"       in data: ALERT_COOLDOWN        = int(data["alert_cooldown"] or 300)
     if "push_alerts_enabled"  in data: push_alerts_enabled   = str(data["push_alerts_enabled"]).lower() in ("true", "1", "yes")
+    if "push_critical"        in data: push_critical         = str(data["push_critical"]).lower() in ("true", "1", "yes")
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "HA Monitor"
     if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
@@ -1138,20 +1141,21 @@ def send_push(subject: str, body: str):
         domain, service = service_parts
 
         url = f"{HA_URL}/api/services/{domain}/{service}"
+        push_data: dict = {"group": "ha-monitor"}
+        if push_critical:
+            push_data["sound"] = {"name": "default", "critical": 1, "volume": 0.8}
         payload = {
             "title": f"{ALERT_TITLE}: {subject}",
             "message": body,
             "data": {
-                "push": {
-                    "sound": {"name": "default", "critical": 1, "volume": 0.8},
-                },
+                "push": push_data,
                 "url": "/config/dashboard",
                 "group": "ha-monitor",
             },
         }
         resp = requests.post(url, headers=ha_headers(), json=payload, timeout=10)
         resp.raise_for_status()
-        log.info("Push notification sent: %s", subject)
+        log.info("Push notification sent (%s): %s", "critical" if push_critical else "normal", subject)
     except Exception as e:
         log.error("Failed to send push: %s", e)
 
