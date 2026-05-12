@@ -764,6 +764,8 @@ _CONFIG_FIELDS = {
     "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
     # Network scan
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
+    # Sync
+    "peer_url":               {"label": "Peer instance URL",               "default": ""},
 }
 
 def _load_config() -> dict:
@@ -786,11 +788,12 @@ ALERT_TITLE:          str  = "HA Monitor"
 notify_recovery:      bool = False
 MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
+PEER_URL:             str  = ""
 
 def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
     if "smtp_host"            in data: SMTP_HOST             = data["smtp_host"]
     if "smtp_port"            in data: SMTP_PORT             = int(data["smtp_port"] or 587)
@@ -823,6 +826,7 @@ def _apply_config(data: dict) -> None:
     if "meraki_api_key"         in data: MERAKI_API_KEY     = data["meraki_api_key"]    or ""
     if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
     if "scan_ports"             in data: SCAN_PORTS         = data["scan_ports"]        or ""
+    if "peer_url"               in data: PEER_URL           = data["peer_url"]          or ""
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -1439,6 +1443,105 @@ def api_meraki_api_poll():
         return jsonify({"ok": False, "error": "Meraki API not configured"}), 400
     threading.Thread(target=_poll_meraki_api_clients, daemon=True).start()
     return jsonify({"ok": True, "message": "Poll started"})
+
+
+def _build_sync_bundle() -> dict:
+    """Collect all syncable settings into a portable bundle."""
+    with _devices_lock:
+        device_settings = [
+            {k: d[k] for k in ("ip", "name", "monitored", "ports", "alert_mode") if k in d}
+            for d in _devices.values()
+        ]
+    with _snmp_lock:
+        snmp = list(_snmp_devices)
+    # Exclude peer_url — it's instance-specific and must not propagate
+    config_export = {k: v for k, v in _runtime_config.items() if k in _CONFIG_FIELDS and k != "peer_url"}
+    return {"config": config_export, "snmp_devices": snmp, "devices": device_settings}
+
+
+def _apply_sync_bundle(data: dict) -> dict:
+    """Apply an imported sync bundle; return counts of imported items."""
+    global _snmp_devices, _runtime_config
+    counts: dict = {}
+    cfg = data.get("config", {})
+    if cfg:
+        merged = {k: v for k, v in cfg.items() if k in _CONFIG_FIELDS and k != "peer_url"}
+        _runtime_config.update(merged)
+        _save_config(_runtime_config)
+        _apply_config(_runtime_config)
+        counts["config"] = len(merged)
+    snmp = data.get("snmp_devices")
+    if snmp is not None:
+        with _snmp_lock:
+            _snmp_devices = snmp
+            _save_snmp_devices()
+        counts["snmp_devices"] = len(snmp)
+    devices = data.get("devices", [])
+    with _devices_lock:
+        for d in devices:
+            ip = d.get("ip")
+            if not ip:
+                continue
+            if ip in _devices:
+                for k in ("name", "monitored", "ports", "alert_mode"):
+                    if k in d:
+                        _devices[ip][k] = d[k]
+            else:
+                _devices[ip] = {
+                    "ip": ip, "mac": "", "vendor": "", "hostname": "",
+                    "name": d.get("name", ""), "monitored": d.get("monitored", False),
+                    "alert_mode": d.get("alert_mode", "default"),
+                    "status": "unknown", "last_seen": None, "ping_latency_ms": None,
+                    "ports": d.get("ports", []), "port_status": {},
+                }
+        _save_devices()
+    counts["devices"] = len(devices)
+    return counts
+
+
+@app.route("/api/sync/export")
+def api_sync_export():
+    return jsonify(_build_sync_bundle())
+
+
+@app.route("/api/sync/import", methods=["POST"])
+def api_sync_import():
+    counts = _apply_sync_bundle(request.json or {})
+    log.info("Sync import applied: %s", counts)
+    return jsonify({"ok": True, "imported": counts})
+
+
+@app.route("/api/sync/push", methods=["POST"])
+def api_sync_push():
+    peer = ((request.json or {}).get("peer_url") or PEER_URL or "").rstrip("/")
+    if not peer:
+        return jsonify({"ok": False, "error": "Peer URL not configured"}), 400
+    try:
+        bundle = _build_sync_bundle()
+        resp = requests.post(f"{peer}/api/sync/import", json=bundle, timeout=15)
+        resp.raise_for_status()
+        result = resp.json().get("imported", {})
+        log.info("Sync push to %s: %s", peer, result)
+        return jsonify({"ok": True, "peer": peer, "imported": result})
+    except Exception as e:
+        log.error("Sync push to %s failed: %s", peer, e)
+        return jsonify({"ok": False, "error": str(e)}), 502
+
+
+@app.route("/api/sync/pull", methods=["POST"])
+def api_sync_pull():
+    peer = ((request.json or {}).get("peer_url") or PEER_URL or "").rstrip("/")
+    if not peer:
+        return jsonify({"ok": False, "error": "Peer URL not configured"}), 400
+    try:
+        resp = requests.get(f"{peer}/api/sync/export", timeout=15)
+        resp.raise_for_status()
+        counts = _apply_sync_bundle(resp.json())
+        log.info("Sync pull from %s: %s", peer, counts)
+        return jsonify({"ok": True, "peer": peer, "imported": counts})
+    except Exception as e:
+        log.error("Sync pull from %s failed: %s", peer, e)
+        return jsonify({"ok": False, "error": str(e)}), 502
 
 
 @app.route("/api/update", methods=["POST"])

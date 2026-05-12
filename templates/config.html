@@ -39,6 +39,21 @@
 
 <div class="content">
 
+  <div class="section-title">Instance Sync</div>
+  <div class="card">
+    <div class="field">
+      <label>Peer instance URL (the other Docker's address)</label>
+      <input type="text" id="peer_url" placeholder="http://192.168.0.X:9099">
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px">Syncs: notification settings, SNMP devices, device names/ports/alert modes. Does not sync runtime state (status, last seen, MAC).</div>
+    </div>
+    <div class="btn-row" style="flex-wrap:wrap;gap:8px">
+      <button class="btn btn-primary" onclick="savePeerUrl()">Save URL</button>
+      <button class="btn btn-secondary" onclick="syncPush()">Push to peer &rarr;</button>
+      <button class="btn btn-secondary" onclick="syncPull()">&larr; Pull from peer</button>
+      <span class="status-msg" id="sync-status"></span>
+    </div>
+  </div>
+
   <div class="section-title">Alert Settings</div>
   <div class="card">
     <div class="field">
@@ -295,6 +310,7 @@
       set('meraki_network_id',      d.meraki_network_id      || '');
       if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to change)';
       set('scan_ports', d.scan_ports || '22,80,443,8080,8123,1883,8883');
+      set('peer_url',   d.peer_url   || '');
     } catch (_) {}
   }
 
@@ -546,6 +562,40 @@
     const r = await fetch('/api/meraki_api/poll', {method: 'POST'});
     const d = await r.json();
     flash('meraki-api-status', d.ok ? 'Poll started — check device list' : ('Error: ' + d.error), d.ok ? 'ok' : 'err');
+  }
+
+  async function savePeerUrl() {
+    await post({peer_url: val('peer_url')});
+    flash('sync-status', 'Saved', 'ok');
+  }
+
+  async function syncPush() {
+    const peer = val('peer_url').trim();
+    if (!peer) { flash('sync-status', 'Enter peer URL first', 'err'); return; }
+    flash('sync-status', 'Pushing…', '');
+    const r = await fetch('/api/sync/push', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({peer_url: peer})});
+    const d = await r.json();
+    if (d.ok) {
+      const i = d.imported || {};
+      flash('sync-status', `✓ Pushed — config: ${i.config||0} keys, SNMP: ${i.snmp_devices||0}, devices: ${i.devices||0}`, 'ok');
+    } else {
+      flash('sync-status', '✗ ' + d.error, 'err');
+    }
+  }
+
+  async function syncPull() {
+    const peer = val('peer_url').trim();
+    if (!peer) { flash('sync-status', 'Enter peer URL first', 'err'); return; }
+    flash('sync-status', 'Pulling…', '');
+    const r = await fetch('/api/sync/pull', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({peer_url: peer})});
+    const d = await r.json();
+    if (d.ok) {
+      const i = d.imported || {};
+      flash('sync-status', `✓ Pulled — config: ${i.config||0} keys, SNMP: ${i.snmp_devices||0}, devices: ${i.devices||0}`, 'ok');
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      flash('sync-status', '✗ ' + d.error, 'err');
+    }
   }
 
   async function saveScanSettings() {
