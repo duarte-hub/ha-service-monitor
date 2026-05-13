@@ -30,7 +30,9 @@ from flask import Flask, render_template, jsonify, request
 # ---------------------------------------------------------------------------
 HA_URL = os.environ.get("HA_URL", "http://192.168.0.20:8123")
 HA_TOKEN = os.environ.get("HA_TOKEN", "")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))  # seconds
+POLL_INTERVAL        = int(os.environ.get("POLL_INTERVAL",        "30"))   # device ping loop
+HA_POLL_INTERVAL     = int(os.environ.get("HA_POLL_INTERVAL",     "30"))   # HA add-on status
+MERAKI_POLL_INTERVAL = int(os.environ.get("MERAKI_POLL_INTERVAL", "300"))  # Meraki API clients
 
 # Email config
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -730,7 +732,7 @@ def _meraki_api_poller_loop() -> None:
                 _poll_meraki_api_clients()
         except Exception as e:
             log.exception("Meraki API poll error: %s", e)
-        time.sleep(300)
+        time.sleep(MERAKI_POLL_INTERVAL)
 
 # ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
@@ -767,6 +769,10 @@ _CONFIG_FIELDS = {
     "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
     # Network scan
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
+    # Polling intervals
+    "poll_interval":          {"label": "Device ping interval (s)",         "default": str(POLL_INTERVAL)},
+    "ha_poll_interval":       {"label": "HA add-on poll interval (s)",      "default": str(HA_POLL_INTERVAL)},
+    "meraki_poll_interval":   {"label": "Meraki API poll interval (s)",     "default": str(MERAKI_POLL_INTERVAL)},
     # Sync
     "peer_url":               {"label": "Peer instance URL",               "default": ""},
     "alert_role":             {"label": "Alert role",                      "default": "standalone"},
@@ -804,6 +810,7 @@ def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
     global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE
+    global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
     if "notify_service"       in data: NOTIFY_SERVICE        = data["notify_service"]
@@ -837,9 +844,12 @@ def _apply_config(data: dict) -> None:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
     if "meraki_api_key"         in data: MERAKI_API_KEY     = data["meraki_api_key"]    or ""
     if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
-    if "scan_ports"             in data: SCAN_PORTS         = data["scan_ports"]        or ""
-    if "peer_url"               in data: PEER_URL           = data["peer_url"]          or ""
-    if "alert_role"             in data: ALERT_ROLE         = data["alert_role"]        or "standalone"
+    if "scan_ports"             in data: SCAN_PORTS             = data["scan_ports"]             or ""
+    if "poll_interval"          in data: POLL_INTERVAL          = int(data["poll_interval"]        or 30)
+    if "ha_poll_interval"       in data: HA_POLL_INTERVAL       = int(data["ha_poll_interval"]     or 30)
+    if "meraki_poll_interval"   in data: MERAKI_POLL_INTERVAL   = int(data["meraki_poll_interval"] or 300)
+    if "peer_url"               in data: PEER_URL               = data["peer_url"]                 or ""
+    if "alert_role"             in data: ALERT_ROLE             = data["alert_role"]               or "standalone"
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -1235,12 +1245,16 @@ def maybe_alert(key: str, subject: str, detail: str, mode: str | None = None):
 # ---------------------------------------------------------------------------
 # Background poller
 # ---------------------------------------------------------------------------
-def poller_loop():
+def _ha_poller_loop():
     while True:
         try:
             poll_once()
         except Exception as e:
-            log.exception("Unhandled error in poller: %s", e)
+            log.exception("HA poll error: %s", e)
+        time.sleep(HA_POLL_INTERVAL)
+
+def _device_ping_loop():
+    while True:
         try:
             _ping_monitored()
         except Exception as e:
@@ -1983,8 +1997,8 @@ if __name__ == "__main__":
     _seed_device("192.168.0.15", "SLZB-MR1U", [80, 6638])
 
     # Start background pollers
-    t = threading.Thread(target=poller_loop, daemon=True)
-    t.start()
+    threading.Thread(target=_ha_poller_loop,          daemon=True, name="ha-poller").start()
+    threading.Thread(target=_device_ping_loop,        daemon=True, name="device-ping").start()
     threading.Thread(target=_snmp_poller_loop,        daemon=True, name="snmp-poller").start()
     threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
     threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()

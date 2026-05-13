@@ -110,7 +110,7 @@
 <div class="pane active" id="connections">
   <div class="sub">
     <div class="sub-label">Home Assistant</div>
-    <div class="grid2">
+    <div class="grid2" style="margin-bottom:12px">
       <div class="field" style="margin:0">
         <label>URL</label>
         <input type="text" id="ha_url" placeholder="http://192.168.0.20:8123">
@@ -121,10 +121,14 @@
         <span class="show-pass" onclick="toggleVis('ha_token')">show</span>
       </div>
     </div>
+    <div class="field" style="margin:0;max-width:200px">
+      <label>Poll interval (seconds)</label>
+      <input type="number" id="ha_poll_interval" min="5" placeholder="30">
+    </div>
   </div>
   <div class="sub">
     <div class="sub-label">Meraki API</div>
-    <div class="grid3">
+    <div class="grid3" style="margin-bottom:12px">
       <div class="field" style="margin:0">
         <label>API Key</label>
         <input type="password" id="meraki_api_key" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
@@ -141,6 +145,10 @@
         <label>Select network</label>
         <select id="meraki-network-select" onchange="document.getElementById('meraki_network_id').value=this.value"></select>
       </div>
+    </div>
+    <div class="field" style="margin-top:12px;margin-bottom:0;max-width:200px">
+      <label>Poll interval (seconds)</label>
+      <input type="number" id="meraki_poll_interval" min="30" placeholder="300">
     </div>
   </div>
   <div class="btn-row">
@@ -234,6 +242,14 @@
 <!-- ── Network ────────────────────────────────────────────────────────────── -->
 <div class="pane" id="network">
   <div class="sub">
+    <div class="sub-label">Device Polling</div>
+    <div class="field" style="max-width:200px">
+      <label>Ping interval (seconds)</label>
+      <input type="number" id="poll_interval" min="5" placeholder="30">
+      <div class="hint">How often monitored devices are pinged and port-checked.</div>
+    </div>
+  </div>
+  <div class="sub">
     <div class="sub-label">Port Scan</div>
     <div class="field" style="max-width:520px">
       <label>Ports to probe on each discovered host (comma-separated)</label>
@@ -324,7 +340,9 @@
       set('ha_url', d.ha_url || '');
       if (d.ha_token)      document.getElementById('ha_token').placeholder      = '(saved — enter to replace)';
       if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to replace)';
-      set('meraki_network_id', d.meraki_network_id || '');
+      set('meraki_network_id',    d.meraki_network_id    || '');
+      set('ha_poll_interval',     d.ha_poll_interval     || '30');
+      set('meraki_poll_interval', d.meraki_poll_interval || '300');
 
       set('alert_title',    d.alert_title    || 'HA Monitor');
       set('alert_cooldown', d.alert_cooldown || '300');
@@ -339,7 +357,8 @@
       set('email_from', d.email_from || '');
       set('email_to',   d.email_to   || '');
 
-      set('scan_ports', d.scan_ports || '22,80,443,8080,8123,1883,8883');
+      set('scan_ports',    d.scan_ports    || '22,80,443,8080,8123,1883,8883');
+      set('poll_interval', d.poll_interval || '30');
 
       set('peer_url', d.peer_url || '');
       const roleEl = document.getElementById('alert_role');
@@ -372,7 +391,7 @@
 
   // ── Connections ────────────────────────────────────────────────────────────
   async function saveConnections() {
-    const payload = {ha_url: val('ha_url')};
+    const payload = {ha_url: val('ha_url'), ha_poll_interval: val('ha_poll_interval'), meraki_poll_interval: val('meraki_poll_interval')};
     const t = val('ha_token'); if (t) payload.ha_token = t;
     const k = document.getElementById('meraki_api_key').value.trim(); if (k) payload.meraki_api_key = k;
     const n = val('meraki_network_id'); if (n) payload.meraki_network_id = n;
@@ -434,7 +453,7 @@
 
   // ── Network ────────────────────────────────────────────────────────────────
   async function saveScan() {
-    await post({scan_ports: val('scan_ports')});
+    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval')});
     flash('scan-status', 'Saved', 'ok');
   }
 
