@@ -1195,7 +1195,7 @@ def _deliver_alert(subject: str, detail: str, do_push: bool, do_email: bool, cri
     push_ok = False
     if do_push:
         push_ok = send_push(subject, detail, critical)
-    if do_email or (do_push and not push_ok and email_alerts_enabled):
+    if do_email or (do_push and not push_ok):
         if not push_ok and do_push:
             log.warning("Push failed — falling back to email for: %s", subject)
         send_email(subject, detail)
