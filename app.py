@@ -60,7 +60,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
-log = logging.getLogger("ha-monitor")
+log = logging.getLogger("farol")
 _buf_handler = _BufferHandler()
 _buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 _buf_handler.setLevel(logging.INFO)
@@ -754,7 +754,7 @@ _CONFIG_FIELDS = {
     "push_alerts_enabled":    {"label": "Push alerts enabled",             "default": "true"},
     "push_critical":          {"label": "Send push as critical alert",     "default": "true"},
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
-    "alert_title":            {"label": "Notification title prefix",       "default": "HA Monitor"},
+    "alert_title":            {"label": "Notification title prefix",       "default": "Farol"},
     "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
     # Service monitor knobs
     "zwave_update_entity":    {"label": "Z-Wave update entity",            "default": "update.z_wave_js_ui_update"},
@@ -795,7 +795,7 @@ def _save_config(data: dict) -> None:
 push_alerts_enabled:  bool = True
 push_critical:        bool = True
 email_alerts_enabled: bool = False
-ALERT_TITLE:          str  = "HA Monitor"
+ALERT_TITLE:          str  = "Farol"
 notify_recovery:      bool = False
 MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
@@ -825,7 +825,7 @@ def _apply_config(data: dict) -> None:
     if "push_alerts_enabled"  in data: push_alerts_enabled   = str(data["push_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "push_critical"        in data: push_critical         = str(data["push_critical"]).lower() in ("true", "1", "yes")
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
-    if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "HA Monitor"
+    if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "Farol"
     if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
     if "zwave_update_entity"    in data:
         ADDON_CONFIG["Z-Wave JS UI"]["update_entity"]   = data["zwave_update_entity"] or "update.z_wave_js_ui_update"
@@ -1172,7 +1172,7 @@ def send_push(subject: str, body: str, critical: bool | None = None) -> bool:
 
         use_critical = push_critical if critical is None else critical
         url = f"{HA_URL}/api/services/{domain}/{service}"
-        push_data: dict = {"group": "ha-monitor"}
+        push_data: dict = {"group": "farol"}
         if use_critical:
             push_data["sound"] = {"name": "default", "critical": 1, "volume": 0.8}
         payload = {
@@ -1181,7 +1181,7 @@ def send_push(subject: str, body: str, critical: bool | None = None) -> bool:
             "data": {
                 "push": push_data,
                 "url": "/config/dashboard",
-                "group": "ha-monitor",
+                "group": "farol",
             },
         }
         resp = requests.post(url, headers=ha_headers(), json=payload, timeout=10)
@@ -1232,7 +1232,7 @@ def send_email(subject: str, body: str):
           <p style="margin:0;font-size:12px;color:#aaa;">{timestamp}</p>
         </td></tr>
         <tr><td style="background:#f8f8f8;padding:16px 32px;border-top:1px solid #eee;">
-          <p style="margin:0;font-size:12px;color:#aaa;">Sent by <strong style="color:#666;">{ALERT_TITLE}</strong> — HA Service Monitor</p>
+          <p style="margin:0;font-size:12px;color:#aaa;">Sent by <strong style="color:#666;">{ALERT_TITLE}</strong> — Farol</p>
         </td></tr>
       </table>
     </td></tr>
@@ -1665,7 +1665,7 @@ def api_update():
     def _do_update():
         try:
             inspect = subprocess.run(
-                ["docker", "inspect", "ha-service-monitor", "--format", "{{json .Config.Env}}"],
+                ["docker", "inspect", "farol", "--format", "{{json .Config.Env}}"],
                 capture_output=True, text=True, timeout=10,
             )
             if inspect.returncode != 0:
@@ -1678,9 +1678,9 @@ def api_update():
                 fh.write("\n".join(env_lines) + "\n")
             log.info("Update: saved %d env vars", len(env_lines))
 
-            log.info("Update: building ha-service-monitor:latest ...")
+            log.info("Update: building farol:latest ...")
             build = subprocess.run(
-                ["docker", "build", "-t", "ha-service-monitor:latest", "/app-src"],
+                ["docker", "build", "-t", "farol:latest", "/app-src"],
                 capture_output=True, text=True, timeout=300,
             )
             if build.returncode != 0:
@@ -1690,26 +1690,26 @@ def api_update():
 
             restart_script = (
                 "sleep 2 && "
-                "docker stop ha-service-monitor; "
-                "docker rm ha-service-monitor; "
+                "docker stop farol; "
+                "docker rm farol; "
                 "docker run -d"
-                " --name ha-service-monitor"
+                " --name farol"
                 " --restart unless-stopped"
                 " -p 9099:9099"
                 " -v /var/run/docker.sock:/var/run/docker.sock"
                 " -v /usr/bin/docker:/usr/bin/docker:ro"
-                " -v /mnt/user/appdata/ha-monitor:/app-src"
+                " -v /mnt/user/appdata/farol:/app-src"
                 " --env-file /app-src/container.env"
-                " ha-service-monitor:latest"
+                " farol:latest"
             )
             r = subprocess.run(
                 [
                     "docker", "run", "-d", "--rm",
-                    "--name", "ha-monitor-updater",
+                    "--name", "farol-updater",
                     "-v", "/var/run/docker.sock:/var/run/docker.sock",
                     "-v", "/usr/bin/docker:/usr/bin/docker:ro",
-                    "-v", "/mnt/user/appdata/ha-monitor:/app-src",
-                    "ha-service-monitor:latest",
+                    "-v", "/mnt/user/appdata/farol:/app-src",
+                    "farol:latest",
                     "sh", "-c", restart_script,
                 ],
                 capture_output=True, text=True, timeout=30,
@@ -1783,7 +1783,7 @@ def api_logs_level():
 @app.route("/api/test_push", methods=["POST"])
 def api_test_push():
     try:
-        send_push("Test notification", "HA Monitor push notifications are working.")
+        send_push("Test notification", "Farol push notifications are working.")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
@@ -1797,8 +1797,8 @@ def api_test_email():
         msg = MIMEMultipart()
         msg["From"] = EMAIL_FROM or SMTP_USER
         msg["To"] = EMAIL_TO
-        msg["Subject"] = "HA Monitor — test email"
-        msg.attach(MIMEText("HA Monitor email alerts are working.", "plain"))
+        msg["Subject"] = "Farol — test email"
+        msg.attach(MIMEText("Farol email alerts are working.", "plain"))
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
             s.starttls()
             if SMTP_USER and SMTP_PASS:
@@ -2050,5 +2050,5 @@ if __name__ == "__main__":
     time.sleep(2)
 
     port = int(os.environ.get("PORT", "9099"))
-    log.info("Starting HA Service Monitor on port %d", port)
+    log.info("Starting Farol on port %d", port)
     app.run(host="0.0.0.0", port=port)

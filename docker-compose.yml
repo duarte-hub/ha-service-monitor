@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  ha-monitor:
+  farol:
     build: .
-    container_name: ha-service-monitor
+    container_name: farol
     restart: unless-stopped
     ports:
       - "9099:9099"
@@ -31,6 +31,6 @@ services:
       # MQTT_ADDON_SLUG: "core_mosquitto"
     volumes:
       # Host path bind mount — survives container rebuilds and Docker resets.
-      # Unraid:  /mnt/user/appdata/ha-service-monitor:/data
+      # Unraid:  /mnt/user/appdata/farol:/data
       # Other:   ./data:/data  (creates a local data/ folder next to this file)
-      - ${DATA_DIR:-/mnt/user/appdata/ha-service-monitor}:/data
+      - ${DATA_DIR:-/mnt/user/appdata/farol}:/data

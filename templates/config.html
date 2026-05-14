@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HA Monitor — Settings</title>
+  <title>Farol — Settings</title>
   <style>
     :root {
       --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12);
@@ -166,7 +166,7 @@
     <div class="grid2" style="margin-bottom:14px">
       <div class="field" style="margin:0">
         <label>Alert title prefix</label>
-        <input type="text" id="alert_title" placeholder="HA Monitor">
+        <input type="text" id="alert_title" placeholder="Farol">
       </div>
       <div class="field" style="margin:0">
         <label>Cooldown (seconds between repeats)</label>
@@ -344,7 +344,7 @@
       set('ha_poll_interval',     d.ha_poll_interval     || '30');
       set('meraki_poll_interval', d.meraki_poll_interval || '300');
 
-      set('alert_title',    d.alert_title    || 'HA Monitor');
+      set('alert_title',    d.alert_title    || 'Farol');
       set('alert_cooldown', d.alert_cooldown || '300');
       chk('notify_recovery',      d.notify_recovery       ?? false);
       chk('push_alerts_enabled',  d.push_alerts_enabled   ?? true);
