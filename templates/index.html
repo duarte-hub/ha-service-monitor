@@ -148,6 +148,13 @@
     .update-log { margin-top:5px; max-height:160px; overflow-y:auto; font-size:.67rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; line-height:1.5; }
     .update-log .log-err { color:var(--red); }
 
+    /* ── Peer status pill ───────────────────────────────────────────────── */
+    .peer-pill { display:inline-flex; align-items:center; gap:5px; font-size:.78rem; opacity:.9; }
+    .peer-pill-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .peer-pill-dot.ok   { background:var(--green); }
+    .peer-pill-dot.warn { background:var(--yellow); }
+    .peer-pill-dot.down { background:var(--red); animation:pulse 1.4s infinite; }
+
     /* ── Misc ────────────────────────────────────────────────────────────── */
     .empty-row td { text-align:center; color:var(--muted); padding:40px; font-size:.88rem; }
     .footer { text-align:center; color:var(--muted2); font-size:.68rem; padding:28px 0 10px; }
@@ -170,6 +177,7 @@
     </span>
     <a href="/logs">Logs</a>
     <a href="/config">Settings</a>
+    {% if node_role == 'primary' %}<span id="peer-pill" class="peer-pill" style="display:none"><span class="peer-pill-dot" id="peer-dot"></span><span id="peer-label">Peer</span></span>{% endif %}
     <span class="live-dot"></span>
   </div>
 </div>
@@ -600,6 +608,33 @@
     el.textContent = _haDown ? `${_haDown} issue(s)` : `${_haServices} ok`;
     el.style.color  = _haDown ? 'var(--red)' : 'var(--muted)';
   }
+
+  // ── Peer status (primary only) ─────────────────────────────────────────
+  {% if node_role == 'primary' %}
+  async function refreshPeerStatus() {
+    try {
+      const d = await (await fetch('/api/sync/status')).json();
+      const ps = d.peer_status;
+      const pill = document.getElementById('peer-pill');
+      const dot  = document.getElementById('peer-dot');
+      const lbl  = document.getElementById('peer-label');
+      if (!pill || !ps || !ps.ip) { if (pill) pill.style.display = 'none'; return; }
+      pill.style.display = 'inline-flex';
+      if (ps.ping_ok && ps.service_ok) {
+        dot.className = 'peer-pill-dot ok';
+        lbl.textContent = ps.latency_ms != null ? `Peer ${ps.latency_ms}ms` : 'Peer up';
+      } else if (ps.ping_ok) {
+        dot.className = 'peer-pill-dot warn';
+        lbl.textContent = 'Peer (no service)';
+      } else {
+        dot.className = 'peer-pill-dot down';
+        lbl.textContent = 'Peer down';
+      }
+    } catch(_) {}
+  }
+  refreshPeerStatus();
+  setInterval(refreshPeerStatus, 30000);
+  {% endif %}
 
   // ── Init ───────────────────────────────────────────────────────────────
   setInterval(loadDevices, {{ poll_interval }} * 1000);

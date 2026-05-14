@@ -90,6 +90,7 @@ monitor_state = {
     "coordinators": {},
     "ha_reachable": False,
     "ha_version": "",
+    "peer_status": {},
 }
 state_lock = threading.Lock()
 def _atomic_write(path: str, data) -> None:
@@ -1628,6 +1629,36 @@ def _peer_health_loop() -> None:
                 log.warning("Primary peer %s unreachable (%d checks) — secondary taking over alerts", PEER_URL, _peer_fail_streak)
 
 
+def _primary_peer_check_loop() -> None:
+    """Periodically ping the peer and probe its /api/health for display on the primary dashboard."""
+    from urllib.parse import urlparse
+    while True:
+        time.sleep(30)
+        if ALERT_ROLE != "primary" or not PEER_URL:
+            with state_lock:
+                monitor_state["peer_status"] = {}
+            continue
+        try:
+            ip = urlparse(PEER_URL).hostname or ""
+            ping_ok, latency = (_ping_host(ip) if ip else (False, None))
+            service_ok = False
+            try:
+                r = requests.get(f"{PEER_URL.rstrip('/')}/api/health", timeout=5)
+                service_ok = r.status_code == 200
+            except Exception:
+                pass
+            with state_lock:
+                monitor_state["peer_status"] = {
+                    "url":            PEER_URL,
+                    "ip":             ip,
+                    "ping_ok":        ping_ok,
+                    "latency_ms":     round(latency, 1) if latency is not None else None,
+                    "service_ok":     service_ok,
+                }
+        except Exception as e:
+            log.debug("Primary peer check error: %s", e)
+
+
 def _build_sync_bundle() -> dict:
     """Collect all syncable settings into a portable bundle."""
     with _devices_lock:
@@ -1685,11 +1716,14 @@ def _apply_sync_bundle(data: dict) -> dict:
 
 @app.route("/api/sync/status")
 def api_sync_status():
+    with state_lock:
+        peer_status = monitor_state.get("peer_status", {})
     return jsonify({
         "role":           ALERT_ROLE,
         "peer_url":       PEER_URL,
         "peer_reachable": _peer_reachable,
         "alerting":       ALERT_ROLE != "secondary" or not _peer_reachable,
+        "peer_status":    peer_status,
     })
 
 
@@ -2126,6 +2160,7 @@ if __name__ == "__main__":
     threading.Thread(target=_snmp_poller_loop,        daemon=True, name="snmp-poller").start()
     threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
     threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()
+    threading.Thread(target=_primary_peer_check_loop, daemon=True, name="peer-check").start()
 
     # Give the first poll a moment
     time.sleep(2)
