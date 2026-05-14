@@ -27,6 +27,11 @@ import requests
 from flask import Flask, render_template, jsonify, request
 
 # ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+VERSION = "1.1.0"
+
+# ---------------------------------------------------------------------------
 # Configuration (all via environment variables)
 # ---------------------------------------------------------------------------
 HA_URL = os.environ.get("HA_URL", "http://192.168.0.20:8123")
@@ -1383,7 +1388,8 @@ def _device_ping_loop():
 def index():
     with state_lock:
         state = json.loads(json.dumps(monitor_state))
-    return render_template("index.html", state=state, poll_interval=POLL_INTERVAL)
+    return render_template("index.html", state=state, poll_interval=POLL_INTERVAL,
+                           version=VERSION, node_role=ALERT_ROLE)
 
 
 @app.route("/api/status")
