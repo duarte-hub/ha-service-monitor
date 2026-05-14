@@ -1160,14 +1160,13 @@ def poll_once():
 # ---------------------------------------------------------------------------
 # Alerts — via Home Assistant companion app push notifications
 # ---------------------------------------------------------------------------
-def send_push(subject: str, body: str, critical: bool | None = None):
-    """Send a push notification via the HA companion app.
-    critical=None uses the global push_critical setting; True/False overrides it."""
+def send_push(subject: str, body: str, critical: bool | None = None) -> bool:
+    """Send a push notification via the HA companion app. Returns True on success."""
     try:
         service_parts = NOTIFY_SERVICE.split(".", 1)
         if len(service_parts) != 2:
             log.error("Invalid NOTIFY_SERVICE: %s", NOTIFY_SERVICE)
-            return
+            return False
         domain, service = service_parts
 
         use_critical = push_critical if critical is None else critical
@@ -1187,8 +1186,21 @@ def send_push(subject: str, body: str, critical: bool | None = None):
         resp = requests.post(url, headers=ha_headers(), json=payload, timeout=10)
         resp.raise_for_status()
         log.info("Push notification sent (%s): %s", "critical" if use_critical else "normal", subject)
+        return True
     except Exception as e:
         log.error("Failed to send push: %s", e)
+        return False
+
+
+def _deliver_alert(subject: str, detail: str, do_push: bool, do_email: bool, critical):
+    """Attempt push; fall back to email if push fails and email is available."""
+    push_ok = False
+    if do_push:
+        push_ok = send_push(subject, detail, critical)
+    if do_email or (do_push and not push_ok and email_alerts_enabled):
+        if not push_ok and do_push:
+            log.warning("Push failed — falling back to email for: %s", subject)
+        send_email(subject, detail)
 
 
 def send_email(subject: str, body: str):
@@ -1236,10 +1248,7 @@ def maybe_alert(key: str, subject: str, detail: str, mode: str | None = None):
         do_push, do_email, critical = False, True, False
     else:  # "none" or unknown
         return
-    if do_push:
-        threading.Thread(target=send_push, args=(subject, detail, critical), daemon=True).start()
-    if do_email:
-        threading.Thread(target=send_email, args=(subject, detail), daemon=True).start()
+    threading.Thread(target=_deliver_alert, args=(subject, detail, do_push, do_email, critical), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
