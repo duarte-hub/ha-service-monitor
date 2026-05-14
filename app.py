@@ -142,7 +142,10 @@ _scan_status: dict = {"state": "idle", "message": ""}
 def _load_devices() -> dict:
     try:
         with open(_DEVICES_PATH) as fh:
-            return {d["ip"]: d for d in json.load(fh)}
+            devices = {d["ip"]: d for d in json.load(fh)}
+        for d in devices.values():
+            d["port_status"] = {}  # always re-check on startup so down ports re-alert
+        return devices
     except Exception:
         return {}
 
