@@ -908,7 +908,8 @@ ADDON_CONFIG = {
     },
 }
 
-_runtime_config = _load_config()
+_runtime_config = {k: meta["default"] for k, meta in _CONFIG_FIELDS.items()}
+_runtime_config.update(_load_config())
 _apply_config(_runtime_config)
 
 # Cache of integration states from config entries

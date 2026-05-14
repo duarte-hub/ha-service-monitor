@@ -390,7 +390,7 @@
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
-  function chk(id, v) { const el = document.getElementById(id); if (el) el.checked = String(v).toLowerCase() !== 'false' && v !== false && v !== 0; }
+  function chk(id, v) { const el = document.getElementById(id); if (el) el.checked = v !== undefined && String(v).toLowerCase() !== 'false' && v !== false && v !== 0; }
   async function post(payload) { await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}); }
   function val(id) { return document.getElementById(id).value; }
   function set(id, v) { const el = document.getElementById(id); if (el) el.value = v; }
