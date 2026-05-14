@@ -644,7 +644,6 @@ def _poll_snmp_devices() -> int:
     return new_count
 
 def _snmp_poller_loop() -> None:
-    time.sleep(15)  # let the app fully start before first poll
     while True:
         try:
             _poll_snmp_devices()
@@ -725,7 +724,6 @@ def _poll_meraki_api_clients() -> int:
     return updated
 
 def _meraki_api_poller_loop() -> None:
-    time.sleep(20)
     while True:
         try:
             if MERAKI_API_KEY and MERAKI_NETWORK_ID:
