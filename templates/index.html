@@ -223,6 +223,7 @@
           {% if svc.versions %}
           <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">
             {% if svc.versions.frontend %}<span class="vtag">frontend <b>{{ svc.versions.frontend }}</b></span>{% endif %}
+            {% if svc.versions.node %}<span class="vtag">node <b>{{ svc.versions.node }}</b></span>{% endif %}
             {% if svc.versions.converters %}<span class="vtag">converters <b>{{ svc.versions.converters }}</b></span>{% endif %}
             {% if svc.versions.herdsman %}<span class="vtag">herdsman <b>{{ svc.versions.herdsman }}</b></span>{% endif %}
           </div>

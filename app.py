@@ -1137,6 +1137,7 @@ def poll_once():
                     ("herdsman", "zigbee_herdsman"),
                     ("converters", "zigbee_herdsman_converters"),
                     ("frontend", "frontend"),
+                    ("node", "node"),
                 ]:
                     d = info.get(field) or {}
                     if isinstance(d, dict) and d.get("version"):
