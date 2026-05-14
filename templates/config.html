@@ -227,7 +227,10 @@
         <input type="password" id="smtp_pass" autocomplete="current-password">
         <span class="show-pass" onclick="toggleVis('smtp_pass')">show</span>
       </div>
-      <div class="field" style="margin:0"><label>From address</label><input type="text" id="email_from"></div>
+      <div class="field-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0">
+        <div class="field" style="margin:0"><label>From name</label><input type="text" id="email_from_name" placeholder="Farol"></div>
+        <div class="field" style="margin:0"><label>From address</label><input type="text" id="email_from"></div>
+      </div>
       <div class="field" style="margin:0"><label>To address</label><input type="text" id="email_to"></div>
     </div>
   </div>
@@ -355,6 +358,7 @@
       set('smtp_port', d.smtp_port || '587');
       set('smtp_user', d.smtp_user || '');
       set('email_from', d.email_from || '');
+      set('email_from_name', d.email_from_name || '');
       set('email_to',   d.email_to   || '');
 
       set('scan_ports',    d.scan_ports    || '22,80,443,8080,8123,1883,8883');
@@ -432,7 +436,7 @@
       alert_title: val('alert_title'), alert_cooldown: val('alert_cooldown'),
       notify_service: val('notify_service'),
       smtp_host: val('smtp_host'), smtp_port: val('smtp_port'),
-      smtp_user: val('smtp_user'), email_from: val('email_from'), email_to: val('email_to'),
+      smtp_user: val('smtp_user'), email_from: val('email_from'), email_from_name: val('email_from_name'), email_to: val('email_to'),
     };
     const p = val('smtp_pass'); if (p) payload.smtp_pass = p;
     await post(payload);

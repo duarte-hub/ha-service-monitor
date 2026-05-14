@@ -16,6 +16,7 @@ import threading
 import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timezone, timedelta
 
 import socket
@@ -39,7 +40,8 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
-EMAIL_FROM = os.environ.get("EMAIL_FROM", SMTP_USER)
+EMAIL_FROM      = os.environ.get("EMAIL_FROM", SMTP_USER)
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Farol")
 EMAIL_TO = os.environ.get("EMAIL_TO", "")
 ALERT_COOLDOWN = int(os.environ.get("ALERT_COOLDOWN", "300"))  # seconds
 NOTIFY_SERVICE = os.environ.get("NOTIFY_SERVICE", "notify.mobile_app_iphoned")
@@ -749,6 +751,7 @@ _CONFIG_FIELDS = {
     "smtp_user":         {"label": "SMTP user",           "default": SMTP_USER},
     "smtp_pass":         {"label": "SMTP password",       "default": SMTP_PASS, "secret": True},
     "email_from":        {"label": "Email from",          "default": EMAIL_FROM},
+    "email_from_name":   {"label": "Email from name",     "default": EMAIL_FROM_NAME},
     "email_to":          {"label": "Email to",            "default": EMAIL_TO},
     "alert_cooldown":         {"label": "Alert cooldown (s)",              "default": str(ALERT_COOLDOWN)},
     "push_alerts_enabled":    {"label": "Push alerts enabled",             "default": "true"},
@@ -809,7 +812,7 @@ _peer_ok_streak:      int  = 0
 def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-    global EMAIL_FROM, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
+    global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
     global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
@@ -820,6 +823,7 @@ def _apply_config(data: dict) -> None:
     if "smtp_user"            in data: SMTP_USER             = data["smtp_user"]
     if "smtp_pass"            in data: SMTP_PASS             = data["smtp_pass"]
     if "email_from"           in data: EMAIL_FROM            = data["email_from"]
+    if "email_from_name"      in data: EMAIL_FROM_NAME       = data["email_from_name"]
     if "email_to"             in data: EMAIL_TO              = data["email_to"]
     if "alert_cooldown"       in data: ALERT_COOLDOWN        = int(data["alert_cooldown"] or 300)
     if "push_alerts_enabled"  in data: push_alerts_enabled   = str(data["push_alerts_enabled"]).lower() in ("true", "1", "yes")
@@ -1242,7 +1246,7 @@ def send_email(subject: str, body: str):
         plain = f"{ALERT_TITLE}: {subject}\n\n{body}\n\n{timestamp}"
 
         msg = MIMEMultipart("alternative")
-        msg["From"]    = EMAIL_FROM or SMTP_USER
+        msg["From"]    = formataddr((EMAIL_FROM_NAME, EMAIL_FROM or SMTP_USER))
         msg["To"]      = EMAIL_TO
         msg["Subject"] = f"{ALERT_TITLE}: {subject}"
         msg.attach(MIMEText(plain, "plain"))
