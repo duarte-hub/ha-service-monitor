@@ -1206,11 +1206,44 @@ def send_email(subject: str, body: str):
         log.warning("Email alert skipped — SMTP not configured")
         return
     try:
-        msg = MIMEMultipart()
+        is_recovery = any(w in subject.lower() for w in ("back online", "recovery", "recovered", "open"))
+        accent      = "#4caf50" if is_recovery else "#db4437"
+        icon        = "✅" if is_recovery else "🔴"
+        timestamp   = datetime.now().strftime("%d %b %Y, %H:%M:%S")
+        html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:32px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1);">
+        <tr><td style="background:{accent};padding:20px 32px;">
+          <p style="margin:0;color:#fff;font-size:13px;opacity:.85;">{ALERT_TITLE}</p>
+          <h1 style="margin:6px 0 0;color:#fff;font-size:22px;font-weight:600;">{icon} {subject}</h1>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+          <p style="margin:0 0 8px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Detail</p>
+          <p style="margin:0;font-size:15px;color:#333;line-height:1.6;background:#f8f8f8;border-left:3px solid {accent};padding:12px 16px;border-radius:0 4px 4px 0;">{body}</p>
+        </td></tr>
+        <tr><td style="padding:0 32px 28px;">
+          <p style="margin:0;font-size:12px;color:#aaa;">{timestamp}</p>
+        </td></tr>
+        <tr><td style="background:#f8f8f8;padding:16px 32px;border-top:1px solid #eee;">
+          <p style="margin:0;font-size:12px;color:#aaa;">Sent by <strong style="color:#666;">{ALERT_TITLE}</strong> — HA Service Monitor</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+        plain = f"{ALERT_TITLE}: {subject}\n\n{body}\n\n{timestamp}"
+
+        msg = MIMEMultipart("alternative")
         msg["From"]    = EMAIL_FROM or SMTP_USER
         msg["To"]      = EMAIL_TO
         msg["Subject"] = f"{ALERT_TITLE}: {subject}"
-        msg.attach(MIMEText(body, "plain"))
+        msg.attach(MIMEText(plain, "plain"))
+        msg.attach(MIMEText(html, "html"))
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
             s.starttls()
             if SMTP_USER and SMTP_PASS:
