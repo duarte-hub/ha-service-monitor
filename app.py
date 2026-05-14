@@ -780,6 +780,7 @@ _CONFIG_FIELDS = {
     # Sync
     "peer_url":               {"label": "Peer instance URL",               "default": ""},
     "alert_role":             {"label": "Alert role",                      "default": "standalone"},
+    "auto_sync_peer":         {"label": "Auto-sync to peer on change",     "default": "false"},
 }
 
 def _load_config() -> dict:
@@ -804,6 +805,7 @@ MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
 PEER_URL:             str  = ""
 ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
+AUTO_SYNC_PEER:       bool = False
 
 _peer_reachable:      bool = True   # updated by _peer_health_loop
 _peer_fail_streak:    int  = 0
@@ -813,7 +815,7 @@ def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -855,6 +857,7 @@ def _apply_config(data: dict) -> None:
     if "meraki_poll_interval"   in data: MERAKI_POLL_INTERVAL   = int(data["meraki_poll_interval"] or 300)
     if "peer_url"               in data: PEER_URL               = data["peer_url"]                 or ""
     if "alert_role"             in data: ALERT_ROLE             = data["alert_role"]               or "standalone"
+    if "auto_sync_peer"         in data: AUTO_SYNC_PEER         = str(data["auto_sync_peer"]).lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -1286,7 +1289,70 @@ def maybe_alert(key: str, subject: str, detail: str, mode: str | None = None):
         do_push, do_email, critical = False, True, False
     else:  # "none" or unknown
         return
+    if key.endswith("_recovery"):
+        _queue_recovery_alert(subject, detail, do_push, do_email, critical)
+    else:
+        threading.Thread(target=_deliver_alert, args=(subject, detail, do_push, do_email, critical), daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Recovery alert consolidation — batch recoveries within a short window
+# ---------------------------------------------------------------------------
+_recovery_queue:  list  = []
+_recovery_lock         = threading.Lock()
+_recovery_timer        = None
+RECOVERY_BATCH_WINDOW  = 20  # seconds to collect recoveries before sending one email
+
+
+def _queue_recovery_alert(subject: str, detail: str, do_push: bool, do_email: bool, critical):
+    global _recovery_timer
+    with _recovery_lock:
+        _recovery_queue.append({"subject": subject, "detail": detail,
+                                 "do_push": do_push, "do_email": do_email, "critical": critical})
+        if _recovery_timer:
+            _recovery_timer.cancel()
+        _recovery_timer = threading.Timer(RECOVERY_BATCH_WINDOW, _flush_recovery_alerts)
+        _recovery_timer.daemon = True
+        _recovery_timer.start()
+
+
+def _flush_recovery_alerts():
+    global _recovery_timer
+    with _recovery_lock:
+        items = list(_recovery_queue)
+        _recovery_queue.clear()
+        _recovery_timer = None
+    if not items:
+        return
+    if len(items) == 1:
+        i = items[0]
+        threading.Thread(target=_deliver_alert,
+                         args=(i["subject"], i["detail"], i["do_push"], i["do_email"], i["critical"]),
+                         daemon=True).start()
+        return
+    do_push  = any(i["do_push"]  for i in items)
+    do_email = any(i["do_email"] for i in items)
+    critical = any(i["critical"] for i in items)
+    subject  = f"{len(items)} services back online"
+    detail   = "\n".join(f"• {i['subject']}: {i['detail']}" for i in items)
     threading.Thread(target=_deliver_alert, args=(subject, detail, do_push, do_email, critical), daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Auto-sync to peer
+# ---------------------------------------------------------------------------
+def _trigger_auto_sync():
+    if not AUTO_SYNC_PEER or not PEER_URL:
+        return
+    def _push():
+        try:
+            bundle = _build_sync_bundle()
+            r = requests.post(f"{PEER_URL.rstrip('/')}/api/sync/import", json=bundle, timeout=15)
+            r.raise_for_status()
+            log.info("Auto-sync: pushed to peer %s", PEER_URL)
+        except Exception as e:
+            log.warning("Auto-sync push failed: %s", e)
+    threading.Thread(target=_push, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -1349,6 +1415,7 @@ def api_device_patch(ip):
             if k in (request.json or {}):
                 _devices[ip][k] = request.json[k]
         _save_devices()
+        _trigger_auto_sync()
         return jsonify(_devices[ip])
 
 
@@ -1357,6 +1424,7 @@ def api_device_delete(ip):
     with _devices_lock:
         _devices.pop(ip, None)
         _save_devices()
+    _trigger_auto_sync()
     return jsonify({"ok": True})
 
 
@@ -1761,6 +1829,7 @@ def api_config():
         _runtime_config.update(data)
         _save_config(_runtime_config)
         _apply_config(_runtime_config)
+        _trigger_auto_sync()
     safe = {k: ("••••••" if _CONFIG_FIELDS[k].get("secret") and v else v)
             for k, v in _runtime_config.items() if k in _CONFIG_FIELDS}
     return jsonify(safe)

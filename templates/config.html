@@ -288,6 +288,13 @@
       <div class="hint">Required for Secondary role and for Push / Pull sync.</div>
     </div>
     <div id="peer-health-row" class="peer-status" style="max-width:520px"></div>
+    <div class="field" style="max-width:520px;margin-bottom:0;margin-top:12px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <label class="switch"><input type="checkbox" id="auto_sync_peer" onchange="saveSync()"><span class="slider"></span></label>
+        Auto-sync to peer on every change
+      </label>
+      <div class="hint">Pushes config and device settings to the peer whenever you save — no manual Push needed.</div>
+    </div>
   </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveSync()">Save</button>
@@ -367,6 +374,7 @@
       set('peer_url', d.peer_url || '');
       const roleEl = document.getElementById('alert_role');
       if (roleEl) roleEl.value = d.alert_role || 'standalone';
+      chk('auto_sync_peer', d.auto_sync_peer);
       updateRoleHint();
       loadSyncStatus();
 
@@ -485,7 +493,8 @@
     } catch (_) {}
   }
   async function saveSync() {
-    await post({peer_url: val('peer_url'), alert_role: document.getElementById('alert_role').value});
+    await post({peer_url: val('peer_url'), alert_role: document.getElementById('alert_role').value,
+                auto_sync_peer: document.getElementById('auto_sync_peer').checked});
     flash('sync-status', 'Saved', 'ok');
     updateRoleHint();
     setTimeout(loadSyncStatus, 500);
