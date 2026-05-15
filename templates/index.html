@@ -238,7 +238,10 @@
           {% endif %}
           {% if name == 'Zigbee2MQTT Edge' %}
           <div class="update-progress" id="z2m-progress">
-            <div id="z2m-msg"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div id="z2m-msg" style="flex:1"></div>
+              <button onclick="toggleZ2mLog()" id="z2m-toggle" title="Toggle log" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.8rem;padding:0 2px;line-height:1;flex-shrink:0">&#9660;</button>
+            </div>
             <div class="update-log" id="z2m-log"></div>
           </div>
           {% endif %}
@@ -552,6 +555,14 @@
   }
 
   // ── Z2M update ─────────────────────────────────────────────────────────
+  function toggleZ2mLog() {
+    const log = document.getElementById('z2m-log');
+    const btn = document.getElementById('z2m-toggle');
+    if (!log) return;
+    const hiding = log.style.display !== 'none';
+    log.style.display = hiding ? 'none' : '';
+    btn.innerHTML = hiding ? '&#9654;' : '&#9660;';
+  }
   window._z2mUpdating = false;
   const _z2mMsgEl = document.getElementById('z2m-msg');
   const _z2mLogEl = document.getElementById('z2m-log');
