@@ -149,10 +149,18 @@
     .update-log .log-err { color:var(--red); }
 
     /* ── Feature tags ───────────────────────────────────────────────────── */
-    .ftag { display:inline-flex; align-items:center; gap:3px; font-size:.62rem; font-weight:600; border-radius:3px; padding:2px 5px; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }
-    .ftag-snmp  { background:rgba(3,169,244,.1);  color:#29b6f6; border:1px solid rgba(3,169,244,.25); }
-    .ftag-onvif { background:rgba(156,39,176,.1); color:#ce93d8; border:1px solid rgba(156,39,176,.25); }
-    .ftag-rtsp  { background:rgba(255,152,0,.1);  color:#ffb74d; border:1px solid rgba(255,152,0,.25); }
+    .ftag { display:inline-flex; align-items:center; font-size:.6rem; font-weight:700; border-radius:3px; padding:2px 5px; letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; margin:1px 1px; border:1px solid transparent; cursor:default; }
+    .ftag-snmp   { background:rgba(3,169,244,.1);   color:#29b6f6; border-color:rgba(3,169,244,.3); }
+    .ftag-onvif  { background:rgba(156,39,176,.1);  color:#ce93d8; border-color:rgba(156,39,176,.3); }
+    .ftag-sec    { background:rgba(76,175,80,.1);   color:#81c784; border-color:rgba(76,175,80,.3); }
+    .ftag-web    { background:rgba(38,166,154,.1);  color:#4db6ac; border-color:rgba(38,166,154,.3); }
+    .ftag-msg    { background:rgba(255,193,7,.1);   color:#ffd54f; border-color:rgba(255,193,7,.3); }
+    .ftag-media  { background:rgba(255,152,0,.1);   color:#ffb74d; border-color:rgba(255,152,0,.3); }
+    .ftag-sys    { background:rgba(144,164,174,.1); color:#b0bec5; border-color:rgba(144,164,174,.3); }
+    .ftag-file   { background:rgba(126,87,194,.1);  color:#b39ddb; border-color:rgba(126,87,194,.3); }
+    .ftag-warn   { background:rgba(229,57,53,.1);   color:#ef9a9a; border-color:rgba(229,57,53,.3); }
+    .ftag-net    { background:rgba(41,182,246,.08); color:#4fc3f7; border-color:rgba(41,182,246,.25); }
+    .ftag-other  { background:rgba(255,255,255,.05);color:var(--muted); border-color:var(--border); }
 
     /* ── Peer status pill ───────────────────────────────────────────────── */
     .peer-pill { display:inline-flex; align-items:center; gap:5px; font-size:.78rem; opacity:.9; }
@@ -412,12 +420,30 @@
     return '';
   }
 
+  const _PROTO_CLASS = {
+    SSH: 'ftag-sec', HTTPS: 'ftag-sec',
+    HTTP: 'ftag-web', FTP: 'ftag-web',
+    SMTP: 'ftag-msg', MQTT: 'ftag-msg', POP3: 'ftag-msg', IMAP: 'ftag-msg',
+    RTSP: 'ftag-media',
+    RDP: 'ftag-sys', VNC: 'ftag-sys',
+    SMB: 'ftag-file', NFS: 'ftag-file', iSCSI: 'ftag-file', rsync: 'ftag-file',
+    Telnet: 'ftag-warn', Modbus: 'ftag-warn',
+    DNS: 'ftag-net', Print: 'ftag-net',
+  };
   function _tagsCell(d) {
     const f = d.features || {};
     let html = '';
-    if (f.snmp)  html += '<span class="ftag ftag-snmp">SNMP</span> ';
-    if (f.onvif) html += '<span class="ftag ftag-onvif">ONVIF</span> ';
-    if (f.rtsp)  html += '<span class="ftag ftag-rtsp">RTSP</span> ';
+    if (f.snmp) {
+      const info = f.snmp_info || {};
+      const parts = [info.sysName, info.sysDescr, info.sysLocation].filter(Boolean);
+      const tip = parts.join(' · ').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+      html += `<span class="ftag ftag-snmp" title="${tip}">SNMP</span>`;
+    }
+    if (f.onvif) html += '<span class="ftag ftag-onvif">ONVIF</span>';
+    for (const p of (f.protocols || [])) {
+      const cls = _PROTO_CLASS[p] || 'ftag-other';
+      html += `<span class="ftag ${cls}">${p}</span>`;
+    }
     return html || '<span style="color:var(--muted2);font-size:.7rem">—</span>';
   }
 

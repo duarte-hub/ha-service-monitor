@@ -323,53 +323,115 @@ def _check_port(ip: str, port: int, timeout: float = 3.0) -> bool:
         log.debug("port %s:%s: closed", ip, port)
         return False
 
-def _snmp_probe(ip: str, community: str = "public", timeout: float = 2.0) -> bool:
-    """Return True if device responds to an SNMPv2c GET (sysName) on UDP 161."""
-    def _ber_len(n: int) -> bytes:
-        if n < 128:
-            return bytes([n])
-        elif n < 256:
-            return bytes([0x81, n])
-        return bytes([0x82, n >> 8, n & 0xff])
+# ---------------------------------------------------------------------------
+# BER / SNMP primitives
+# ---------------------------------------------------------------------------
+def _ber_len(n: int) -> bytes:
+    if n < 128:
+        return bytes([n])
+    elif n < 256:
+        return bytes([0x81, n])
+    return bytes([0x82, n >> 8, n & 0xff])
 
-    def _tlv(tag: int, value: bytes) -> bytes:
-        return bytes([tag]) + _ber_len(len(value)) + value
 
-    # OID 1.3.6.1.2.1.1.5.0 (sysName.0)
-    oid = bytes([0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00])
-    varbind     = _tlv(0x30, _tlv(0x06, oid) + b'\x05\x00')
-    varbindlist = _tlv(0x30, varbind)
-    pdu = _tlv(0xa0,
-        b'\x02\x04\x00\x00\x00\x01'   # request-id = 1
-        b'\x02\x01\x00'               # error-status = 0
-        b'\x02\x01\x00'               # error-index = 0
-        + varbindlist
+def _ber_tlv(tag: int, value: bytes) -> bytes:
+    return bytes([tag]) + _ber_len(len(value)) + value
+
+
+def _ber_decode(data: bytes, pos: int = 0):
+    """Yield (tag, value_bytes) for each TLV at the current nesting level."""
+    while pos < len(data):
+        tag = data[pos]; pos += 1
+        b   = data[pos]; pos += 1
+        if b < 0x80:
+            length = b
+        elif b == 0x81:
+            length = data[pos]; pos += 1
+        elif b == 0x82:
+            length = (data[pos] << 8) | data[pos + 1]; pos += 2
+        else:
+            break
+        yield tag, data[pos: pos + length]
+        pos += length
+
+
+# OIDs to request in a single SNMP GET (BER-encoded, first two nodes: 1*40+3=0x2b)
+_SNMP_OIDS = [
+    bytes([0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00]),  # sysDescr.0
+    bytes([0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00]),  # sysName.0
+    bytes([0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x06, 0x00]),  # sysLocation.0
+]
+
+
+def _snmp_parse_strings(data: bytes) -> list[str]:
+    """Extract OCTET STRING values from each VarBind in an SNMP GET response."""
+    strings: list[str] = []
+    try:
+        for tag, val in _ber_decode(data):
+            if tag != 0x30:
+                continue
+            for tag2, val2 in _ber_decode(val):
+                if tag2 != 0xA2:          # GetResponse-PDU
+                    continue
+                items = list(_ber_decode(val2))
+                if len(items) < 4:
+                    continue
+                for tag3, val3 in _ber_decode(items[3][1]):   # VarBindList
+                    if tag3 != 0x30:
+                        continue
+                    vb = list(_ber_decode(val3))
+                    if len(vb) >= 2 and vb[1][0] == 0x04:     # OCTET STRING
+                        strings.append(vb[1][1].decode("utf-8", errors="replace").strip())
+                    else:
+                        strings.append("")
+    except Exception:
+        pass
+    return strings
+
+
+def _snmp_probe(ip: str, community: str = "public", timeout: float = 2.0) -> dict | None:
+    """
+    Send SNMPv2c GET for sysDescr / sysName / sysLocation.
+    Returns {sysDescr, sysName, sysLocation} on any response, None on no response.
+    """
+    varbinds = b"".join(
+        _ber_tlv(0x30, _ber_tlv(0x06, oid) + b"\x05\x00") for oid in _SNMP_OIDS
     )
-    msg = _tlv(0x30,
-        b'\x02\x01\x01'               # version = v2c (1)
-        + _tlv(0x04, community.encode())
-        + pdu
+    pdu = _ber_tlv(
+        0xA0,
+        b"\x02\x04\x00\x00\x00\x01"  # request-id = 1
+        b"\x02\x01\x00"              # error-status = 0
+        b"\x02\x01\x00"              # error-index = 0
+        + _ber_tlv(0x30, varbinds),
+    )
+    msg = _ber_tlv(
+        0x30,
+        b"\x02\x01\x01"             # version = v2c
+        + _ber_tlv(0x04, community.encode())
+        + pdu,
     )
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         sock.sendto(msg, (ip, 161))
-        data, _ = sock.recvfrom(2048)
+        data, _ = sock.recvfrom(4096)
         sock.close()
-        return len(data) > 10
     except Exception:
-        return False
+        return None
+    vals = _snmp_parse_strings(data)
+    keys = ["sysDescr", "sysName", "sysLocation"]
+    return {k: (vals[i] if i < len(vals) else "") for i, k in enumerate(keys)}
 
 
 def _onvif_probe(ip: str, timeout: float = 3.0) -> bool:
-    """Return True if device has an ONVIF device service on any common port."""
+    """Return True if device exposes an ONVIF device service on any common port."""
     soap = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
-        '<s:Body>'
+        "<s:Body>"
         '<GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/>'
-        '</s:Body>'
-        '</s:Envelope>'
+        "</s:Body>"
+        "</s:Envelope>"
     )
     headers = {"Content-Type": "application/soap+xml; charset=utf-8"}
     for port in [80, 8080, 8000, 8888]:
@@ -385,34 +447,81 @@ def _onvif_probe(ip: str, timeout: float = 3.0) -> bool:
     return False
 
 
-def _rtsp_probe(ip: str, timeout: float = 2.0) -> bool:
-    """Return True if device has TCP port 554 open (RTSP stream)."""
-    return _check_port(ip, 554, timeout=timeout)
+# Port → display label for well-known services
+_PORT_TAGS: dict[int, str] = {
+    21:   "FTP",
+    22:   "SSH",
+    23:   "Telnet",
+    25:   "SMTP",
+    53:   "DNS",
+    80:   "HTTP",
+    110:  "POP3",
+    143:  "IMAP",
+    443:  "HTTPS",
+    445:  "SMB",
+    502:  "Modbus",
+    554:  "RTSP",
+    873:  "rsync",
+    1883: "MQTT",
+    2049: "NFS",
+    3260: "iSCSI",
+    3389: "RDP",
+    5900: "VNC",
+    8080: "HTTP",
+    8443: "HTTPS",
+    9100: "Print",
+}
 
+_FEATURE_PROBE_INTERVAL = 600  # seconds
 
-_FEATURE_PROBE_INTERVAL = 600  # seconds between re-probes per device
 
 def _probe_device_features_once(ip: str, device: dict) -> dict:
-    """Run SNMP/ONVIF/RTSP probes; return updated features dict."""
-    community = SNMP_COMMUNITY
+    """Run SNMP + ONVIF probes; derive protocol tags from known open ports."""
     features: dict = dict(device.get("features") or {})
-    features["snmp"]  = _snmp_probe(ip, community)
+
+    # SNMP — rich info dict or None if no response
+    snmp_info = _snmp_probe(ip, SNMP_COMMUNITY)
+    features["snmp"]      = snmp_info is not None
+    features["snmp_info"] = snmp_info or {}
+
+    # ONVIF camera check
     features["onvif"] = _onvif_probe(ip)
-    features["rtsp"]  = _rtsp_probe(ip)
+
+    # Derive protocol tags from already-monitored open ports (zero extra probes)
+    port_status = device.get("port_status") or {}
+    seen:      set[str]  = set()
+    protocols: list[str] = []
+    for port_str, is_open in port_status.items():
+        if not is_open:
+            continue
+        tag = _PORT_TAGS.get(int(port_str))
+        if tag and tag not in seen:
+            protocols.append(tag)
+            seen.add(tag)
+
+    # Probe RTSP (554) if not already in the monitored port list
+    if "RTSP" not in seen and _check_port(ip, 554, timeout=2.0):
+        protocols.append("RTSP")
+
+    features["protocols"] = sorted(protocols)
     return features
 
 
 def _feature_probe_loop() -> None:
-    """Background thread: probe each monitored device for SNMP/ONVIF/RTSP every 10 min."""
-    # Stagger startup to avoid hammering everything at once
-    time.sleep(15)
+    """Background thread: probe each monitored+up device for features every 10 min."""
+    time.sleep(15)   # stagger startup
     while True:
         with _devices_lock:
-            targets = [(ip, d.copy()) for ip, d in _devices.items() if d.get("monitored") and d.get("status") == "up"]
+            targets = [
+                (ip, d.copy())
+                for ip, d in _devices.items()
+                if d.get("monitored") and d.get("status") == "up"
+            ]
         for ip, dev in targets:
             try:
                 features = _probe_device_features_once(ip, dev)
-                log.debug("Feature probe %s: %s", ip, features)
+                log.debug("Feature probe %s: snmp=%s onvif=%s protocols=%s",
+                          ip, features.get("snmp"), features.get("onvif"), features.get("protocols"))
                 with _devices_lock:
                     if ip in _devices:
                         _devices[ip]["features"] = features
