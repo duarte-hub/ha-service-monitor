@@ -260,6 +260,14 @@
       <div class="hint">Open ports are automatically added to the device's monitored port list.</div>
     </div>
   </div>
+  <div class="sub">
+    <div class="sub-label">Device Probes</div>
+    <div class="field" style="max-width:280px">
+      <label>SNMP community string</label>
+      <input type="text" id="snmp_community" placeholder="public">
+      <div class="hint">Used for SNMP tag detection on monitored devices. ONVIF and RTSP are always probed.</div>
+    </div>
+  </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveScan()">Save</button>
     <span class="status-msg" id="scan-status"></span>
@@ -369,6 +377,7 @@
       set('email_to',   d.email_to   || '');
 
       set('scan_ports',    d.scan_ports    || '22,80,443,8080,8123,1883,8883');
+      set('snmp_community', d.snmp_community || 'public');
       set('poll_interval', d.poll_interval || '30');
 
       set('peer_url', d.peer_url || '');
@@ -465,7 +474,7 @@
 
   // ── Network ────────────────────────────────────────────────────────────────
   async function saveScan() {
-    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval')});
+    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community')});
     flash('scan-status', 'Saved', 'ok');
   }
 

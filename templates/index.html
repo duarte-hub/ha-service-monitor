@@ -148,6 +148,12 @@
     .update-log { margin-top:5px; max-height:160px; overflow-y:auto; font-size:.67rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; line-height:1.5; }
     .update-log .log-err { color:var(--red); }
 
+    /* ── Feature tags ───────────────────────────────────────────────────── */
+    .ftag { display:inline-flex; align-items:center; gap:3px; font-size:.62rem; font-weight:600; border-radius:3px; padding:2px 5px; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }
+    .ftag-snmp  { background:rgba(3,169,244,.1);  color:#29b6f6; border:1px solid rgba(3,169,244,.25); }
+    .ftag-onvif { background:rgba(156,39,176,.1); color:#ce93d8; border:1px solid rgba(156,39,176,.25); }
+    .ftag-rtsp  { background:rgba(255,152,0,.1);  color:#ffb74d; border:1px solid rgba(255,152,0,.25); }
+
     /* ── Peer status pill ───────────────────────────────────────────────── */
     .peer-pill { display:inline-flex; align-items:center; gap:5px; font-size:.78rem; opacity:.9; }
     .peer-pill-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
@@ -283,12 +289,13 @@
         <th>Last Seen</th>
         <th>Latency</th>
         <th>Ports</th>
+        <th>Tags</th>
         <th>Monitor</th>
         <th style="width:32px"></th>
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="10">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="11">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -405,6 +412,15 @@
     return '';
   }
 
+  function _tagsCell(d) {
+    const f = d.features || {};
+    let html = '';
+    if (f.snmp)  html += '<span class="ftag ftag-snmp">SNMP</span> ';
+    if (f.onvif) html += '<span class="ftag ftag-onvif">ONVIF</span> ';
+    if (f.rtsp)  html += '<span class="ftag ftag-rtsp">RTSP</span> ';
+    return html || '<span style="color:var(--muted2);font-size:.7rem">—</span>';
+  }
+
   function _monitorCell(d) {
     const checked  = d.monitored ? 'checked' : '';
     const toggle = `<label class="mon-toggle ${d.monitored?'active':''}">
@@ -435,6 +451,7 @@
       <td class="td-muted">${_lastSeen(d.last_seen)}</td>
       <td>${_latencyCell(d)}</td>
       <td>${_portsCell(d)}</td>
+      <td>${_tagsCell(d)}</td>
       <td>${_monitorCell(d)}</td>
       <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
     </tr>`;
@@ -464,10 +481,10 @@
     if (!visible.length) {
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML =
-          `<tr class="empty-row"><td colspan="10">No monitored devices yet</td></tr>` +
+          `<tr class="empty-row"><td colspan="11">No monitored devices yet</td></tr>` +
           _devices.map(d => _rowHtml(d, true)).join('');
       } else {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
     } else {
       tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');

@@ -323,6 +323,105 @@ def _check_port(ip: str, port: int, timeout: float = 3.0) -> bool:
         log.debug("port %s:%s: closed", ip, port)
         return False
 
+def _snmp_probe(ip: str, community: str = "public", timeout: float = 2.0) -> bool:
+    """Return True if device responds to an SNMPv2c GET (sysName) on UDP 161."""
+    def _ber_len(n: int) -> bytes:
+        if n < 128:
+            return bytes([n])
+        elif n < 256:
+            return bytes([0x81, n])
+        return bytes([0x82, n >> 8, n & 0xff])
+
+    def _tlv(tag: int, value: bytes) -> bytes:
+        return bytes([tag]) + _ber_len(len(value)) + value
+
+    # OID 1.3.6.1.2.1.1.5.0 (sysName.0)
+    oid = bytes([0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00])
+    varbind     = _tlv(0x30, _tlv(0x06, oid) + b'\x05\x00')
+    varbindlist = _tlv(0x30, varbind)
+    pdu = _tlv(0xa0,
+        b'\x02\x04\x00\x00\x00\x01'   # request-id = 1
+        b'\x02\x01\x00'               # error-status = 0
+        b'\x02\x01\x00'               # error-index = 0
+        + varbindlist
+    )
+    msg = _tlv(0x30,
+        b'\x02\x01\x01'               # version = v2c (1)
+        + _tlv(0x04, community.encode())
+        + pdu
+    )
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        sock.sendto(msg, (ip, 161))
+        data, _ = sock.recvfrom(2048)
+        sock.close()
+        return len(data) > 10
+    except Exception:
+        return False
+
+
+def _onvif_probe(ip: str, timeout: float = 3.0) -> bool:
+    """Return True if device has an ONVIF device service on any common port."""
+    soap = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+        '<s:Body>'
+        '<GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/>'
+        '</s:Body>'
+        '</s:Envelope>'
+    )
+    headers = {"Content-Type": "application/soap+xml; charset=utf-8"}
+    for port in [80, 8080, 8000, 8888]:
+        try:
+            r = requests.post(
+                f"http://{ip}:{port}/onvif/device_service",
+                data=soap, headers=headers, timeout=timeout,
+            )
+            if "onvif" in r.text.lower():
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _rtsp_probe(ip: str, timeout: float = 2.0) -> bool:
+    """Return True if device has TCP port 554 open (RTSP stream)."""
+    return _check_port(ip, 554, timeout=timeout)
+
+
+_FEATURE_PROBE_INTERVAL = 600  # seconds between re-probes per device
+
+def _probe_device_features_once(ip: str, device: dict) -> dict:
+    """Run SNMP/ONVIF/RTSP probes; return updated features dict."""
+    community = SNMP_COMMUNITY
+    features: dict = dict(device.get("features") or {})
+    features["snmp"]  = _snmp_probe(ip, community)
+    features["onvif"] = _onvif_probe(ip)
+    features["rtsp"]  = _rtsp_probe(ip)
+    return features
+
+
+def _feature_probe_loop() -> None:
+    """Background thread: probe each monitored device for SNMP/ONVIF/RTSP every 10 min."""
+    # Stagger startup to avoid hammering everything at once
+    time.sleep(15)
+    while True:
+        with _devices_lock:
+            targets = [(ip, d.copy()) for ip, d in _devices.items() if d.get("monitored") and d.get("status") == "up"]
+        for ip, dev in targets:
+            try:
+                features = _probe_device_features_once(ip, dev)
+                log.debug("Feature probe %s: %s", ip, features)
+                with _devices_lock:
+                    if ip in _devices:
+                        _devices[ip]["features"] = features
+                _save_devices()
+            except Exception as e:
+                log.debug("Feature probe %s failed: %s", ip, e)
+        time.sleep(_FEATURE_PROBE_INTERVAL)
+
+
 def _seed_device(ip: str, name: str, ports: list[int]) -> None:
     with _devices_lock:
         if ip not in _devices:
@@ -779,6 +878,7 @@ _CONFIG_FIELDS = {
     "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
     # Network scan
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
+    "snmp_community":         {"label": "SNMP community string",            "default": "public"},
     # Polling intervals
     "poll_interval":          {"label": "Device ping interval (s)",         "default": str(POLL_INTERVAL)},
     "ha_poll_interval":       {"label": "HA add-on poll interval (s)",      "default": str(HA_POLL_INTERVAL)},
@@ -812,6 +912,7 @@ MERAKI_NETWORK_ID:    str  = ""
 PEER_URL:             str  = ""
 ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
 AUTO_SYNC_PEER:       bool = False
+SNMP_COMMUNITY:       str  = "public"
 
 _peer_reachable:      bool = True   # updated by _peer_health_loop
 _peer_fail_streak:    int  = 0
@@ -821,7 +922,7 @@ def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER
+    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -864,6 +965,7 @@ def _apply_config(data: dict) -> None:
     if "peer_url"               in data: PEER_URL               = data["peer_url"]                 or ""
     if "alert_role"             in data: ALERT_ROLE             = data["alert_role"]               or "standalone"
     if "auto_sync_peer"         in data: AUTO_SYNC_PEER         = str(data["auto_sync_peer"]).lower() in ("true", "1", "yes")
+    if "snmp_community"         in data: SNMP_COMMUNITY         = data["snmp_community"] or "public"
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -2162,6 +2264,7 @@ if __name__ == "__main__":
     threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
     threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()
     threading.Thread(target=_primary_peer_check_loop, daemon=True, name="peer-check").start()
+    threading.Thread(target=_feature_probe_loop,      daemon=True, name="feature-probe").start()
 
     # Give the first poll a moment
     time.sleep(2)
