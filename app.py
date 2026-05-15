@@ -2138,6 +2138,7 @@ def api_update_z2m():
 
     if z2m_update_status.get("state") == "running":
         return jsonify({"status": "error", "message": "Update already in progress"}), 409
+    z2m_update_status = {"state": "running", "message": "Starting…", "log": []}
     threading.Thread(target=_do_update, daemon=True).start()
     return jsonify({"status": "started"})
 
