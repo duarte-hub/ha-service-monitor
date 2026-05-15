@@ -570,7 +570,7 @@
   function setLog(lines) {
     if (!_z2mLogEl || !lines || !lines.length) return;
     _z2mLogEl.innerHTML = lines.map(l => {
-      const cls = /error|Error|EXCEPTION/i.test(l) ? ' class="log-err"' : '';
+      const cls = /Error:|EXCEPTION|\[ERROR\]/.test(l) ? ' class="log-err"' : '';
       return `<div${cls}>${l.replace(/</g,'&lt;')}</div>`;
     }).join('');
     _z2mLogEl.scrollTop = _z2mLogEl.scrollHeight;

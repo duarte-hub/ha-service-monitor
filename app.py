@@ -2037,12 +2037,12 @@ def api_update_z2m():
                     break
                 except Exception as ie:
                     err_str = str(ie)
-                    _dbg(f"Install attempt {install_attempt + 1} error: {ie}")
+                    _dbg(f"Install attempt {install_attempt + 1} returned: {ie}")
                     # Check whether the addon is actually present now (HA async quirk)
                     try:
                         probe = _ws_sup("GET", f"/addons/{Z2M_EDGE_SLUG}/info")
                         _dbg(f"Post-install probe: state={probe.get('state')}, version={probe.get('version')}")
-                        _dbg("Addon present after install error — continuing with config restore")
+                        _dbg("Addon present — HA install quirk, continuing with config restore")
                         break
                     except Exception as pe:
                         _dbg(f"Post-install probe failed: {pe}")
