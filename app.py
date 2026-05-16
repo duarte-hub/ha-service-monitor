@@ -460,6 +460,173 @@ def _onvif_probe(ip: str, timeout: float = 3.0) -> bool:
     return False
 
 
+def _banner_grab(ip: str, port: int, timeout: float = 2.0) -> str | None:
+    """Return first useful service line from a port banner, or None."""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as s:
+            if port in (80, 8080, 8000, 8888, 8123):
+                s.sendall(b"HEAD / HTTP/1.0\r\nHost: " + ip.encode() + b"\r\n\r\n")
+            raw = s.recv(512).decode("utf-8", errors="replace")
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if port in (80, 8080, 8000, 8888, 8123):
+                    if line.lower().startswith("server:"):
+                        return line.split(":", 1)[1].strip()
+                    if line.startswith("HTTP/"):
+                        continue
+                else:
+                    return line[:120]
+    except Exception:
+        pass
+    return None
+
+
+def _der_tlv(data: bytes, pos: int) -> tuple[int, bytes, int]:
+    """Return (tag, value_bytes, next_pos) from a DER TLV at pos."""
+    if pos + 1 >= len(data):
+        raise ValueError("truncated")
+    tag = data[pos]; pos += 1
+    b   = data[pos]; pos += 1
+    if b & 0x80:
+        n = b & 0x7f
+        if n == 0 or n > 4 or pos + n > len(data):
+            raise ValueError("bad length")
+        length = int.from_bytes(data[pos:pos + n], "big")
+        pos += n
+    else:
+        length = b
+    if pos + length > len(data):
+        raise ValueError("data truncated")
+    return tag, data[pos:pos + length], pos + length
+
+
+def _der_oid_str(oid: bytes) -> str:
+    """Decode DER OID bytes to dotted string like '2.5.4.3'."""
+    if not oid:
+        return ""
+    parts = [str(oid[0] // 40), str(oid[0] % 40)]
+    val = 0
+    for b in oid[1:]:
+        val = (val << 7) | (b & 0x7f)
+        if not (b & 0x80):
+            parts.append(str(val)); val = 0
+    return ".".join(parts)
+
+
+def _der_rdn(seq: bytes) -> dict[str, str]:
+    """Parse RDNSequence bytes → {OID_dotted: value_str}."""
+    out: dict[str, str] = {}
+    pos = 0
+    while pos < len(seq):
+        try:
+            tag, set_b, pos = _der_tlv(seq, pos)
+            if tag != 0x31:
+                continue
+            sp = 0
+            while sp < len(set_b):
+                _, av, sp = _der_tlv(set_b, sp)
+                o_tag, o_val, vp = _der_tlv(av, 0)
+                if o_tag != 0x06:
+                    continue
+                _, v_val, _ = _der_tlv(av, vp)
+                out[_der_oid_str(o_val)] = v_val.decode("utf-8", errors="replace")
+        except Exception:
+            break
+    return out
+
+
+_OID_CN  = "2.5.4.3"
+_OID_ORG = "2.5.4.10"
+_OID_SAN = "2.5.29.17"
+
+
+def _parse_der_cert(der: bytes) -> dict | None:
+    """Parse a DER certificate → {cn, issuer, expiry_iso, days_left, sans}."""
+    try:
+        _, cert_seq, _ = _der_tlv(der, 0)
+        _, tbs, _      = _der_tlv(cert_seq, 0)
+        p = 0
+        for _ in range(3):
+            _, _, p = _der_tlv(tbs, p)          # skip version, serial, sigAlg
+        _, issuer_b, p = _der_tlv(tbs, p)
+        _, valid_b,  p = _der_tlv(tbs, p)
+        _, subj_b,   p = _der_tlv(tbs, p)
+        _, _,        p = _der_tlv(tbs, p)       # subjectPublicKeyInfo
+
+        issuer  = _der_rdn(issuer_b)
+        subject = _der_rdn(subj_b)
+
+        vp = 0
+        _, _, vp       = _der_tlv(valid_b, vp)  # skip notBefore
+        na_tag, na_b, _ = _der_tlv(valid_b, vp)
+        ts = na_b.decode("ascii", errors="replace")
+        if na_tag == 0x17:                       # UTCTime YYMMDDHHMMSSZ
+            yy = int(ts[:2]); yr = 2000 + yy if yy < 50 else 1900 + yy
+            expiry = datetime(yr, int(ts[2:4]), int(ts[4:6]),
+                              int(ts[6:8]), int(ts[8:10]), int(ts[10:12]),
+                              tzinfo=timezone.utc)
+        else:                                    # GeneralizedTime YYYYMMDDHHMMSSZ
+            expiry = datetime(int(ts[:4]), int(ts[4:6]), int(ts[6:8]),
+                              int(ts[8:10]), int(ts[10:12]), int(ts[12:14]),
+                              tzinfo=timezone.utc)
+        days_left = (expiry - datetime.now(timezone.utc)).days
+
+        sans: list[str] = []
+        while p < len(tbs):
+            try:
+                t3, ext_ctx, p = _der_tlv(tbs, p)
+                if t3 != 0xa3:
+                    continue
+                _, exts, _ = _der_tlv(ext_ctx, 0)
+                ep = 0
+                while ep < len(exts):
+                    _, ext, ep = _der_tlv(exts, ep)
+                    xp = 0
+                    xt, xoid, xp = _der_tlv(ext, xp)
+                    if xt != 0x06 or _der_oid_str(xoid) != _OID_SAN:
+                        continue
+                    if xp < len(ext) and ext[xp] == 0x01:
+                        _, _, xp = _der_tlv(ext, xp)  # skip critical bool
+                    _, san_oct, _ = _der_tlv(ext, xp)
+                    _, gnames, _  = _der_tlv(san_oct, 0)
+                    gp = 0
+                    while gp < len(gnames):
+                        gt, gv, gp = _der_tlv(gnames, gp)
+                        if (gt & 0x1f) == 2:
+                            try: sans.append(gv.decode("ascii"))
+                            except Exception: pass
+            except Exception:
+                break
+
+        return {
+            "cn":        subject.get(_OID_CN),
+            "issuer":    issuer.get(_OID_ORG) or issuer.get(_OID_CN),
+            "expiry":    expiry.isoformat(),
+            "days_left": days_left,
+            "sans":      sans[:8],
+        }
+    except Exception as e:
+        log.debug("DER cert parse error: %s", e)
+        return None
+
+
+def _tls_cert(ip: str, port: int, timeout: float = 3.0) -> dict | None:
+    """Return TLS certificate details for host:port, or None."""
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode    = ssl.CERT_NONE
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=ip) as s:
+                der = s.getpeercert(binary_form=True)
+                return _parse_der_cert(der) if der else None
+    except Exception:
+        return None
+
+
 # Port → display label for well-known services
 _PORT_TAGS: dict[int, str] = {
     21:   "FTP",
@@ -487,6 +654,153 @@ _PORT_TAGS: dict[int, str] = {
 
 _FEATURE_PROBE_INTERVAL = 600  # seconds
 
+# ---------------------------------------------------------------------------
+# mDNS / Bonjour passive listener
+# ---------------------------------------------------------------------------
+_mdns_services: dict[str, set] = {}   # ip → set of friendly service label strings
+_mdns_lock = threading.Lock()
+
+_MDNS_SERVICE_LABELS: dict[str, str] = {
+    "_http._tcp":           "HTTP",
+    "_https._tcp":          "HTTPS",
+    "_ssh._tcp":            "SSH",
+    "_ftp._tcp":            "FTP",
+    "_smb._tcp":            "SMB",
+    "_afpovertcp._tcp":     "AFP",
+    "_nfs._tcp":            "NFS",
+    "_hap._tcp":            "HomeKit",
+    "_homekit._tcp":        "HomeKit",
+    "_googlecast._tcp":     "Chromecast",
+    "_airplay._tcp":        "AirPlay",
+    "_raop._tcp":           "AirPlay",
+    "_printer._tcp":        "Printer",
+    "_ipp._tcp":            "Printer",
+    "_mqtt._tcp":           "MQTT",
+    "_esphomelib._tcp":     "ESPHome",
+    "_matter._tcp":         "Matter",
+    "_home-assistant._tcp": "HomeAssist",
+    "_workstation._tcp":    "Linux",
+    "_companion-link._tcp": "Apple",
+    "_rdp._tcp":            "RDP",
+    "_vnc._tcp":            "VNC",
+}
+
+
+def _dns_name(data: bytes, pos: int) -> tuple[str, int]:
+    """Decode a DNS wire-format name with pointer compression."""
+    labels: list[str] = []
+    end_pos = -1
+    visited: set[int] = set()
+    while pos < len(data):
+        if pos in visited:
+            break
+        visited.add(pos)
+        length = data[pos]
+        if length == 0:
+            pos += 1
+            if end_pos < 0:
+                end_pos = pos
+            break
+        if (length & 0xC0) == 0xC0:
+            if pos + 1 >= len(data):
+                break
+            ptr = ((length & 0x3F) << 8) | data[pos + 1]
+            if end_pos < 0:
+                end_pos = pos + 2
+            pos = ptr
+            continue
+        pos += 1
+        labels.append(data[pos: pos + length].decode("utf-8", errors="replace"))
+        pos += length
+    return ".".join(labels), (end_pos if end_pos >= 0 else pos)
+
+
+def _dns_records(data: bytes) -> list[dict]:
+    """Parse answer + additional records from a DNS/mDNS packet."""
+    if len(data) < 12:
+        return []
+    qdcount = (data[4] << 8) | data[5]
+    ancount = (data[6] << 8) | data[7]
+    arcount = (data[10] << 8) | data[11]
+    pos = 12
+    for _ in range(qdcount):
+        try:
+            _, pos = _dns_name(data, pos)
+            pos += 4
+        except Exception:
+            return []
+    records: list[dict] = []
+    for _ in range(ancount + arcount):
+        if pos + 10 > len(data):
+            break
+        try:
+            name, pos = _dns_name(data, pos)
+            rtype     = (data[pos] << 8) | data[pos + 1]
+            rdlen     = (data[pos + 8] << 8) | data[pos + 9]
+            rdata_pos = pos + 10
+            rdata     = data[rdata_pos: rdata_pos + rdlen]
+            pos       = rdata_pos + rdlen
+            records.append({"name": name, "type": rtype, "rdata": rdata,
+                            "rdata_pos": rdata_pos, "pkt": data})
+        except Exception:
+            break
+    return records
+
+
+def _mdns_listen_loop() -> None:
+    """Passive mDNS listener — accumulates service announcements in _mdns_services."""
+    MDNS_ADDR = "224.0.0.251"
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
+        sock.bind(("", 5353))
+        mreq = socket.inet_aton(MDNS_ADDR) + socket.inet_aton("0.0.0.0")
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        sock.settimeout(2.0)
+        log.info("mDNS listener started on 224.0.0.251:5353")
+    except Exception as e:
+        log.warning("mDNS listener could not bind (mDNS discovery disabled): %s", e)
+        return
+
+    while True:
+        try:
+            pkt, (src_ip, _) = sock.recvfrom(4096)
+        except socket.timeout:
+            continue
+        except Exception:
+            continue
+        try:
+            recs = _dns_records(pkt)
+            host_ip: dict[str, str] = {}
+            for r in recs:
+                if r["type"] == 1 and len(r["rdata"]) == 4:
+                    host_ip[r["name"].rstrip(".")] = ".".join(str(b) for b in r["rdata"])
+            srv_host: dict[str, str] = {}
+            for r in recs:
+                if r["type"] == 33 and len(r["rdata"]) >= 7:
+                    h, _ = _dns_name(r["pkt"], r["rdata_pos"] + 6)
+                    srv_host[r["name"].rstrip(".")] = h.rstrip(".")
+            for r in recs:
+                if r["type"] != 12:
+                    continue
+                svc_type = r["name"].rstrip(".")
+                instance, _ = _dns_name(r["pkt"], r["rdata_pos"])
+                instance = instance.rstrip(".")
+                target = host_ip.get(srv_host.get(instance, ""), src_ip)
+                if not target or target.startswith("169.254"):
+                    continue
+                for key, label in _MDNS_SERVICE_LABELS.items():
+                    if key in svc_type:
+                        with _mdns_lock:
+                            _mdns_services.setdefault(target, set()).add(label)
+                        break
+        except Exception as e:
+            log.debug("mDNS parse from %s: %s", src_ip, e)
+
 
 def _probe_device_features_once(ip: str, device: dict) -> dict:
     """Run SNMP + ONVIF probes; derive protocol tags from known open ports."""
@@ -500,7 +814,7 @@ def _probe_device_features_once(ip: str, device: dict) -> dict:
     # ONVIF camera check
     features["onvif"] = _onvif_probe(ip)
 
-    # Derive protocol tags from already-monitored open ports (zero extra probes)
+    # Protocol tags from already-monitored open ports (zero extra probes)
     port_status = device.get("port_status") or {}
     seen:      set[str]  = set()
     protocols: list[str] = []
@@ -512,11 +826,36 @@ def _probe_device_features_once(ip: str, device: dict) -> dict:
             protocols.append(tag)
             seen.add(tag)
 
-    # Probe RTSP (554) if not already in the monitored port list
     if "RTSP" not in seen and _check_port(ip, 554, timeout=2.0):
         protocols.append("RTSP")
 
     features["protocols"] = sorted(protocols)
+
+    # Banner grab from open ports
+    _BANNER_PORTS = {21, 22, 23, 25, 80, 8080, 8000, 8888, 8123}
+    banners: dict[str, str] = {}
+    for port_str, is_open in port_status.items():
+        p = int(port_str)
+        if is_open and p in _BANNER_PORTS:
+            b = _banner_grab(ip, p)
+            if b:
+                banners[port_str] = b
+    features["banners"] = banners
+
+    # TLS certificate inspection on HTTPS ports
+    certs: dict[str, dict] = {}
+    for port_str, is_open in port_status.items():
+        p = int(port_str)
+        if is_open and p in (443, 8443):
+            cert = _tls_cert(ip, p)
+            if cert:
+                certs[port_str] = cert
+    features["tls_certs"] = certs
+
+    # mDNS services accumulated by passive listener
+    with _mdns_lock:
+        features["mdns"] = sorted(_mdns_services.get(ip, set()))
+
     return features
 
 
@@ -979,14 +1318,20 @@ def _poll_meraki_api_clients() -> int:
         mac = (c.get("mac") or "").lower()
         if not ip or not mac:
             continue
-        vendor   = c.get("manufacturer") or ""
-        hostname = c.get("description") or ""
-        online   = (c.get("status") or "").lower() == "online"
+        vendor     = c.get("manufacturer") or ""
+        hostname   = c.get("description") or ""
+        dhcp_name  = c.get("dhcpHostname") or ""
+        connection = c.get("recentDeviceName") or ""
+        ssid       = c.get("ssid") or ""
+        online     = (c.get("status") or "").lower() == "online"
         with _devices_lock:
             if ip not in _devices:
                 _devices[ip] = {
                     "ip": ip, "mac": mac, "vendor": vendor,
                     "hostname": hostname, "name": "",
+                    "dhcp_hostname": dhcp_name,
+                    "meraki_connection": connection,
+                    "meraki_ssid": ssid,
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
@@ -1000,11 +1345,17 @@ def _poll_meraki_api_clients() -> int:
                 d = _devices[ip]
                 changed = False
                 if mac and not d.get("mac"):
-                    _devices[ip]["mac"] = mac;     changed = True
+                    _devices[ip]["mac"] = mac;          changed = True
                 if vendor and not d.get("vendor"):
-                    _devices[ip]["vendor"] = vendor; changed = True
+                    _devices[ip]["vendor"] = vendor;    changed = True
                 if hostname and not d.get("hostname"):
                     _devices[ip]["hostname"] = hostname; changed = True
+                if dhcp_name:
+                    _devices[ip]["dhcp_hostname"]   = dhcp_name;  changed = True
+                if connection:
+                    _devices[ip]["meraki_connection"] = connection; changed = True
+                if ssid:
+                    _devices[ip]["meraki_ssid"] = ssid; changed = True
                 ms = "online" if online else "offline"
                 if d.get("meraki_status") != ms:
                     _devices[ip]["meraki_status"] = ms; changed = True
@@ -2474,6 +2825,7 @@ if __name__ == "__main__":
     threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()
     threading.Thread(target=_primary_peer_check_loop, daemon=True, name="peer-check").start()
     threading.Thread(target=_feature_probe_loop,      daemon=True, name="feature-probe").start()
+    threading.Thread(target=_mdns_listen_loop,        daemon=True, name="mdns-listener").start()
 
     # Give the first poll a moment
     time.sleep(2)
