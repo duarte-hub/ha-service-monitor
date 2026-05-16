@@ -24,7 +24,7 @@ import subprocess
 
 import websocket
 import requests
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect
 
 # ---------------------------------------------------------------------------
 # Version
@@ -586,6 +586,25 @@ def _uptime_stats(ip: str) -> dict:
         samples = [e["up"] for e in hist if e["ts"] >= cutoff]
         return round(100 * sum(samples) / len(samples)) if samples else None
     return {"m1": _pct(60), "h1": _pct(3600), "h24": _pct(86400)}
+
+
+def _history_buckets(ip: str) -> dict:
+    """Return bucketed history arrays for sparkline rendering on the device page."""
+    hist = _device_history.get(ip, [])
+    now  = time.time()
+    def _buckets(window: float, n: int) -> list:
+        size = window / n
+        result = []
+        for i in range(n):
+            t_end   = now - (n - 1 - i) * size
+            t_start = t_end - size
+            samples = [e["up"] for e in hist if t_start <= e["ts"] < t_end]
+            result.append(round(100 * sum(samples) / len(samples)) if samples else None)
+        return result
+    return {
+        "h1":  _buckets(3600,  30),   # 1 h  → 30 × 2-min buckets
+        "h24": _buckets(86400, 48),   # 24 h → 48 × 30-min buckets
+    }
 
 
 def _ping_monitored() -> None:
@@ -1675,6 +1694,17 @@ def api_devices():
     return jsonify(result)
 
 
+@app.route("/api/devices/<ip>", methods=["GET"])
+def api_device_get(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return jsonify({"error": "not found"}), 404
+        dev = dict(_devices[ip])
+    dev["uptime"]  = _uptime_stats(ip)
+    dev["history"] = _history_buckets(ip)
+    return jsonify(dev)
+
+
 @app.route("/api/devices/<ip>", methods=["PATCH"])
 def api_device_patch(ip):
     with _devices_lock:
@@ -2140,6 +2170,14 @@ def api_config():
 @app.route("/logs")
 def logs_page():
     return render_template("logs.html")
+
+
+@app.route("/device/<ip>")
+def device_page(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return redirect("/")
+    return render_template("device.html", ip=ip, version=VERSION)
 
 @app.route("/api/logs")
 def api_logs():

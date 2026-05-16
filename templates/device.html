@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farol — Device</title>
+  <style>
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09); --border2:rgba(225,225,225,.05);
+      --text:#e1e1e1; --muted:#9b9b9b; --muted2:#6b7280;
+      --primary:#03a9f4; --pdim:rgba(3,169,244,.13);
+      --green:#4caf50; --red:#e53935; --yellow:#ff9800;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+           background:var(--bg); color:var(--text); min-height:100vh; }
+
+    /* ── Topbar ── */
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px;
+              display:flex; align-items:center; justify-content:space-between;
+              position:sticky; top:0; z-index:10; box-shadow:0 2px 12px rgba(0,0,0,.5); }
+    .topbar-left { display:flex; align-items:center; gap:12px; }
+    .back-btn { color:rgba(255,255,255,.8); text-decoration:none; font-size:.9rem;
+                display:flex; align-items:center; gap:5px; }
+    .back-btn:hover { color:#fff; }
+    .topbar-sep { opacity:.35; }
+    .topbar-title { font-weight:700; font-size:1rem; }
+    .topbar-ip { font-size:.75rem; opacity:.65; font-family:'SF Mono','Fira Code',monospace; }
+    .topbar-right { display:flex; align-items:center; gap:10px; }
+    .status-badge { font-size:.72rem; font-weight:700; padding:3px 10px; border-radius:12px;
+                    letter-spacing:.05em; text-transform:uppercase; }
+    .status-badge.up   { background:rgba(76,175,80,.22);  color:#81c784; }
+    .status-badge.down { background:rgba(229,57,53,.22);  color:#ef9a9a; animation:pulse 1.4s infinite; }
+    .status-badge.unknown { background:rgba(255,255,255,.1); color:rgba(255,255,255,.5); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+    /* ── Stats strip ── */
+    .stats-strip { background:var(--card-bg); border-bottom:1px solid var(--border);
+                   display:flex; padding:0 24px; flex-wrap:wrap; }
+    .stat-item { padding:10px 20px; border-right:1px solid var(--border);
+                 display:flex; flex-direction:column; gap:1px; }
+    .stat-item:first-child { padding-left:0; }
+    .stat-item:last-child { border-right:none; }
+    .stat-val { font-size:1.1rem; font-weight:700; }
+    .stat-lbl { font-size:.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; }
+
+    /* ── Layout ── */
+    .content { padding:24px; max-width:1100px; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+    @media (max-width:680px) { .grid-2 { grid-template-columns:1fr; } }
+    .mb { margin-bottom:16px; }
+
+    /* ── Cards ── */
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px;
+            overflow:hidden; }
+    .card-hdr { padding:12px 16px 10px; border-bottom:1px solid var(--border);
+                font-size:.65rem; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.09em; display:flex; align-items:center; justify-content:space-between; }
+    .card-body { padding:14px 16px; }
+
+    /* ── Info rows ── */
+    .info-row { display:flex; align-items:baseline; gap:8px; padding:4px 0;
+                border-bottom:1px solid var(--border2); }
+    .info-row:last-child { border-bottom:none; }
+    .info-key { font-size:.72rem; color:var(--muted); min-width:90px; flex-shrink:0; }
+    .info-val { font-size:.84rem; word-break:break-all; }
+    .mono { font-family:'SF Mono','Fira Code',Menlo,monospace; font-size:.79rem; }
+
+    /* ── Name edit ── */
+    .name-view { cursor:pointer; font-weight:500; }
+    .name-view:hover { color:var(--primary); }
+    .name-input { background:rgba(255,255,255,.07); border:1px solid var(--primary); border-radius:5px;
+                  color:var(--text); font-size:.84rem; padding:3px 8px; outline:none;
+                  width:180px; font-family:inherit; }
+
+    /* ── Uptime bars ── */
+    .ubar-row { display:flex; align-items:center; gap:8px; padding:5px 0; }
+    .ubar-lbl { font-size:.65rem; color:var(--muted); width:26px; text-align:right;
+                flex-shrink:0; font-family:monospace; }
+    .ubar-track { flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,.07);
+                  overflow:hidden; }
+    .ubar-fill { height:100%; border-radius:3px; transition:width .4s ease; }
+    .ubar-pct { font-size:.72rem; font-weight:700; width:38px; text-align:right;
+                font-family:'SF Mono','Fira Code',monospace; }
+
+    /* ── Sparklines ── */
+    .spark-row { margin-bottom:14px; }
+    .spark-row:last-child { margin-bottom:0; }
+    .spark-lbl { font-size:.65rem; color:var(--muted); text-transform:uppercase;
+                 letter-spacing:.07em; margin-bottom:5px; }
+    .spark-svg { width:100%; height:36px; display:block; border-radius:4px;
+                 background:rgba(255,255,255,.025); }
+
+    /* ── Port chips ── */
+    .ports-wrap { display:flex; flex-wrap:wrap; gap:6px; padding:2px 0; }
+    .port-chip { display:inline-flex; align-items:center; gap:4px; font-size:.75rem;
+                 font-family:'SF Mono','Fira Code',monospace; border-radius:5px;
+                 padding:4px 9px; border:1px solid transparent; }
+    .port-chip::before { content:''; width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .pup   { color:var(--green);  border-color:rgba(76,175,80,.3);  background:rgba(76,175,80,.08); }
+    .pup::before  { background:var(--green); }
+    .pdown { color:var(--red);    border-color:rgba(229,57,53,.3);  background:rgba(229,57,53,.08); }
+    .pdown::before  { background:var(--red); animation:pulse 1.4s infinite; }
+    .punk  { color:var(--muted);  border-color:var(--border);       background:rgba(255,255,255,.03); }
+    .punk::before { background:var(--muted); opacity:.4; }
+
+    /* ── Feature tags ── */
+    .tags-wrap { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px; }
+    .ftag { display:inline-flex; align-items:center; font-size:.65rem; font-weight:700;
+            border-radius:3px; padding:3px 7px; letter-spacing:.04em; text-transform:uppercase;
+            border:1px solid transparent; cursor:default; }
+    .ftag-snmp  { background:rgba(3,169,244,.1);   color:#29b6f6; border-color:rgba(3,169,244,.3); }
+    .ftag-onvif { background:rgba(156,39,176,.1);  color:#ce93d8; border-color:rgba(156,39,176,.3); }
+    .ftag-sec   { background:rgba(76,175,80,.1);   color:#81c784; border-color:rgba(76,175,80,.3); }
+    .ftag-web   { background:rgba(38,166,154,.1);  color:#4db6ac; border-color:rgba(38,166,154,.3); }
+    .ftag-msg   { background:rgba(255,193,7,.1);   color:#ffd54f; border-color:rgba(255,193,7,.3); }
+    .ftag-media { background:rgba(255,152,0,.1);   color:#ffb74d; border-color:rgba(255,152,0,.3); }
+    .ftag-sys   { background:rgba(144,164,174,.1); color:#b0bec5; border-color:rgba(144,164,174,.3); }
+    .ftag-file  { background:rgba(126,87,194,.1);  color:#b39ddb; border-color:rgba(126,87,194,.3); }
+    .ftag-warn  { background:rgba(229,57,53,.1);   color:#ef9a9a; border-color:rgba(229,57,53,.3); }
+    .ftag-net   { background:rgba(41,182,246,.08); color:#4fc3f7; border-color:rgba(41,182,246,.25); }
+    .ftag-other { background:rgba(255,255,255,.05);color:var(--muted); border-color:var(--border); }
+
+    /* ── SNMP detail table ── */
+    .snmp-row { display:flex; gap:8px; padding:3px 0; border-bottom:1px solid var(--border2); }
+    .snmp-row:last-child { border-bottom:none; }
+    .snmp-key { font-size:.7rem; color:var(--muted); min-width:90px; flex-shrink:0; }
+    .snmp-val { font-size:.78rem; color:var(--text); font-family:'SF Mono','Fira Code',monospace;
+                word-break:break-word; }
+
+    /* ── Monitor controls ── */
+    .ctrl-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .toggle-wrap { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:.84rem; }
+    .toggle-track { width:34px; height:18px; border-radius:9px; background:rgba(255,255,255,.15);
+                    position:relative; transition:background .2s; flex-shrink:0; }
+    .toggle-track.on { background:var(--green); }
+    .toggle-thumb { position:absolute; top:3px; left:3px; width:12px; height:12px; border-radius:50%;
+                    background:#fff; transition:transform .2s; box-shadow:0 1px 3px rgba(0,0,0,.3); }
+    .toggle-track.on .toggle-thumb { transform:translateX(16px); }
+    .alert-sel { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:6px;
+                 color:var(--muted); font-size:.78rem; padding:4px 8px; cursor:pointer; outline:none; }
+    .alert-sel:focus { border-color:var(--primary); }
+    .btn-del-device { background:rgba(229,57,53,.1); border:1px solid rgba(229,57,53,.3);
+                      color:#ef9a9a; border-radius:6px; padding:5px 14px; font-size:.78rem;
+                      cursor:pointer; font-family:inherit; margin-left:auto; transition:background .15s; }
+    .btn-del-device:hover { background:rgba(229,57,53,.22); }
+
+    /* ── Dot ── */
+    .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .dot.up      { background:var(--green); box-shadow:0 0 6px rgba(76,175,80,.6); }
+    .dot.down    { background:var(--red);   box-shadow:0 0 6px rgba(229,57,53,.7); animation:pulse 1.4s infinite; }
+    .dot.unknown { background:var(--muted); opacity:.5; }
+    .live-dot { width:6px; height:6px; background:rgba(255,255,255,.75); border-radius:50%; animation:pulse 2s infinite; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <a class="back-btn" href="/">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      Dashboard
+    </a>
+    <span class="topbar-sep">|</span>
+    <span class="topbar-title" id="tb-name">—</span>
+    <span class="topbar-ip" id="tb-ip">{{ ip }}</span>
+  </div>
+  <div class="topbar-right">
+    <span class="status-badge unknown" id="tb-status">—</span>
+    <span class="live-dot"></span>
+  </div>
+</div>
+
+<div class="stats-strip">
+  <div class="stat-item">
+    <span class="stat-val mono" id="si-latency">—</span>
+    <span class="stat-lbl">Ping</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-val" id="si-last">—</span>
+    <span class="stat-lbl">Last seen</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-val mono" id="si-mac">—</span>
+    <span class="stat-lbl">MAC</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-val" id="si-vendor">—</span>
+    <span class="stat-lbl">Vendor</span>
+  </div>
+</div>
+
+<div class="content">
+
+  <div class="grid-2">
+
+    <!-- Identity -->
+    <div class="card">
+      <div class="card-hdr">Identity</div>
+      <div class="card-body" id="identity-body">
+        <div class="info-row"><span class="info-key">IP</span><span class="info-val mono" id="d-ip">—</span></div>
+        <div class="info-row"><span class="info-key">Name</span><span class="info-val" id="d-name-wrap">—</span></div>
+        <div class="info-row"><span class="info-key">Hostname</span><span class="info-val mono" id="d-hostname">—</span></div>
+        <div class="info-row"><span class="info-key">MAC</span><span class="info-val mono" id="d-mac">—</span></div>
+        <div class="info-row"><span class="info-key">Vendor</span><span class="info-val" id="d-vendor">—</span></div>
+        <div class="info-row"><span class="info-key">Source</span><span class="info-val" id="d-source">—</span></div>
+        <div class="info-row"><span class="info-key">Last seen</span><span class="info-val" id="d-lastseen">—</span></div>
+      </div>
+    </div>
+
+    <!-- Status & Uptime -->
+    <div class="card">
+      <div class="card-hdr">Status &amp; Uptime</div>
+      <div class="card-body">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <span class="dot unknown" id="status-dot"></span>
+          <span style="font-size:1rem;font-weight:600" id="status-text">—</span>
+          <span style="font-size:.8rem;color:var(--muted)" id="status-latency"></span>
+        </div>
+        <div id="uptime-bars"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Sparklines -->
+  <div class="card mb" id="sparkline-card">
+    <div class="card-hdr">History</div>
+    <div class="card-body">
+      <div class="spark-row">
+        <div class="spark-lbl">Last hour</div>
+        <svg class="spark-svg" id="spark-h1" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="spark-row">
+        <div class="spark-lbl">Last 24 hours</div>
+        <svg class="spark-svg" id="spark-h24" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ports -->
+  <div class="card mb" id="ports-card">
+    <div class="card-hdr">Ports</div>
+    <div class="card-body">
+      <div class="ports-wrap" id="ports-wrap"><span style="color:var(--muted);font-size:.82rem">No ports monitored</span></div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <div class="card mb" id="features-card" style="display:none">
+    <div class="card-hdr">Features &amp; Protocols</div>
+    <div class="card-body">
+      <div class="tags-wrap" id="tags-wrap"></div>
+      <div id="snmp-detail" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+    </div>
+  </div>
+
+  <!-- Monitor -->
+  <div class="card mb">
+    <div class="card-hdr">Monitoring</div>
+    <div class="card-body">
+      <div class="ctrl-row">
+        <div class="toggle-wrap" onclick="toggleMonitor()">
+          <div class="toggle-track" id="mon-track"><div class="toggle-thumb"></div></div>
+          <span id="mon-label">Monitor: Off</span>
+        </div>
+        <select class="alert-sel" id="alert-sel" onchange="saveAlertMode()" style="display:none">
+          <option value="default">Default alerts</option>
+          <option value="push_critical">Critical push</option>
+          <option value="push_normal">Normal push</option>
+          <option value="email">Email only</option>
+          <option value="none">Silent</option>
+        </select>
+        <button class="btn-del-device" onclick="deleteDevice()">Delete device</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /content -->
+
+<script>
+  const IP = '{{ ip }}';
+  let _dev = null;
+  let _editingName = false;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function _lastSeen(iso) {
+    if (!iso) return '—';
+    const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (diff < 10)   return 'just now';
+    if (diff < 60)   return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+    return `${Math.floor(diff/86400)}d ago`;
+  }
+
+  const _PROTO_CLASS = {
+    SSH:'ftag-sec', HTTPS:'ftag-sec', HTTP:'ftag-web', FTP:'ftag-web',
+    SMTP:'ftag-msg', MQTT:'ftag-msg', POP3:'ftag-msg', IMAP:'ftag-msg',
+    RTSP:'ftag-media', RDP:'ftag-sys', VNC:'ftag-sys',
+    SMB:'ftag-file', NFS:'ftag-file', iSCSI:'ftag-file', rsync:'ftag-file',
+    Telnet:'ftag-warn', Modbus:'ftag-warn', DNS:'ftag-net', Print:'ftag-net',
+  };
+
+  // ── Sparklines ────────────────────────────────────────────────────────────
+  function renderSparkline(svgId, buckets) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !buckets) return;
+    const W = 300, H = 36, n = buckets.length;
+    const bw = Math.max(1, (W - n + 1) / n);
+    svg.innerHTML = buckets.map((pct, i) => {
+      const x = (i * (W / n)).toFixed(1);
+      const w = Math.max(1, bw - 1).toFixed(1);
+      if (pct === null) return `<rect x="${x}" y="0" width="${w}" height="${H}" fill="rgba(255,255,255,.04)" rx="1"/>`;
+      const barH = Math.max(2, (pct / 100) * H);
+      const y = (H - barH).toFixed(1);
+      const fill = pct >= 90 ? '#4caf50' : pct >= 50 ? '#ff9800' : '#e53935';
+      return `<rect x="${x}" y="${y}" width="${w}" height="${barH.toFixed(1)}" fill="${fill}" rx="1"/>`;
+    }).join('');
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  function render(d) {
+    _dev = d;
+    const label = d.name || d.hostname || d.ip;
+
+    // Topbar
+    document.getElementById('tb-name').textContent = label;
+    document.getElementById('tb-ip').textContent   = d.ip;
+    document.title = `Farol — ${label}`;
+    const tbStatus = document.getElementById('tb-status');
+    tbStatus.textContent  = d.status || 'unknown';
+    tbStatus.className    = `status-badge ${d.status === 'up' ? 'up' : d.status === 'down' ? 'down' : 'unknown'}`;
+
+    // Stats strip
+    const ms = d.ping_latency_ms;
+    document.getElementById('si-latency').textContent = ms != null ? `${ms.toFixed(1)} ms` : '—';
+    document.getElementById('si-last').textContent    = _lastSeen(d.last_seen);
+    document.getElementById('si-mac').textContent     = d.mac || '—';
+    document.getElementById('si-vendor').textContent  = d.vendor || '—';
+
+    // Identity
+    document.getElementById('d-ip').textContent       = d.ip;
+    document.getElementById('d-hostname').textContent = d.hostname || '—';
+    document.getElementById('d-mac').textContent      = d.mac || '—';
+    document.getElementById('d-vendor').textContent   = d.vendor || '—';
+    document.getElementById('d-source').textContent   = d.learned_from || '—';
+    document.getElementById('d-lastseen').textContent = _lastSeen(d.last_seen);
+
+    // Name (editable)
+    if (!_editingName) {
+      document.getElementById('d-name-wrap').innerHTML =
+        `<span class="name-view" onclick="startNameEdit()">${esc(d.name || d.hostname || '—')}</span>`;
+    }
+
+    // Status dot
+    const dot = document.getElementById('status-dot');
+    dot.className = `dot ${d.status === 'up' ? 'up' : d.status === 'down' ? 'down' : 'unknown'}`;
+    document.getElementById('status-text').textContent = d.status === 'up' ? 'Online' : d.status === 'down' ? 'Offline' : 'Unknown';
+    document.getElementById('status-latency').textContent = ms != null ? `${ms.toFixed(1)} ms` : '';
+
+    // Uptime bars
+    const u = d.uptime || {};
+    const wins = [{k:'m1',l:'1m'},{k:'h1',l:'1h'},{k:'h24',l:'24h'}];
+    document.getElementById('uptime-bars').innerHTML = wins.map(({k,l}) => {
+      const pct = u[k];
+      if (pct == null) return `<div class="ubar-row"><span class="ubar-lbl">${l}</span><span class="ubar-track"></span><span class="ubar-pct" style="color:var(--muted2)">—</span></div>`;
+      const col = pct >= 90 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      return `<div class="ubar-row"><span class="ubar-lbl">${l}</span><span class="ubar-track"><span class="ubar-fill" style="width:${pct}%;background:${col}"></span></span><span class="ubar-pct" style="color:${col}">${pct}%</span></div>`;
+    }).join('');
+
+    // Sparklines
+    const hist = d.history || {};
+    renderSparkline('spark-h1',  hist.h1);
+    renderSparkline('spark-h24', hist.h24);
+
+    // Ports
+    const ports = d.ports || [];
+    const ps    = d.port_status || {};
+    const portsEl = document.getElementById('ports-wrap');
+    if (ports.length) {
+      portsEl.innerHTML = ports.map(p => {
+        const st = ps[String(p)];
+        const cls = st === true ? 'pup' : st === false ? 'pdown' : 'punk';
+        const label = _PORT_LABEL[p] || '';
+        return `<span class="port-chip ${cls}">${p}${label ? ' · '+label : ''}</span>`;
+      }).join('');
+    } else {
+      portsEl.innerHTML = '<span style="color:var(--muted);font-size:.82rem">No ports monitored</span>';
+    }
+
+    // Features & tags
+    const f = d.features || {};
+    const hasFeatures = f.snmp || f.onvif || (f.protocols && f.protocols.length);
+    document.getElementById('features-card').style.display = hasFeatures ? '' : 'none';
+    if (hasFeatures) {
+      let tags = '';
+      if (f.snmp) {
+        const info = f.snmp_info || {};
+        const tip = [info.sysName, info.sysDescr, info.sysLocation].filter(Boolean).join(' · ').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+        tags += `<span class="ftag ftag-snmp" title="${tip}">SNMP</span>`;
+      }
+      if (f.onvif) tags += `<span class="ftag ftag-onvif">ONVIF</span>`;
+      for (const p of (f.protocols || [])) {
+        tags += `<span class="ftag ${_PROTO_CLASS[p]||'ftag-other'}">${p}</span>`;
+      }
+      document.getElementById('tags-wrap').innerHTML = tags;
+
+      // SNMP detail
+      const snmpDiv = document.getElementById('snmp-detail');
+      if (f.snmp && f.snmp_info) {
+        const si = f.snmp_info;
+        const rows = [
+          {k:'sysName', v:si.sysName}, {k:'sysDescr', v:si.sysDescr}, {k:'sysLocation', v:si.sysLocation}
+        ].filter(r => r.v).map(r => `<div class="snmp-row"><span class="snmp-key">${r.k}</span><span class="snmp-val">${esc(r.v)}</span></div>`).join('');
+        snmpDiv.innerHTML = rows;
+        snmpDiv.style.display = rows ? '' : 'none';
+      } else {
+        snmpDiv.style.display = 'none';
+      }
+    }
+
+    // Monitor controls
+    const mon = d.monitored || false;
+    document.getElementById('mon-track').className = `toggle-track${mon ? ' on' : ''}`;
+    document.getElementById('mon-label').textContent = `Monitor: ${mon ? 'On' : 'Off'}`;
+    const selEl = document.getElementById('alert-sel');
+    selEl.style.display = mon ? '' : 'none';
+    if (mon) {
+      selEl.value = d.alert_mode || 'default';
+    }
+  }
+
+  // Port number → friendly name
+  const _PORT_LABEL = {22:'SSH',80:'HTTP',443:'HTTPS',21:'FTP',23:'Telnet',25:'SMTP',
+    53:'DNS',110:'POP3',143:'IMAP',445:'SMB',502:'Modbus',554:'RTSP',1883:'MQTT',
+    2049:'NFS',3260:'iSCSI',3389:'RDP',5900:'VNC',8080:'HTTP',8443:'HTTPS',9100:'Print'};
+
+  // ── Name edit ─────────────────────────────────────────────────────────────
+  function startNameEdit() {
+    _editingName = true;
+    const current = _dev ? (_dev.name || '') : '';
+    document.getElementById('d-name-wrap').innerHTML =
+      `<input class="name-input" id="name-inp" value="${esc(current)}"
+        onblur="saveName()" onkeydown="if(event.key==='Enter')saveName();if(event.key==='Escape')cancelName()">`;
+    const inp = document.getElementById('name-inp');
+    inp.focus(); inp.select();
+  }
+
+  async function saveName() {
+    const inp = document.getElementById('name-inp');
+    if (!inp) return;
+    const name = inp.value.trim();
+    _editingName = false;
+    await fetch(`/api/devices/${IP}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
+    poll();
+  }
+
+  function cancelName() { _editingName = false; if (_dev) render(_dev); }
+
+  // ── Monitor ───────────────────────────────────────────────────────────────
+  async function toggleMonitor() {
+    if (!_dev) return;
+    const newVal = !_dev.monitored;
+    await fetch(`/api/devices/${IP}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monitored:newVal})});
+    poll();
+  }
+
+  async function saveAlertMode() {
+    const mode = document.getElementById('alert-sel').value;
+    await fetch(`/api/devices/${IP}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({alert_mode:mode})});
+  }
+
+  async function deleteDevice() {
+    if (!confirm(`Remove ${IP} from monitoring?`)) return;
+    await fetch(`/api/devices/${IP}`, {method:'DELETE'});
+    window.location.href = '/';
+  }
+
+  // ── Poll ──────────────────────────────────────────────────────────────────
+  async function poll() {
+    try {
+      const d = await (await fetch(`/api/devices/${IP}`)).json();
+      if (d.error) { window.location.href = '/'; return; }
+      render(d);
+    } catch(_) {}
+  }
+
+  poll();
+  setInterval(poll, 30000);
+</script>
+</body>
+</html>

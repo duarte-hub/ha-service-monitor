@@ -84,6 +84,10 @@
     .name-view:hover { color:var(--primary); }
     .name-input { background:rgba(255,255,255,.07); border:1px solid var(--primary); border-radius:5px; color:var(--text); font-size:.84rem; padding:3px 8px; outline:none; width:140px; font-family:inherit; }
 
+    /* ── Clickable rows ─────────────────────────────────────────────────── */
+    .row-link { cursor:pointer; }
+    .row-link:hover td { background:rgba(3,169,244,.04) !important; }
+
     /* ── Monitor toggle ──────────────────────────────────────────────────── */
     .mon-toggle { display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:.78rem; color:var(--muted); white-space:nowrap; }
     .mon-toggle input { accent-color:var(--primary); cursor:pointer; }
@@ -299,8 +303,6 @@
         <th style="width:28px"></th>
         <th>IP</th>
         <th>Name</th>
-        <th>Vendor / MAC</th>
-        <th>Source</th>
         <th>Last Seen</th>
         <th>Latency</th>
         <th>Uptime</th>
@@ -311,7 +313,7 @@
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="12">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="10">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -492,21 +494,23 @@
     return `<div style="display:flex;flex-direction:column;gap:3px">${toggle}${sel}</div>`;
   }
 
+  function goDevice(ip) { window.location.href = '/device/' + ip; }
+
   function _rowHtml(d, dim) {
     const dimStyle = dim ? ' style="opacity:.3"' : '';
-    return `<tr data-ip="${d.ip}"${dimStyle}>
+    const cls = dim ? '' : ' class="row-link"';
+    const nav = dim ? '' : ` onclick="goDevice('${d.ip}')"`;
+    return `<tr data-ip="${d.ip}"${dimStyle}${cls}${nav}>
       <td>${_statusDot(d)}</td>
       <td><span class="ip-pill">${d.ip}</span></td>
-      <td>${_nameCell(d)}</td>
-      <td class="td-muted">${d.vendor ? `${d.vendor}${d.mac ? ' <span style="opacity:.55">· '+d.mac+'</span>' : ''}` : (d.mac || '—')}</td>
-      <td class="td-muted">${d.learned_from || '—'}</td>
+      <td onclick="event.stopPropagation()">${_nameCell(d)}</td>
       <td class="td-muted">${_lastSeen(d.last_seen)}</td>
       <td>${_latencyCell(d)}</td>
       <td>${_uptimeCell(d)}</td>
-      <td>${_portsCell(d)}</td>
+      <td onclick="event.stopPropagation()">${_portsCell(d)}</td>
       <td>${_tagsCell(d)}</td>
-      <td>${_monitorCell(d)}</td>
-      <td><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
+      <td onclick="event.stopPropagation()">${_monitorCell(d)}</td>
+      <td onclick="event.stopPropagation()"><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
     </tr>`;
   }
 
@@ -534,10 +538,10 @@
     if (!visible.length) {
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML =
-          `<tr class="empty-row"><td colspan="12">No monitored devices yet</td></tr>` +
+          `<tr class="empty-row"><td colspan="10">No monitored devices yet</td></tr>` +
           _devices.map(d => _rowHtml(d, true)).join('');
       } else {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
     } else {
       tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');
