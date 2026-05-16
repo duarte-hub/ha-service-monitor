@@ -68,7 +68,7 @@ class _BufferHandler(logging.Handler):
             _LOG_BUFFER.append({
                 "ts":    datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
                 "level": record.levelname,
-                "src":   record.threadName,
+                "src":   "http" if record.name == "werkzeug" else record.threadName,
                 "msg":   msg,
             })
             if len(_LOG_BUFFER) > _LOG_BUFFER_MAX:

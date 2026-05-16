@@ -86,6 +86,7 @@
     .sc-probe  { color:#b39ddb; }
     .sc-peer   { color:var(--orange); }
     .sc-meraki { color:#42a5f5; }
+    .sc-http   { color:var(--dim); }
     .sc-other  { color:var(--dim); }
 
     /* Message */
@@ -130,6 +131,8 @@
   <button class="btn" id="btn-warn" onclick="toggleLevel('warn')">Warnings</button>
   <button class="btn" id="btn-dbg"  onclick="toggleLevel('debug')">Debug</button>
   <div class="sep"></div>
+  <button class="btn" id="btn-http" onclick="toggleHttp()">HTTP</button>
+  <div class="sep"></div>
   <button class="btn" id="btn-vrb"  onclick="toggleVerbose()">Verbose</button>
   <button class="btn on" id="btn-tail" onclick="toggleTail()">Tail</button>
   <button class="btn" onclick="clearFilters()">Clear</button>
@@ -147,10 +150,11 @@
 <button id="scroll-btn" onclick="scrollBot()">&#8595; Bottom</button>
 
 <script>
-  let _recs    = [];
-  let _tailing = true;
-  let _verbose = false;
-  let _only    = new Set();
+  let _recs     = [];
+  let _tailing  = true;
+  let _verbose  = false;
+  let _only     = new Set();
+  let _hideHttp = true;   // HTTP access logs hidden by default
 
   const wrap     = document.getElementById('log-wrap');
   const filterEl = document.getElementById('filter');
@@ -187,6 +191,7 @@
     'peer-health':        {l:'peer',       c:'sc-peer'},
     'peer-check':         {l:'peer-chk',   c:'sc-peer'},
     'meraki-api-poller':  {l:'meraki',     c:'sc-meraki'},
+    'http':               {l:'http',       c:'sc-http'},
     'MainThread':         {l:'',           c:'sc-other'},
   };
 
@@ -227,6 +232,7 @@
     for (const r of _recs) {
       const lvl = _lvlOf(r);
       if (_only.size && !_only.has(lvl)) continue;
+      if (_hideHttp && r.src === 'http') continue;
       const hay = (r.msg || '') + ' ' + (r.src || '');
       if (ql && !hay.toLowerCase().includes(ql)) continue;
       shown++;
@@ -264,6 +270,12 @@
     render();
   }
 
+  function toggleHttp() {
+    _hideHttp = !_hideHttp;
+    document.getElementById('btn-http').className = 'btn' + (_hideHttp ? '' : ' on');
+    render();
+  }
+
   async function toggleVerbose() {
     _verbose = !_verbose;
     document.getElementById('btn-vrb').className = 'btn' + (_verbose ? ' on-vrb' : '');
@@ -277,9 +289,11 @@
   function clearFilters() {
     filterEl.value = '';
     _only.clear();
+    _hideHttp = true;
     document.getElementById('btn-err').className  = 'btn';
     document.getElementById('btn-warn').className = 'btn';
     document.getElementById('btn-dbg').className  = 'btn';
+    document.getElementById('btn-http').className = 'btn';
     render();
   }
 
