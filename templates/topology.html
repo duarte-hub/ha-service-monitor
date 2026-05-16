@@ -9,7 +9,7 @@
       --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09);
       --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563;
       --primary:#03a9f4; --green:#4caf50; --red:#e53935;
-      --yellow:#ff9800; --purple:#bb86fc;
+      --yellow:#ff9800;
     }
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
@@ -19,27 +19,47 @@
     .topbar { background:var(--primary); color:#fff; padding:0 20px; height:50px;
               display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
     .topbar-left { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.95rem; }
-    .topbar-right { display:flex; gap:16px; align-items:center; font-size:.82rem; }
+    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
     .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; }
     .topbar-right a:hover { color:#fff; }
 
-    .legend { padding:6px 16px; background:var(--card-bg); border-bottom:1px solid var(--border);
-              display:flex; gap:18px; align-items:center; flex-shrink:0; flex-wrap:wrap; font-size:.73rem; color:var(--muted); }
+    .toolbar { padding:5px 14px; background:var(--card-bg); border-bottom:1px solid var(--border);
+               display:flex; gap:10px; align-items:center; flex-shrink:0; }
+    .toolbar input { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:6px;
+                     color:var(--text); font-size:.8rem; padding:4px 10px; outline:none; width:200px; font-family:inherit; }
+    .toolbar input:focus { border-color:var(--primary); }
+    .btn { background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:6px;
+           padding:4px 10px; font-size:.74rem; cursor:pointer; font-family:inherit;
+           transition:color .12s, border-color .12s; }
+    .btn:hover { color:var(--text); border-color:rgba(255,255,255,.22); }
+    #stat { margin-left:auto; font-size:.71rem; color:var(--dim); }
+
+    .legend { padding:5px 14px; background:var(--card-bg); border-bottom:1px solid var(--border);
+              display:flex; gap:16px; align-items:center; flex-shrink:0; font-size:.72rem; color:var(--muted); }
     .leg { display:flex; align-items:center; gap:5px; }
-    .leg-dot { width:10px; height:10px; border-radius:50%; }
-    .leg-sq  { width:10px; height:10px; border-radius:2px; }
-    .leg-dia { width:10px; height:10px; transform:rotate(45deg); border-radius:1px; }
+    .leg-dia { width:9px; height:9px; background:#ff9800; transform:rotate(45deg); border-radius:1px; }
+    .leg-sq  { width:10px; height:8px; background:var(--primary); border-radius:2px; }
+    .leg-dot-g { width:9px; height:9px; background:#4caf50; border-radius:50%; }
+    .leg-dot-r { width:9px; height:9px; background:#e53935; border-radius:50%; }
+    .leg-dot-u { width:9px; height:9px; background:#4b5563; border-radius:50%; }
+    .hint { margin-left:auto; font-size:.68rem; color:var(--dim); }
 
-    #canvas { flex:1; display:block; cursor:grab; }
-    #canvas:active { cursor:grabbing; }
+    #wrap { flex:1; overflow:hidden; cursor:grab; position:relative; }
+    #wrap:active { cursor:grabbing; }
+    #canvas { display:block; }
 
-    /* Tooltip */
-    #tip { position:fixed; background:var(--card-bg); border:1px solid var(--border);
-           border-radius:6px; padding:7px 10px; font-size:.73rem; color:var(--text);
-           pointer-events:none; display:none; z-index:10; max-width:220px; line-height:1.55; }
-    #tip strong { color:#fff; font-size:.78rem; }
-    #tip .tip-row { color:var(--muted); }
-    #tip .tip-row span { color:var(--text); }
+    #tip { position:fixed; background:#1c1c1e; border:1px solid rgba(255,255,255,.13);
+           border-radius:7px; padding:8px 12px; font-size:.73rem; color:var(--text);
+           pointer-events:none; display:none; z-index:20; min-width:160px;
+           box-shadow:0 4px 20px rgba(0,0,0,.5); line-height:1.6; }
+    #tip strong { display:block; font-size:.8rem; color:#fff; margin-bottom:2px; }
+    #tip .tr { color:var(--muted); }
+    #tip .tr span { color:var(--text); }
+    #tip .badge { display:inline-block; border-radius:3px; padding:1px 5px; font-size:.65rem;
+                  font-weight:700; margin-top:3px; }
+    #tip .badge.up   { background:rgba(76,175,80,.2);  color:#4caf50; }
+    #tip .badge.down { background:rgba(229,57,53,.2);  color:#e53935; }
+    #tip .badge.unk  { background:rgba(75,85,99,.3);   color:#9b9b9b; }
   </style>
 </head>
 <body>
@@ -47,181 +67,70 @@
 <div class="topbar">
   <div class="topbar-left">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/>
+      <circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/>
+      <line x1="12" y1="8" x2="5" y2="16" stroke="currentColor" stroke-width="2"/>
+      <line x1="12" y1="8" x2="19" y2="16" stroke="currentColor" stroke-width="2"/>
     </svg>
     Network Topology
   </div>
   <div class="topbar-right">
+    <button class="btn" onclick="fitView()">Fit</button>
     <a href="/">← Dashboard</a>
   </div>
 </div>
 
-<div class="legend">
-  <div class="leg"><div class="leg-dia" style="background:#ff9800"></div> Gateway</div>
-  <div class="leg"><div class="leg-sq"  style="background:#03a9f4"></div> Access Point</div>
-  <div class="leg"><div class="leg-dot" style="background:#4caf50"></div> Device (up)</div>
-  <div class="leg"><div class="leg-dot" style="background:#e53935"></div> Device (down)</div>
-  <div class="leg"><div class="leg-dot" style="background:#4b5563"></div> Device (unknown)</div>
-  <div style="margin-left:auto;color:var(--dim);font-size:.69rem">Scroll to zoom · Drag to pan · Click device to inspect</div>
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Search devices…" oninput="applySearch()">
+  <span id="stat">—</span>
 </div>
 
-<svg id="canvas"></svg>
+<div class="legend">
+  <div class="leg"><div class="leg-dia"></div> Gateway</div>
+  <div class="leg"><div class="leg-sq"></div> Access Point</div>
+  <div class="leg"><div class="leg-dot-g"></div> Up</div>
+  <div class="leg"><div class="leg-dot-r"></div> Down</div>
+  <div class="leg"><div class="leg-dot-u"></div> Unknown</div>
+  <div class="hint">Scroll to zoom · Drag to pan · Click device to inspect</div>
+</div>
+
+<div id="wrap">
+  <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
 <div id="tip"></div>
 
 <script>
-  const svg    = document.getElementById('canvas');
-  const tip    = document.getElementById('tip');
-
   const NS = 'http://www.w3.org/2000/svg';
-  function el(tag, attrs) {
-    const e = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
-    return e;
-  }
+  const wrap   = document.getElementById('wrap');
+  const canvas = document.getElementById('canvas');
+  const tip    = document.getElementById('tip');
+  const search = document.getElementById('search');
+  const stat   = document.getElementById('stat');
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  let nodes = [], edges = [], sim = null;
-  let vx = 0, vy = 0, vz = 1;  // viewport transform
-  let dragNode = null, dragStart = null;
-  let panStart = null, panOrigin = null;
-
-  // ── Colour helpers ─────────────────────────────────────────────────────────
-  function nodeColor(n) {
-    if (n.type === 'gateway') return '#ff9800';
-    if (n.type === 'ap')      return '#03a9f4';
-    if (n.status === 'up')    return '#4caf50';
-    if (n.status === 'down')  return '#e53935';
-    return '#4b5563';
-  }
-
-  // ── SVG layer refs ─────────────────────────────────────────────────────────
-  let gEdge, gNode;
-
-  function initLayers() {
-    gEdge = el('g'); gNode = el('g');
-    svg.appendChild(gEdge); svg.appendChild(gNode);
-  }
-
-  // ── Build DOM ──────────────────────────────────────────────────────────────
-  function buildDOM() {
-    gEdge.innerHTML = ''; gNode.innerHTML = '';
-
-    // Edges
-    for (const e of edges) {
-      const line = el('line', {
-        stroke: 'rgba(255,255,255,.12)',
-        'stroke-width': 1,
-        id: `edge-${e.from}-${e.to}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
-      });
-      gEdge.appendChild(line);
-      e._el = line;
-    }
-
-    // Nodes
-    for (const n of nodes) {
-      const g = el('g', {class:'node', style:'cursor:pointer'});
-      const col = nodeColor(n);
-
-      if (n.type === 'gateway') {
-        // Diamond
-        const d = el('polygon', {
-          points: '0,-18 14,0 0,18 -14,0',
-          fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
-        });
-        g.appendChild(d);
-      } else if (n.type === 'ap') {
-        // Rounded square
-        const r = el('rect', {
-          x:-13, y:-10, width:26, height:20, rx:4,
-          fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
-        });
-        g.appendChild(r);
-      } else {
-        // Circle
-        const c = el('circle', {r: 9, fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9});
-        g.appendChild(c);
-        // Pulse ring for unknown status
-        if (n.status === 'unknown') {
-          const p = el('circle', {r: 9, fill: 'none', stroke: col, 'stroke-width': 1, opacity: .3});
-          g.appendChild(p);
-        }
-      }
-
-      // Label
-      const txt = el('text', {
-        'text-anchor': 'middle', dy: n.type === 'gateway' ? 30 : 24,
-        fill: '#ccc', 'font-size': 10, 'font-family': 'system-ui,sans-serif',
-        'pointer-events': 'none', 'user-select': 'none',
-      });
-      txt.textContent = (n.label || n.id).slice(0, 18);
-      g.appendChild(txt);
-
-      // Events
-      g.addEventListener('mouseenter', ev => showTip(n, ev));
-      g.addEventListener('mousemove',  ev => moveTip(ev));
-      g.addEventListener('mouseleave', hideTip);
-      g.addEventListener('mousedown',  ev => startDragNode(n, ev));
-      if (n.ip) g.addEventListener('click', () => { window.location = `/device/${n.ip}`; });
-
-      gNode.appendChild(g);
-      n._el = g;
-    }
-  }
-
-  // ── Tip ────────────────────────────────────────────────────────────────────
-  function showTip(n, ev) {
-    let html = `<strong>${n.label || n.id}</strong>`;
-    if (n.ip)     html += `<div class="tip-row">IP <span>${n.ip}</span></div>`;
-    if (n.mac)    html += `<div class="tip-row">MAC <span>${n.mac}</span></div>`;
-    if (n.vendor) html += `<div class="tip-row">Vendor <span>${n.vendor}</span></div>`;
-    if (n.status) html += `<div class="tip-row">Status <span>${n.status}</span></div>`;
-    tip.innerHTML = html;
-    tip.style.display = 'block';
-    moveTip(ev);
-  }
-  function moveTip(ev) {
-    tip.style.left = (ev.clientX + 14) + 'px';
-    tip.style.top  = (ev.clientY + 10) + 'px';
-  }
-  function hideTip() { tip.style.display = 'none'; }
-
-  // ── Drag node ─────────────────────────────────────────────────────────────
-  function startDragNode(n, ev) {
-    dragNode = n; dragStart = {x: ev.clientX, y: ev.clientY, nx: n.x, ny: n.y};
-    n.fx = n.x; n.fy = n.y;
-    ev.stopPropagation();
-  }
+  // Viewport state
+  let vx = 0, vy = 0, vz = 1;
+  let panning = false, panStart = null, panOrigin = null;
 
   // ── Pan ────────────────────────────────────────────────────────────────────
-  svg.addEventListener('mousedown', ev => {
-    if (dragNode) return;
-    panStart = {x: ev.clientX, y: ev.clientY};
+  wrap.addEventListener('mousedown', ev => {
+    panning = true;
+    panStart  = {x: ev.clientX, y: ev.clientY};
     panOrigin = {x: vx, y: vy};
   });
   window.addEventListener('mousemove', ev => {
-    if (dragNode && dragStart) {
-      dragNode.x = dragStart.nx + (ev.clientX - dragStart.x) / vz;
-      dragNode.y = dragStart.ny + (ev.clientY - dragStart.y) / vz;
-      dragNode.fx = dragNode.x; dragNode.fy = dragNode.y;
-      draw();
-    } else if (panStart) {
-      vx = panOrigin.x + (ev.clientX - panStart.x);
-      vy = panOrigin.y + (ev.clientY - panStart.y);
-      applyTransform();
-    }
+    if (!panning) return;
+    vx = panOrigin.x + (ev.clientX - panStart.x);
+    vy = panOrigin.y + (ev.clientY - panStart.y);
+    applyTransform();
   });
-  window.addEventListener('mouseup', () => {
-    if (dragNode) { dragNode.fx = undefined; dragNode.fy = undefined; dragNode = null; }
-    panStart = null;
-  });
+  window.addEventListener('mouseup', () => { panning = false; });
 
   // ── Zoom ──────────────────────────────────────────────────────────────────
-  svg.addEventListener('wheel', ev => {
+  wrap.addEventListener('wheel', ev => {
     ev.preventDefault();
-    const rect  = svg.getBoundingClientRect();
+    const rect = wrap.getBoundingClientRect();
     const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
     const factor = ev.deltaY < 0 ? 1.12 : 0.89;
-    const nz = Math.max(0.2, Math.min(4, vz * factor));
+    const nz = Math.max(0.15, Math.min(4, vz * factor));
     vx = mx - (mx - vx) * (nz / vz);
     vy = my - (my - vy) * (nz / vz);
     vz = nz;
@@ -229,132 +138,301 @@
   }, {passive: false});
 
   function applyTransform() {
-    if (gEdge) gEdge.setAttribute('transform', `translate(${vx},${vy}) scale(${vz})`);
-    if (gNode) gNode.setAttribute('transform', `translate(${vx},${vy}) scale(${vz})`);
+    gRoot.setAttribute('transform', `translate(${vx},${vy}) scale(${vz})`);
   }
 
-  // ── Force simulation ───────────────────────────────────────────────────────
-  class Sim {
-    constructor(ns, es) {
-      this.nodes = ns; this.edges = es;
-      this.alpha = 1; this.running = true;
-      for (const n of ns) { n.vx = 0; n.vy = 0; }
-      requestAnimationFrame(() => this.tick());
-    }
-
-    tick() {
-      if (!this.running) return;
-      if (this.alpha < 0.001) { this.running = false; return; }
-      this.alpha *= 0.96;
-
-      const W = svg.clientWidth  || 800;
-      const H = svg.clientHeight || 600;
-      const cx = W / 2, cy = H / 2;
-
-      // Reset forces
-      for (const n of this.nodes) { n.fx2 = 0; n.fy2 = 0; }
-
-      // Center gravity
-      for (const n of this.nodes) {
-        n.fx2 += (cx - n.x) * 0.02 * this.alpha;
-        n.fy2 += (cy - n.y) * 0.02 * this.alpha;
-      }
-
-      // Repulsion (O(n²) — fine for <300 nodes)
-      for (let i = 0; i < this.nodes.length; i++) {
-        for (let j = i + 1; j < this.nodes.length; j++) {
-          const a = this.nodes[i], b = this.nodes[j];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const d2 = dx * dx + dy * dy + 1;
-          const strength = 4000 / d2;
-          const fx = dx * strength, fy = dy * strength;
-          a.fx2 -= fx; a.fy2 -= fy;
-          b.fx2 += fx; b.fy2 += fy;
-        }
-      }
-
-      // Attraction along edges
-      const nodeMap = Object.fromEntries(this.nodes.map(n => [n.id, n]));
-      for (const e of this.edges) {
-        const a = nodeMap[e.from], b = nodeMap[e.to];
-        if (!a || !b) continue;
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-        const ideal = 120;
-        const f = (d - ideal) * 0.04 * this.alpha;
-        const fx = (dx / d) * f, fy = (dy / d) * f;
-        a.fx2 += fx; a.fy2 += fy;
-        b.fx2 -= fx; b.fy2 -= fy;
-      }
-
-      // Integrate
-      for (const n of this.nodes) {
-        if (n.fx !== undefined) { n.vx = 0; n.vy = 0; continue; }
-        n.vx = (n.vx + n.fx2) * 0.7;
-        n.vy = (n.vy + n.fy2) * 0.7;
-        n.x += n.vx;
-        n.y += n.vy;
-      }
-
-      draw();
-      requestAnimationFrame(() => this.tick());
-    }
+  function fitView() {
+    if (!_bounds) return;
+    const {minX, minY, maxX, maxY} = _bounds;
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    const pad = 60;
+    const scaleX = (W - pad * 2) / (maxX - minX + 1);
+    const scaleY = (H - pad * 2) / (maxY - minY + 1);
+    vz = Math.min(scaleX, scaleY, 2);
+    vx = pad + (W - pad * 2 - (maxX - minX) * vz) / 2 - minX * vz;
+    vy = pad + (H - pad * 2 - (maxY - minY) * vz) / 2 - minY * vz;
+    applyTransform();
   }
 
-  // ── Draw ──────────────────────────────────────────────────────────────────
-  function draw() {
+  // ── SVG helpers ────────────────────────────────────────────────────────────
+  let gRoot, gEdges, gNodes;
+
+  function svgEl(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function svgTxt(text, attrs, parent) {
+    const e = svgEl('text', attrs, parent);
+    e.textContent = text;
+    return e;
+  }
+
+  // ── Colour helpers ─────────────────────────────────────────────────────────
+  function devColor(n) {
+    if (n.status === 'up')   return '#4caf50';
+    if (n.status === 'down') return '#e53935';
+    return '#4b5563';
+  }
+
+  // ── Layout constants ───────────────────────────────────────────────────────
+  const DEV_W    = 64;   // horizontal spacing between device centres
+  const AP_GAP   = 48;   // extra gap between AP groups
+  const GW_Y     = 80;
+  const AP_Y     = 220;
+  const DEV_Y    = 370;
+  const UNCON_Y  = 370;  // unconnected devices same tier
+
+  // ── Data ───────────────────────────────────────────────────────────────────
+  let _nodes = [], _edges = [], _bounds = null;
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  function computeLayout(nodes, edges) {
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+    // Build parent→children map
+    const children = {};
     for (const e of edges) {
-      if (!e._el) continue;
+      if (!children[e.from]) children[e.from] = [];
+      children[e.from].push(e.to);
+    }
+
+    const gateways  = nodes.filter(n => n.type === 'gateway');
+    const aps       = nodes.filter(n => n.type === 'ap');
+    const allDevIds = new Set(nodes.filter(n => n.type === 'device').map(n => n.id));
+
+    // APs' device children
+    const apDevs = {};
+    for (const ap of aps) {
+      apDevs[ap.id] = (children[ap.id] || []).map(id => nodeMap[id]).filter(n => n && n.type === 'device');
+    }
+
+    // Unconnected devices
+    const connectedIds = new Set(aps.flatMap(ap => apDevs[ap.id].map(n => n.id)));
+    const unconnected  = nodes.filter(n => n.type === 'device' && !connectedIds.has(n.id));
+
+    let x = 60;
+
+    // Place AP groups
+    for (const ap of aps) {
+      const devs = apDevs[ap.id];
+      const groupW = Math.max(devs.length, 1) * DEV_W;
+
+      devs.forEach((d, i) => {
+        d.x = x + i * DEV_W;
+        d.y = DEV_Y;
+      });
+
+      ap.x = devs.length ? x + (groupW - DEV_W) / 2 : x;
+      ap.y = AP_Y;
+      x   += groupW + AP_GAP;
+    }
+
+    // Unconnected devices (spread at same tier as devices, after AP groups)
+    unconnected.forEach((d, i) => {
+      d.x = x + i * DEV_W;
+      d.y = UNCON_Y;
+    });
+    if (unconnected.length) x += unconnected.length * DEV_W + AP_GAP;
+
+    // Gateways centred above everything
+    const totalW = x - 60;
+    gateways.forEach((gw, i) => {
+      gw.x = 60 + totalW / 2 + (i - (gateways.length - 1) / 2) * 100;
+      gw.y = aps.length ? GW_Y : (unconnected.length ? GW_Y : GW_Y);
+    });
+
+    // No APs at all? skip AP tier, place devices at AP_Y instead
+    if (!aps.length) {
+      for (const d of unconnected) d.y = AP_Y;
+    }
+
+    // Bounding box
+    const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+    return {
+      minX: Math.min(...xs) - 40,
+      minY: Math.min(...ys) - 40,
+      maxX: Math.max(...xs) + 40,
+      maxY: Math.max(...ys) + 60,
+    };
+  }
+
+  // ── Draw ───────────────────────────────────────────────────────────────────
+  let _nodeEls = {};  // id → DOM group for highlight
+
+  function draw(nodes, edges) {
+    canvas.innerHTML = '';
+    _nodeEls = {};
+
+    // Defs
+    const defs = svgEl('defs', {}, canvas);
+    // Gradient for edges
+    svgEl('marker', {
+      id:'arr', markerWidth:6, markerHeight:6,
+      refX:5, refY:3, orient:'auto',
+    }, defs).innerHTML = `<path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,.18)"/>`;
+
+    gRoot  = svgEl('g', {}, canvas);
+    gEdges = svgEl('g', {}, gRoot);
+    gNodes = svgEl('g', {}, gRoot);
+
+    const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+    // Tier labels (background, low-opacity)
+    const hasAps = nodes.some(n => n.type === 'ap');
+    if (hasAps) {
+      const xs = nodes.map(n => n.x);
+      const minX = Math.min(...xs) - 30, maxX = Math.max(...xs) + 30;
+      [
+        {y: GW_Y - 35,  label: 'Gateway'},
+        {y: AP_Y - 35,  label: 'Access Points'},
+        {y: DEV_Y - 35, label: 'Devices'},
+      ].forEach(({y, label}) => {
+        svgTxt(label, {
+          x: minX, y,
+          fill: 'rgba(255,255,255,.12)', 'font-size': 11,
+          'font-family': 'system-ui,sans-serif', 'font-weight': 600,
+          'text-transform': 'uppercase', 'letter-spacing': '.08em',
+          'user-select': 'none',
+        }, gEdges);
+        svgEl('line', {
+          x1: minX + label.length * 6.8 + 8, y1: y - 4,
+          x2: maxX, y2: y - 4,
+          stroke: 'rgba(255,255,255,.06)', 'stroke-width': 1,
+        }, gEdges);
+      });
+    }
+
+    // Edges
+    for (const e of edges) {
       const a = nodeMap[e.from], b = nodeMap[e.to];
       if (!a || !b) continue;
-      e._el.setAttribute('x1', a.x); e._el.setAttribute('y1', a.y);
-      e._el.setAttribute('x2', b.x); e._el.setAttribute('y2', b.y);
+      const cpY = (a.y + b.y) / 2;
+      svgEl('path', {
+        d: `M${a.x},${a.y} C${a.x},${cpY} ${b.x},${cpY} ${b.x},${b.y}`,
+        fill: 'none',
+        stroke: 'rgba(255,255,255,.1)',
+        'stroke-width': 1.5,
+      }, gEdges);
     }
+
+    // Nodes
     for (const n of nodes) {
-      if (!n._el) continue;
-      n._el.setAttribute('transform', `translate(${n.x},${n.y})`);
+      const g = svgEl('g', {
+        transform: `translate(${n.x},${n.y})`,
+        style: n.ip ? 'cursor:pointer' : '',
+      }, gNodes);
+      _nodeEls[n.id] = g;
+
+      if (n.type === 'gateway') {
+        svgEl('polygon', {
+          points: '0,-20 16,0 0,20 -16,0',
+          fill: '#ff9800', stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
+        }, g);
+      } else if (n.type === 'ap') {
+        const devCount = edges.filter(e => e.from === n.id).length;
+        svgEl('rect', {
+          x:-18, y:-11, width:36, height:22, rx:5,
+          fill: '#03a9f4', stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
+        }, g);
+        if (devCount > 0) {
+          const badge = svgEl('g', {transform: 'translate(14,-12)'}, g);
+          svgEl('circle', {r: 9, fill: '#1c1c1e', stroke: '#03a9f4', 'stroke-width': 1.5}, badge);
+          svgTxt(String(devCount), {
+            'text-anchor': 'middle', dy: '0.35em',
+            fill: '#03a9f4', 'font-size': 9, 'font-weight': '700',
+            'font-family': 'system-ui,sans-serif', 'user-select': 'none',
+          }, badge);
+        }
+      } else {
+        const col = devColor(n);
+        svgEl('circle', {r: 10, fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9}, g);
+      }
+
+      // Label
+      const rawLabel = (n.label || n.id).replace(/^ap:/, '');
+      const label = rawLabel.length > 16 ? rawLabel.slice(0, 15) + '…' : rawLabel;
+      svgTxt(label, {
+        'text-anchor': 'middle',
+        dy: n.type === 'gateway' ? 34 : n.type === 'ap' ? 28 : 26,
+        fill: '#bbb', 'font-size': 10,
+        'font-family': 'system-ui,sans-serif',
+        'pointer-events': 'none', 'user-select': 'none',
+      }, g);
+
+      // Events
+      g.addEventListener('mouseenter', ev => showTip(n, ev));
+      g.addEventListener('mousemove',  ev => moveTip(ev));
+      g.addEventListener('mouseleave', hideTip);
+      if (n.ip) g.addEventListener('click', ev => {
+        // only navigate if we didn't just pan
+        if (!panning) window.location = `/device/${n.ip}`;
+      });
     }
   }
 
-  // ── Load & init ────────────────────────────────────────────────────────────
-  async function load() {
-    const data = await (await fetch('/api/topology')).json();
-    nodes = data.nodes || [];
-    edges = data.edges || [];
-
-    const W = svg.clientWidth  || 800;
-    const H = svg.clientHeight || 600;
-
-    // Seed positions: gateways at center, APs in ring, devices in outer ring
-    const gws  = nodes.filter(n => n.type === 'gateway');
-    const aps  = nodes.filter(n => n.type === 'ap');
-    const devs = nodes.filter(n => n.type === 'device');
-
-    const cx = W / 2, cy = H / 2;
-
-    gws.forEach((n, i) => {
-      n.x = cx + (i - (gws.length - 1) / 2) * 80;
-      n.y = cy;
-    });
-    aps.forEach((n, i) => {
-      const angle = (2 * Math.PI * i) / Math.max(aps.length, 1) - Math.PI / 2;
-      n.x = cx + Math.cos(angle) * 160;
-      n.y = cy + Math.sin(angle) * 120;
-    });
-    devs.forEach((n, i) => {
-      const angle = (2 * Math.PI * i) / Math.max(devs.length, 1) - Math.PI / 2;
-      n.x = cx + Math.cos(angle) * 280;
-      n.y = cy + Math.sin(angle) * 220;
-    });
-
-    initLayers();
-    buildDOM();
-    applyTransform();
-    sim = new Sim(nodes, edges);
+  // ── Search highlight ───────────────────────────────────────────────────────
+  function applySearch() {
+    const q = search.value.trim().toLowerCase();
+    let matches = 0;
+    for (const n of _nodes) {
+      const hay = [(n.label || ''), (n.ip || ''), (n.vendor || ''), (n.mac || '')].join(' ').toLowerCase();
+      const hit = !q || hay.includes(q);
+      const el = _nodeEls[n.id];
+      if (!el) continue;
+      el.style.opacity = hit ? '' : '0.15';
+      if (hit && q) matches++;
+    }
+    if (q) stat.textContent = `${matches} match${matches !== 1 ? 'es' : ''}`;
+    else stat.textContent = `${_nodes.filter(n => n.type === 'device').length} devices`;
   }
 
-  load();
+  // ── Tooltip ────────────────────────────────────────────────────────────────
+  function showTip(n, ev) {
+    const label = (n.label || n.id).replace(/^ap:/, '');
+    let html = `<strong>${label}</strong>`;
+    if (n.ip)     html += `<div class="tr">IP <span>${n.ip}</span></div>`;
+    if (n.mac)    html += `<div class="tr">MAC <span>${n.mac}</span></div>`;
+    if (n.vendor) html += `<div class="tr">Vendor <span>${n.vendor}</span></div>`;
+    if (n.status) {
+      const cls = n.status === 'up' ? 'up' : n.status === 'down' ? 'down' : 'unk';
+      html += `<span class="badge ${cls}">${n.status}</span>`;
+    }
+    if (n.type === 'ap') {
+      const cnt = _edges.filter(e => e.from === n.id).length;
+      html += `<div class="tr">${cnt} device${cnt !== 1 ? 's' : ''} connected</div>`;
+    }
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    moveTip(ev);
+  }
+  function moveTip(ev) {
+    const tx = ev.clientX + 14, ty = ev.clientY + 10;
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(tx, window.innerWidth  - r.width  - 8) + 'px';
+    tip.style.top  = Math.min(ty, window.innerHeight - r.height - 8) + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  async function init() {
+    const data  = await (await fetch('/api/topology')).json();
+    _nodes = data.nodes || [];
+    _edges = data.edges || [];
+    _bounds = computeLayout(_nodes, _edges);
+
+    // Set SVG size to bounding box (large enough to draw; viewport clips it)
+    canvas.setAttribute('width',  _bounds.maxX + 60);
+    canvas.setAttribute('height', _bounds.maxY + 60);
+
+    draw(_nodes, _edges);
+    fitView();
+    applySearch();
+    stat.textContent = `${_nodes.filter(n => n.type === 'device').length} devices`;
+  }
+
+  init();
 </script>
 </body>
 </html>
