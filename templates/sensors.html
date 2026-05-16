@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farol — Sensors</title>
+  <style>
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09); --border2:rgba(225,225,225,.05);
+      --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563; --muted2:#6b7280;
+      --primary:#03a9f4; --green:#4caf50; --red:#e53935; --yellow:#ff9800;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+           background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; }
+
+    /* ── Topbar ── */
+    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:50px;
+              display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .topbar-left { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.95rem; }
+    .topbar-right { display:flex; gap:16px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; }
+    .topbar-right a:hover { color:#fff; }
+
+    /* ── Toolbar ── */
+    .toolbar { padding:7px 14px; background:var(--card-bg); border-bottom:1px solid var(--border);
+               display:flex; gap:6px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
+    .filter-wrap { position:relative; min-width:160px; max-width:260px; flex:1; }
+    .filter-wrap svg { position:absolute; left:8px; top:50%; transform:translateY(-50%); pointer-events:none; }
+    #filter { width:100%; background:rgba(255,255,255,.05); border:1px solid var(--border);
+              border-radius:6px; color:var(--text); font-size:.8rem; padding:5px 8px 5px 28px;
+              outline:none; font-family:inherit; }
+    #filter:focus { border-color:var(--primary); }
+    .sep { width:1px; height:18px; background:var(--border); flex-shrink:0; }
+    .btn { background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:6px;
+           padding:4px 10px; font-size:.74rem; cursor:pointer; white-space:nowrap; font-family:inherit;
+           transition:color .12s, border-color .12s, background .12s; }
+    .btn:hover { color:var(--text); border-color:rgba(255,255,255,.22); }
+    .btn.on { background:var(--primary); border-color:var(--primary); color:#fff; }
+    #stat { margin-left:auto; font-size:.71rem; color:var(--dim); white-space:nowrap; }
+
+    /* ── Content ── */
+    .content { padding:16px; flex:1; }
+
+    /* ── Sensor grid ── */
+    .sensor-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px,1fr)); gap:12px; }
+
+    /* ── Sensor card ── */
+    .sensor-card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+                   padding:14px 14px 10px; display:flex; flex-direction:column; gap:3px;
+                   transition:border-color .15s; }
+    .sensor-card:hover { border-color:rgba(255,255,255,.18); }
+    .sc-name { font-size:.62rem; color:var(--muted); text-transform:uppercase; letter-spacing:.07em;
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sc-val  { font-size:1.55rem; font-weight:700; font-family:'SF Mono','Fira Code',monospace;
+               line-height:1.1; margin-top:2px; }
+    .sc-unit { font-size:.65em; font-weight:400; margin-left:4px; opacity:.6; }
+    .sc-chart { width:100%; height:48px; display:block; border-radius:4px;
+                background:rgba(255,255,255,.025); margin:8px 0 3px; }
+    .sc-footer { display:flex; justify-content:space-between; align-items:center; margin-top:1px; }
+    .sc-range { font-size:.6rem; color:var(--dim); font-family:'SF Mono','Fira Code',monospace; }
+    .sc-age   { font-size:.6rem; color:var(--dim); }
+
+    /* ── Empty / loading states ── */
+    .empty { text-align:center; padding:60px 20px; color:var(--muted); font-size:.9rem; }
+    .loading { text-align:center; padding:40px 20px; color:var(--dim); font-size:.8rem; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3.5 18.5l6-6 4 4L22 6.92M22 6.92H16M22 6.92V13"/>
+    </svg>
+    Sensors
+  </div>
+  <div class="topbar-right">
+    <span id="stat">—</span>
+    <a href="/config">Settings</a>
+    <a href="/">← Dashboard</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="filter-wrap">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--dim)">
+      <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+    </svg>
+    <input type="text" id="filter" placeholder="Search sensors…" oninput="applyFilters()">
+  </div>
+  <div class="sep"></div>
+  <button class="btn on"  id="btn-all"  onclick="setClass('')">All</button>
+  <button class="btn"     id="btn-temp" onclick="setClass('temperature')">Temp</button>
+  <button class="btn"     id="btn-hum"  onclick="setClass('humidity')">Humidity</button>
+  <button class="btn"     id="btn-pow"  onclick="setClass('power')">Power</button>
+  <button class="btn"     id="btn-ene"  onclick="setClass('energy')">Energy</button>
+  <button class="btn"     id="btn-oth"  onclick="setClass('_other')">Other</button>
+</div>
+
+<div class="content">
+  <div id="grid" class="sensor-grid"></div>
+  <div id="empty" class="empty" style="display:none">No sensors found.<br><small style="color:var(--dim)">Sensors with a numeric state and state_class set in HA will appear here.</small></div>
+  <div id="loading" class="loading">Loading…</div>
+</div>
+
+<script>
+  const KNOWN_CLASSES = ['temperature','humidity','power','energy'];
+  const DC_COLOR = {
+    temperature:    '#ff7043',
+    humidity:       '#42a5f5',
+    power:          '#ffca28',
+    energy:         '#ffa726',
+    voltage:        '#ab47bc',
+    current:        '#26c6da',
+    illuminance:    '#fff59d',
+    battery:        '#66bb6a',
+    pressure:       '#7e57c2',
+    speed:          '#26a69a',
+    carbon_dioxide: '#ef9a9a',
+    pm25:           '#ef9a9a',
+    gas:            '#ff7043',
+    signal_strength:'#4fc3f7',
+    frequency:      '#b39ddb',
+    monetary:       '#a5d6a7',
+  };
+  const DEFAULT_COLOR = '#4fc3f7';
+
+  let _sensors = [];
+  let _history = {};
+  let _activeClass = '';
+
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function _ago(iso) {
+    if (!iso) return '';
+    const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (diff < 10)    return 'just now';
+    if (diff < 60)    return `${diff}s ago`;
+    if (diff < 3600)  return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+    return `${Math.floor(diff/86400)}d ago`;
+  }
+
+  function _color(dc) { return DC_COLOR[dc] || DEFAULT_COLOR; }
+
+  function _chartId(eid) { return 'chart-' + eid.replace(/[^a-z0-9]/gi, '-'); }
+  function _mmId(eid)    { return 'mm-'    + eid.replace(/[^a-z0-9]/gi, '-'); }
+
+  // ── SVG chart with min/max band + mean line ────────────────────────────────
+  function renderSensorChart(svgId, buckets, color) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !buckets) return;
+    const W = 300, H = 48, pad = 4;
+    const n = buckets.length;
+
+    const valid = buckets.filter(Boolean);
+    if (!valid.length) {
+      svg.innerHTML = `<text x="150" y="27" text-anchor="middle" fill="rgba(255,255,255,.15)" font-size="9" font-family="monospace">no history</text>`;
+      return;
+    }
+
+    const means = valid.map(b => b.mean).filter(v => v != null);
+    const mins  = valid.map(b => b.min ).filter(v => v != null);
+    const maxs  = valid.map(b => b.max ).filter(v => v != null);
+    const lo = Math.min(...(mins.length ? mins : means));
+    const hi = Math.max(...(maxs.length ? maxs : means));
+    const range = hi - lo || 1;
+
+    const xOf = i  => (i + 0.5) * W / n;
+    const yOf = v  => H - pad - (v - lo) / range * (H - pad * 2);
+
+    const gid = svgId.replace(/[^a-z0-9]/gi, '') + 'g';
+    let html = `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity=".4"/>
+      <stop offset="100%" stop-color="${color}" stop-opacity=".04"/>
+    </linearGradient></defs>`;
+
+    // Min-max band
+    if (mins.length && maxs.length) {
+      const top = [], bot = [];
+      buckets.forEach((b, i) => {
+        if (!b || b.max == null || b.min == null) return;
+        top.push([xOf(i), yOf(b.max)]);
+        bot.push([xOf(i), yOf(b.min)]);
+      });
+      if (top.length > 1) {
+        const poly = [...top, ...[...bot].reverse()].map(([x,y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+        html += `<polygon points="${poly}" fill="${color}" fill-opacity=".15"/>`;
+      }
+    }
+
+    // Mean line (split on nulls)
+    const segs = []; let cur = [];
+    buckets.forEach((b, i) => {
+      if (!b || b.mean == null) { if (cur.length) { segs.push(cur); cur = []; } }
+      else cur.push([xOf(i), yOf(b.mean)]);
+    });
+    if (cur.length) segs.push(cur);
+
+    for (const s of segs) {
+      if (s.length < 2) continue;
+      const pts  = s.map(([x,y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+      const area = `${s[0][0].toFixed(1)},${H} ${pts} ${s[s.length-1][0].toFixed(1)},${H}`;
+      html += `<polygon points="${area}" fill="url(#${gid})"/>`;
+      html += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+
+    svg.innerHTML = html;
+  }
+
+  function _rangeLabel(eid) {
+    const h = _history[eid];
+    if (!h) return '';
+    const valid = h.filter(Boolean);
+    if (!valid.length) return '';
+    const mins = valid.map(b => b.min).filter(v => v != null);
+    const maxs = valid.map(b => b.max).filter(v => v != null);
+    if (!mins.length) return '';
+    const lo = Math.min(...mins), hi = Math.max(...maxs);
+    return `${lo} – ${hi}`;
+  }
+
+  // ── Render cards ──────────────────────────────────────────────────────────
+  function renderCards() {
+    const q   = document.getElementById('filter').value.trim().toLowerCase();
+    const grid = document.getElementById('grid');
+    let shown = 0;
+
+    grid.innerHTML = _sensors.map(s => {
+      if (_activeClass === '_other' && KNOWN_CLASSES.includes(s.device_class)) return '';
+      if (_activeClass && _activeClass !== '_other' && s.device_class !== _activeClass) return '';
+      if (q && !s.name.toLowerCase().includes(q) && !s.entity_id.toLowerCase().includes(q)) return '';
+      shown++;
+      const color = _color(s.device_class);
+      const cid   = _chartId(s.entity_id);
+      const mid   = _mmId(s.entity_id);
+      return `
+        <div class="sensor-card" data-class="${s.device_class}" data-id="${s.entity_id}">
+          <div class="sc-name" title="${esc(s.entity_id)}">${esc(s.name)}</div>
+          <div class="sc-val" style="color:${color}">${esc(s.state)}<span class="sc-unit">${esc(s.unit)}</span></div>
+          <svg class="sc-chart" id="${cid}" viewBox="0 0 300 48" preserveAspectRatio="none"></svg>
+          <div class="sc-footer">
+            <span class="sc-range" id="${mid}"></span>
+            <span class="sc-age">${_ago(s.last_changed)}</span>
+          </div>
+        </div>`;
+    }).join('');
+
+    document.getElementById('empty').style.display   = (shown === 0 && _sensors.length > 0) ? '' : 'none';
+    document.getElementById('stat').textContent = shown === _sensors.length
+      ? `${_sensors.length} sensors`
+      : `${shown} / ${_sensors.length}`;
+
+    // Render any already-loaded history
+    for (const s of _sensors) {
+      if (_history[s.entity_id]) {
+        renderSensorChart(_chartId(s.entity_id), _history[s.entity_id], _color(s.device_class));
+        const mm = document.getElementById(_mmId(s.entity_id));
+        if (mm) mm.textContent = _rangeLabel(s.entity_id);
+      }
+    }
+  }
+
+  // ── Filters ───────────────────────────────────────────────────────────────
+  function setClass(cls) {
+    _activeClass = cls;
+    ['btn-all','btn-temp','btn-hum','btn-pow','btn-ene','btn-oth'].forEach(id => {
+      const m = {
+        'btn-all':'', 'btn-temp':'temperature', 'btn-hum':'humidity',
+        'btn-pow':'power', 'btn-ene':'energy', 'btn-oth':'_other'
+      };
+      document.getElementById(id).className = 'btn' + (m[id] === cls ? ' on' : '');
+    });
+    renderCards();
+  }
+
+  function applyFilters() { renderCards(); }
+
+  // ── Load history in batches ───────────────────────────────────────────────
+  async function loadHistory(sensors) {
+    const BATCH = 20;
+    for (let i = 0; i < sensors.length; i += BATCH) {
+      const batch = sensors.slice(i, i + BATCH);
+      const ids   = batch.map(s => s.entity_id).join(',');
+      try {
+        const d = await (await fetch(`/api/sensors/history?ids=${encodeURIComponent(ids)}&hours=24`)).json();
+        if (d.history) {
+          Object.assign(_history, d.history);
+          // Render charts as each batch lands
+          for (const s of batch) {
+            if (_history[s.entity_id]) {
+              renderSensorChart(_chartId(s.entity_id), _history[s.entity_id], _color(s.device_class));
+              const mm = document.getElementById(_mmId(s.entity_id));
+              if (mm) mm.textContent = _rangeLabel(s.entity_id);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ── Poll ──────────────────────────────────────────────────────────────────
+  async function poll() {
+    try {
+      const d = await (await fetch('/api/sensors')).json();
+      if (d.error) {
+        document.getElementById('loading').textContent = `HA error: ${d.error}`;
+        return;
+      }
+      _sensors = d.sensors || [];
+      document.getElementById('loading').style.display = 'none';
+      if (!_sensors.length) {
+        document.getElementById('empty').style.display = '';
+        document.getElementById('stat').textContent    = '0 sensors';
+        return;
+      }
+      renderCards();
+      await loadHistory(_sensors);
+    } catch(e) {
+      document.getElementById('loading').textContent = 'Failed to load sensors';
+    }
+  }
+
+  poll();
+  setInterval(async () => {
+    try {
+      const d = await (await fetch('/api/sensors')).json();
+      if (!d.sensors) return;
+      _sensors = d.sensors;
+      // Update values in existing cards without full re-render
+      for (const s of _sensors) {
+        const card = document.querySelector(`[data-id="${s.entity_id}"] .sc-val`);
+        if (card) {
+          const color = _color(s.device_class);
+          card.innerHTML = `${esc(s.state)}<span class="sc-unit">${esc(s.unit)}</span>`;
+          card.style.color = color;
+        }
+        const age = document.querySelector(`[data-id="${s.entity_id}"] .sc-age`);
+        if (age) age.textContent = _ago(s.last_changed);
+      }
+      // Reload history periodically
+    } catch(_) {}
+  }, 60000);
+</script>
+</body>
+</html>

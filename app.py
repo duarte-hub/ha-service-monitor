@@ -1519,6 +1519,143 @@ def ha_get(path: str, timeout: int = 10):
     return resp.json()
 
 
+def ha_post(path: str, body: dict, timeout: int = 15):
+    """POST to the HA REST API."""
+    url = f"{HA_URL}/api/{path}"
+    resp = requests.post(url, headers=ha_headers(), json=body, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _ha_discover_sensors() -> list[dict]:
+    """Discover numeric HA sensor entities that have long-term statistics."""
+    try:
+        states = ha_get("states", timeout=15)
+    except Exception as e:
+        log.warning("HA sensor discovery failed: %s", e)
+        return []
+    sensors = []
+    for s in states:
+        eid = s.get("entity_id", "")
+        if not eid.startswith("sensor."):
+            continue
+        state_val = s.get("state", "")
+        try:
+            float(state_val)
+        except (ValueError, TypeError):
+            continue
+        attrs = s.get("attributes", {})
+        if attrs.get("state_class") not in ("measurement", "total_increasing", "total"):
+            continue
+        sensors.append({
+            "entity_id":    eid,
+            "name":         attrs.get("friendly_name") or eid,
+            "state":        state_val,
+            "unit":         attrs.get("unit_of_measurement") or "",
+            "device_class": attrs.get("device_class") or "",
+            "last_changed": s.get("last_changed", ""),
+        })
+    return sorted(sensors, key=lambda x: x["name"].lower())
+
+
+def _ha_sensor_history(entity_ids: list[str], hours: int = 24) -> dict[str, list]:
+    """
+    Fetch hourly bucketed sensor data for the last `hours` hours.
+    Returns {entity_id: [{"mean": v, "min": v, "max": v} | None, ...]} (one entry per hour).
+    Uses statistics_during_period first; falls back to history/period for gaps.
+    """
+    if not entity_ids:
+        return {}
+
+    now   = datetime.now(timezone.utc)
+    start = now - timedelta(hours=hours)
+    start_iso = start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    result: dict[str, list] = {}
+    missing = list(entity_ids)
+
+    # ── Statistics API (pre-bucketed into hourly bins) ────────────────────────
+    try:
+        stats = ha_post("statistics_during_period", {
+            "start_time":    start_iso,
+            "statistic_ids": entity_ids,
+            "period":        "hour",
+            "types":         ["mean", "min", "max"],
+        }, timeout=20)
+        if isinstance(stats, dict):
+            for eid, records in stats.items():
+                if not records:
+                    continue
+                buckets: list = [None] * hours
+                for rec in records:
+                    try:
+                        rec_start = datetime.fromisoformat(
+                            rec["start"].replace("Z", "+00:00")
+                        )
+                        age_h = (now - rec_start).total_seconds() / 3600
+                        idx = hours - 1 - int(age_h)
+                        if 0 <= idx < hours:
+                            buckets[idx] = {
+                                "mean": rec.get("mean"),
+                                "min":  rec.get("min"),
+                                "max":  rec.get("max"),
+                            }
+                    except Exception:
+                        pass
+                result[eid] = buckets
+                if eid in missing:
+                    missing.remove(eid)
+    except Exception as e:
+        log.debug("HA statistics_during_period failed: %s", e)
+
+    # ── History API fallback ───────────────────────────────────────────────────
+    if missing:
+        try:
+            path = (
+                f"history/period/{start_iso}"
+                f"?filter_entity_id={','.join(missing)}"
+                "&minimal_response=true&no_attributes=true"
+            )
+            history = ha_get(path, timeout=20)
+            if isinstance(history, list):
+                for entity_history in history:
+                    if not entity_history:
+                        continue
+                    eid = entity_history[0].get("entity_id", "")
+                    if not eid:
+                        continue
+                    samples: list[tuple[float, float]] = []
+                    for item in entity_history:
+                        try:
+                            ts_raw = item.get("last_changed") or item.get("lu", "")
+                            if isinstance(ts_raw, (int, float)):
+                                ts = float(ts_raw)
+                            elif ts_raw:
+                                ts = datetime.fromisoformat(
+                                    ts_raw.replace("Z", "+00:00")
+                                ).timestamp()
+                            else:
+                                continue
+                            samples.append((ts, float(item.get("state", ""))))
+                        except (ValueError, TypeError):
+                            pass
+                    buckets = []
+                    for i in range(hours):
+                        t_end   = now.timestamp() - (hours - 1 - i) * 3600
+                        t_start = t_end - 3600
+                        vals = [v for t, v in samples if t_start <= t < t_end]
+                        if vals:
+                            buckets.append({"mean": round(sum(vals)/len(vals), 3),
+                                            "min":  round(min(vals), 3),
+                                            "max":  round(max(vals), 3)})
+                        else:
+                            buckets.append(None)
+                    result[eid] = buckets
+        except Exception as e:
+            log.debug("HA history/period fallback failed: %s", e)
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Monitoring checks
 # ---------------------------------------------------------------------------
@@ -2528,6 +2665,34 @@ def api_config():
     safe = {k: ("••••••" if _CONFIG_FIELDS[k].get("secret") and v else v)
             for k, v in _runtime_config.items() if k in _CONFIG_FIELDS}
     return jsonify(safe)
+
+
+@app.route("/sensors")
+def sensors_page():
+    return render_template("sensors.html", version=VERSION)
+
+
+@app.route("/api/sensors")
+def api_sensors():
+    try:
+        sensors = _ha_discover_sensors()
+    except Exception as e:
+        return jsonify({"error": str(e), "sensors": []}), 200
+    return jsonify({"sensors": sensors})
+
+
+@app.route("/api/sensors/history")
+def api_sensor_history():
+    ids_param = request.args.get("ids", "")
+    hours = min(int(request.args.get("hours", "24")), 168)
+    entity_ids = [x.strip() for x in ids_param.split(",") if x.strip()]
+    if not entity_ids:
+        return jsonify({"error": "ids parameter required"}), 400
+    try:
+        history = _ha_sensor_history(entity_ids, hours=hours)
+    except Exception as e:
+        return jsonify({"error": str(e), "history": {}}), 200
+    return jsonify({"history": history})
 
 
 @app.route("/logs")
