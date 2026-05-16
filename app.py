@@ -177,6 +177,7 @@ def _save_devices() -> None:
         log.error("Failed to save devices: %s", e)
 
 _devices = _load_devices()
+_seen_device_ips: set = set(_devices.keys())
 
 def _local_network() -> str:
     if SCAN_NETWORK:
@@ -1150,6 +1151,18 @@ def _poll_meraki_devtable(host: str, community: str, port: int = 161) -> dict[st
                 result.setdefault(mac, {})["lan_ip"] = ip_str
     return result
 
+def _check_new_device(ip: str, mac: str, vendor: str, hostname: str, source: str) -> None:
+    if not new_device_alerts or ip in _seen_device_ips:
+        return
+    _seen_device_ips.add(ip)
+    label = hostname or vendor or mac or ip
+    maybe_alert(
+        f"new_device_{ip}",
+        f"New device: {label}",
+        f"{ip} ({mac}) — {vendor or 'unknown vendor'} first seen via {source}",
+    )
+
+
 def _poll_snmp_devices() -> int:
     """Query all enabled SNMP devices; return count of newly discovered IPs."""
     with _snmp_lock:
@@ -1246,6 +1259,7 @@ def _poll_snmp_devices() -> int:
                         "last_seen": None, "ping_latency_ms": None,
                         "ports": [], "port_status": {},
                     }
+                    _check_new_device(ip, mac, vendor, "", name)
                     log.info("SNMP discovered %s — %s (%s) via %s", ip, mac, vendor or "unknown vendor", name)
                     new_count += 1
                     changed = True
@@ -1339,6 +1353,7 @@ def _poll_meraki_api_clients() -> int:
                     "last_seen": None, "ping_latency_ms": None,
                     "ports": [], "port_status": {},
                 }
+                _check_new_device(ip, mac, vendor, hostname or dhcp_name, "Meraki API")
                 log.info("Meraki API discovered %s — %s (%s)", ip, mac, vendor or "unknown")
                 updated += 1
             else:
@@ -1398,6 +1413,7 @@ _CONFIG_FIELDS = {
     "email_alerts_enabled":   {"label": "Email alerts enabled",            "default": "false"},
     "alert_title":            {"label": "Notification title prefix",       "default": "Farol"},
     "notify_recovery":        {"label": "Notify on recovery",              "default": "false"},
+    "new_device_alerts":      {"label": "Alert on new device",             "default": "false"},
     # Service monitor knobs
     "zwave_update_entity":    {"label": "Z-Wave update entity",            "default": "update.z_wave_js_ui_update"},
     "zwave_integration":      {"label": "Z-Wave HA integration domain",    "default": "zwave_js"},
@@ -1441,6 +1457,7 @@ push_critical:        bool = True
 email_alerts_enabled: bool = False
 ALERT_TITLE:          str  = "Farol"
 notify_recovery:      bool = False
+new_device_alerts:    bool = False
 MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
 PEER_URL:             str  = ""
@@ -1456,7 +1473,7 @@ def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY
+    global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -1474,6 +1491,7 @@ def _apply_config(data: dict) -> None:
     if "email_alerts_enabled" in data: email_alerts_enabled  = str(data["email_alerts_enabled"]).lower() in ("true", "1", "yes")
     if "alert_title"          in data: ALERT_TITLE           = data["alert_title"] or "Farol"
     if "notify_recovery"      in data: notify_recovery       = str(data["notify_recovery"]).lower() in ("true", "1", "yes")
+    if "new_device_alerts"    in data: new_device_alerts    = str(data["new_device_alerts"]).lower() in ("true", "1", "yes")
     if "zwave_update_entity"    in data:
         ADDON_CONFIG["Z-Wave JS UI"]["update_entity"]   = data["zwave_update_entity"] or "update.z_wave_js_ui_update"
     if "zwave_integration"      in data:
@@ -2693,6 +2711,54 @@ def api_sensor_history():
     except Exception as e:
         return jsonify({"error": str(e), "history": {}}), 200
     return jsonify({"history": history})
+
+
+@app.route("/topology")
+def topology_page():
+    return render_template("topology.html")
+
+
+@app.route("/api/topology")
+def api_topology():
+    with _devices_lock:
+        devs = list(_devices.values())
+
+    nodes = []
+    edges = []
+    seen_aps: set = set()
+    gateway_ips: set = set()
+
+    for d in devs:
+        ip = d.get("ip", "")
+        if ip.endswith(".1") or ip.endswith(".254"):
+            gateway_ips.add(ip)
+
+    for d in devs:
+        ip = d.get("ip", "")
+        label = d.get("name") or d.get("hostname") or d.get("dhcp_hostname") or ip
+        node_type = "gateway" if ip in gateway_ips else "device"
+        nodes.append({
+            "id": ip,
+            "label": label,
+            "type": node_type,
+            "status": d.get("status", "unknown"),
+            "ip": ip,
+            "vendor": d.get("vendor", ""),
+            "mac": d.get("mac", ""),
+        })
+        ap_name = d.get("meraki_connection") or ""
+        if ap_name:
+            if ap_name not in seen_aps:
+                seen_aps.add(ap_name)
+                nodes.append({"id": f"ap:{ap_name}", "label": ap_name, "type": "ap", "status": "online"})
+            edges.append({"from": ip, "to": f"ap:{ap_name}"})
+
+    if gateway_ips:
+        gw = sorted(gateway_ips)[0]
+        for ap_name in seen_aps:
+            edges.append({"from": f"ap:{ap_name}", "to": gw})
+
+    return jsonify({"nodes": nodes, "edges": edges})
 
 
 @app.route("/logs")

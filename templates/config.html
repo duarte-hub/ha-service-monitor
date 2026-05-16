@@ -180,6 +180,13 @@
       </div>
       <label class="switch"><input type="checkbox" id="notify_recovery" onchange="post({notify_recovery:String(this.checked)})"><span class="slider"></span></label>
     </div>
+    <div class="toggle-row">
+      <div class="toggle-desc">
+        <strong>New device alerts</strong>
+        <span>Notify when a previously unseen device appears on the network</span>
+      </div>
+      <label class="switch"><input type="checkbox" id="new_device_alerts" onchange="post({new_device_alerts:String(this.checked)})"><span class="slider"></span></label>
+    </div>
   </div>
   <div class="sub">
     <div class="sub-label">Push</div>
@@ -365,6 +372,7 @@
       set('alert_title',    d.alert_title    || 'Farol');
       set('alert_cooldown', d.alert_cooldown || '300');
       chk('notify_recovery',      d.notify_recovery       ?? false);
+      chk('new_device_alerts',   d.new_device_alerts     ?? false);
       chk('push_alerts_enabled',  d.push_alerts_enabled   ?? true);
       chk('push_critical',        d.push_critical         ?? true);
       chk('email_alerts_enabled', d.email_alerts_enabled  ?? false);

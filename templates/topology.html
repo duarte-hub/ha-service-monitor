@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farol — Topology</title>
+  <style>
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09);
+      --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563;
+      --primary:#03a9f4; --green:#4caf50; --red:#e53935;
+      --yellow:#ff9800; --purple:#bb86fc;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+           background:var(--bg); color:var(--text); height:100vh;
+           display:flex; flex-direction:column; overflow:hidden; }
+
+    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:50px;
+              display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .topbar-left { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.95rem; }
+    .topbar-right { display:flex; gap:16px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; }
+    .topbar-right a:hover { color:#fff; }
+
+    .legend { padding:6px 16px; background:var(--card-bg); border-bottom:1px solid var(--border);
+              display:flex; gap:18px; align-items:center; flex-shrink:0; flex-wrap:wrap; font-size:.73rem; color:var(--muted); }
+    .leg { display:flex; align-items:center; gap:5px; }
+    .leg-dot { width:10px; height:10px; border-radius:50%; }
+    .leg-sq  { width:10px; height:10px; border-radius:2px; }
+    .leg-dia { width:10px; height:10px; transform:rotate(45deg); border-radius:1px; }
+
+    #canvas { flex:1; display:block; cursor:grab; }
+    #canvas:active { cursor:grabbing; }
+
+    /* Tooltip */
+    #tip { position:fixed; background:var(--card-bg); border:1px solid var(--border);
+           border-radius:6px; padding:7px 10px; font-size:.73rem; color:var(--text);
+           pointer-events:none; display:none; z-index:10; max-width:220px; line-height:1.55; }
+    #tip strong { color:#fff; font-size:.78rem; }
+    #tip .tip-row { color:var(--muted); }
+    #tip .tip-row span { color:var(--text); }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/>
+    </svg>
+    Network Topology
+  </div>
+  <div class="topbar-right">
+    <a href="/">← Dashboard</a>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="leg"><div class="leg-dia" style="background:#ff9800"></div> Gateway</div>
+  <div class="leg"><div class="leg-sq"  style="background:#03a9f4"></div> Access Point</div>
+  <div class="leg"><div class="leg-dot" style="background:#4caf50"></div> Device (up)</div>
+  <div class="leg"><div class="leg-dot" style="background:#e53935"></div> Device (down)</div>
+  <div class="leg"><div class="leg-dot" style="background:#4b5563"></div> Device (unknown)</div>
+  <div style="margin-left:auto;color:var(--dim);font-size:.69rem">Scroll to zoom · Drag to pan · Click device to inspect</div>
+</div>
+
+<svg id="canvas"></svg>
+<div id="tip"></div>
+
+<script>
+  const svg    = document.getElementById('canvas');
+  const tip    = document.getElementById('tip');
+
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    return e;
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let nodes = [], edges = [], sim = null;
+  let vx = 0, vy = 0, vz = 1;  // viewport transform
+  let dragNode = null, dragStart = null;
+  let panStart = null, panOrigin = null;
+
+  // ── Colour helpers ─────────────────────────────────────────────────────────
+  function nodeColor(n) {
+    if (n.type === 'gateway') return '#ff9800';
+    if (n.type === 'ap')      return '#03a9f4';
+    if (n.status === 'up')    return '#4caf50';
+    if (n.status === 'down')  return '#e53935';
+    return '#4b5563';
+  }
+
+  // ── SVG layer refs ─────────────────────────────────────────────────────────
+  let gEdge, gNode;
+
+  function initLayers() {
+    gEdge = el('g'); gNode = el('g');
+    svg.appendChild(gEdge); svg.appendChild(gNode);
+  }
+
+  // ── Build DOM ──────────────────────────────────────────────────────────────
+  function buildDOM() {
+    gEdge.innerHTML = ''; gNode.innerHTML = '';
+
+    // Edges
+    for (const e of edges) {
+      const line = el('line', {
+        stroke: 'rgba(255,255,255,.12)',
+        'stroke-width': 1,
+        id: `edge-${e.from}-${e.to}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      });
+      gEdge.appendChild(line);
+      e._el = line;
+    }
+
+    // Nodes
+    for (const n of nodes) {
+      const g = el('g', {class:'node', style:'cursor:pointer'});
+      const col = nodeColor(n);
+
+      if (n.type === 'gateway') {
+        // Diamond
+        const d = el('polygon', {
+          points: '0,-18 14,0 0,18 -14,0',
+          fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
+        });
+        g.appendChild(d);
+      } else if (n.type === 'ap') {
+        // Rounded square
+        const r = el('rect', {
+          x:-13, y:-10, width:26, height:20, rx:4,
+          fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
+        });
+        g.appendChild(r);
+      } else {
+        // Circle
+        const c = el('circle', {r: 9, fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9});
+        g.appendChild(c);
+        // Pulse ring for unknown status
+        if (n.status === 'unknown') {
+          const p = el('circle', {r: 9, fill: 'none', stroke: col, 'stroke-width': 1, opacity: .3});
+          g.appendChild(p);
+        }
+      }
+
+      // Label
+      const txt = el('text', {
+        'text-anchor': 'middle', dy: n.type === 'gateway' ? 30 : 24,
+        fill: '#ccc', 'font-size': 10, 'font-family': 'system-ui,sans-serif',
+        'pointer-events': 'none', 'user-select': 'none',
+      });
+      txt.textContent = (n.label || n.id).slice(0, 18);
+      g.appendChild(txt);
+
+      // Events
+      g.addEventListener('mouseenter', ev => showTip(n, ev));
+      g.addEventListener('mousemove',  ev => moveTip(ev));
+      g.addEventListener('mouseleave', hideTip);
+      g.addEventListener('mousedown',  ev => startDragNode(n, ev));
+      if (n.ip) g.addEventListener('click', () => { window.location = `/device/${n.ip}`; });
+
+      gNode.appendChild(g);
+      n._el = g;
+    }
+  }
+
+  // ── Tip ────────────────────────────────────────────────────────────────────
+  function showTip(n, ev) {
+    let html = `<strong>${n.label || n.id}</strong>`;
+    if (n.ip)     html += `<div class="tip-row">IP <span>${n.ip}</span></div>`;
+    if (n.mac)    html += `<div class="tip-row">MAC <span>${n.mac}</span></div>`;
+    if (n.vendor) html += `<div class="tip-row">Vendor <span>${n.vendor}</span></div>`;
+    if (n.status) html += `<div class="tip-row">Status <span>${n.status}</span></div>`;
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    moveTip(ev);
+  }
+  function moveTip(ev) {
+    tip.style.left = (ev.clientX + 14) + 'px';
+    tip.style.top  = (ev.clientY + 10) + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  // ── Drag node ─────────────────────────────────────────────────────────────
+  function startDragNode(n, ev) {
+    dragNode = n; dragStart = {x: ev.clientX, y: ev.clientY, nx: n.x, ny: n.y};
+    n.fx = n.x; n.fy = n.y;
+    ev.stopPropagation();
+  }
+
+  // ── Pan ────────────────────────────────────────────────────────────────────
+  svg.addEventListener('mousedown', ev => {
+    if (dragNode) return;
+    panStart = {x: ev.clientX, y: ev.clientY};
+    panOrigin = {x: vx, y: vy};
+  });
+  window.addEventListener('mousemove', ev => {
+    if (dragNode && dragStart) {
+      dragNode.x = dragStart.nx + (ev.clientX - dragStart.x) / vz;
+      dragNode.y = dragStart.ny + (ev.clientY - dragStart.y) / vz;
+      dragNode.fx = dragNode.x; dragNode.fy = dragNode.y;
+      draw();
+    } else if (panStart) {
+      vx = panOrigin.x + (ev.clientX - panStart.x);
+      vy = panOrigin.y + (ev.clientY - panStart.y);
+      applyTransform();
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    if (dragNode) { dragNode.fx = undefined; dragNode.fy = undefined; dragNode = null; }
+    panStart = null;
+  });
+
+  // ── Zoom ──────────────────────────────────────────────────────────────────
+  svg.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const rect  = svg.getBoundingClientRect();
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    const factor = ev.deltaY < 0 ? 1.12 : 0.89;
+    const nz = Math.max(0.2, Math.min(4, vz * factor));
+    vx = mx - (mx - vx) * (nz / vz);
+    vy = my - (my - vy) * (nz / vz);
+    vz = nz;
+    applyTransform();
+  }, {passive: false});
+
+  function applyTransform() {
+    if (gEdge) gEdge.setAttribute('transform', `translate(${vx},${vy}) scale(${vz})`);
+    if (gNode) gNode.setAttribute('transform', `translate(${vx},${vy}) scale(${vz})`);
+  }
+
+  // ── Force simulation ───────────────────────────────────────────────────────
+  class Sim {
+    constructor(ns, es) {
+      this.nodes = ns; this.edges = es;
+      this.alpha = 1; this.running = true;
+      for (const n of ns) { n.vx = 0; n.vy = 0; }
+      requestAnimationFrame(() => this.tick());
+    }
+
+    tick() {
+      if (!this.running) return;
+      if (this.alpha < 0.001) { this.running = false; return; }
+      this.alpha *= 0.96;
+
+      const W = svg.clientWidth  || 800;
+      const H = svg.clientHeight || 600;
+      const cx = W / 2, cy = H / 2;
+
+      // Reset forces
+      for (const n of this.nodes) { n.fx2 = 0; n.fy2 = 0; }
+
+      // Center gravity
+      for (const n of this.nodes) {
+        n.fx2 += (cx - n.x) * 0.02 * this.alpha;
+        n.fy2 += (cy - n.y) * 0.02 * this.alpha;
+      }
+
+      // Repulsion (O(n²) — fine for <300 nodes)
+      for (let i = 0; i < this.nodes.length; i++) {
+        for (let j = i + 1; j < this.nodes.length; j++) {
+          const a = this.nodes[i], b = this.nodes[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const d2 = dx * dx + dy * dy + 1;
+          const strength = 4000 / d2;
+          const fx = dx * strength, fy = dy * strength;
+          a.fx2 -= fx; a.fy2 -= fy;
+          b.fx2 += fx; b.fy2 += fy;
+        }
+      }
+
+      // Attraction along edges
+      const nodeMap = Object.fromEntries(this.nodes.map(n => [n.id, n]));
+      for (const e of this.edges) {
+        const a = nodeMap[e.from], b = nodeMap[e.to];
+        if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        const ideal = 120;
+        const f = (d - ideal) * 0.04 * this.alpha;
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        a.fx2 += fx; a.fy2 += fy;
+        b.fx2 -= fx; b.fy2 -= fy;
+      }
+
+      // Integrate
+      for (const n of this.nodes) {
+        if (n.fx !== undefined) { n.vx = 0; n.vy = 0; continue; }
+        n.vx = (n.vx + n.fx2) * 0.7;
+        n.vy = (n.vy + n.fy2) * 0.7;
+        n.x += n.vx;
+        n.y += n.vy;
+      }
+
+      draw();
+      requestAnimationFrame(() => this.tick());
+    }
+  }
+
+  // ── Draw ──────────────────────────────────────────────────────────────────
+  function draw() {
+    const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+    for (const e of edges) {
+      if (!e._el) continue;
+      const a = nodeMap[e.from], b = nodeMap[e.to];
+      if (!a || !b) continue;
+      e._el.setAttribute('x1', a.x); e._el.setAttribute('y1', a.y);
+      e._el.setAttribute('x2', b.x); e._el.setAttribute('y2', b.y);
+    }
+    for (const n of nodes) {
+      if (!n._el) continue;
+      n._el.setAttribute('transform', `translate(${n.x},${n.y})`);
+    }
+  }
+
+  // ── Load & init ────────────────────────────────────────────────────────────
+  async function load() {
+    const data = await (await fetch('/api/topology')).json();
+    nodes = data.nodes || [];
+    edges = data.edges || [];
+
+    const W = svg.clientWidth  || 800;
+    const H = svg.clientHeight || 600;
+
+    // Seed positions: gateways at center, APs in ring, devices in outer ring
+    const gws  = nodes.filter(n => n.type === 'gateway');
+    const aps  = nodes.filter(n => n.type === 'ap');
+    const devs = nodes.filter(n => n.type === 'device');
+
+    const cx = W / 2, cy = H / 2;
+
+    gws.forEach((n, i) => {
+      n.x = cx + (i - (gws.length - 1) / 2) * 80;
+      n.y = cy;
+    });
+    aps.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(aps.length, 1) - Math.PI / 2;
+      n.x = cx + Math.cos(angle) * 160;
+      n.y = cy + Math.sin(angle) * 120;
+    });
+    devs.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(devs.length, 1) - Math.PI / 2;
+      n.x = cx + Math.cos(angle) * 280;
+      n.y = cy + Math.sin(angle) * 220;
+    });
+
+    initLayers();
+    buildDOM();
+    applyTransform();
+    sim = new Sim(nodes, edges);
+  }
+
+  load();
+</script>
+</body>
+</html>
