@@ -83,13 +83,15 @@
     .ubar-pct { font-size:.72rem; font-weight:700; width:38px; text-align:right;
                 font-family:'SF Mono','Fira Code',monospace; }
 
-    /* ── Sparklines ── */
-    .spark-row { margin-bottom:14px; }
-    .spark-row:last-child { margin-bottom:0; }
-    .spark-lbl { font-size:.65rem; color:var(--muted); text-transform:uppercase;
-                 letter-spacing:.07em; margin-bottom:5px; }
+    /* ── History grid ── */
+    .hist-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    @media (max-width:560px) { .hist-grid { grid-template-columns:1fr; } }
+    .hist-period { font-size:.72rem; font-weight:600; color:var(--text); margin-bottom:8px; }
+    .hist-sub { font-size:.58rem; color:var(--muted2); text-transform:uppercase;
+                letter-spacing:.08em; margin-bottom:4px; }
     .spark-svg { width:100%; height:36px; display:block; border-radius:4px;
                  background:rgba(255,255,255,.025); }
+    .spark-gap { height:10px; }
 
     /* ── Port chips ── */
     .ports-wrap { display:flex; flex-wrap:wrap; gap:6px; padding:2px 0; }
@@ -223,17 +225,27 @@
 
   </div>
 
-  <!-- Sparklines -->
+  <!-- History -->
   <div class="card mb" id="sparkline-card">
     <div class="card-hdr">History</div>
     <div class="card-body">
-      <div class="spark-row">
-        <div class="spark-lbl">Last hour</div>
-        <svg class="spark-svg" id="spark-h1" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
-      </div>
-      <div class="spark-row">
-        <div class="spark-lbl">Last 24 hours</div>
-        <svg class="spark-svg" id="spark-h24" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+      <div class="hist-grid">
+        <div>
+          <div class="hist-period">Last hour</div>
+          <div class="hist-sub">Availability</div>
+          <svg class="spark-svg" id="spark-h1" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+          <div class="spark-gap"></div>
+          <div class="hist-sub">Latency</div>
+          <svg class="spark-svg" id="spark-lat-h1" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+        </div>
+        <div>
+          <div class="hist-period">Last 24 hours</div>
+          <div class="hist-sub">Availability</div>
+          <svg class="spark-svg" id="spark-h24" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+          <div class="spark-gap"></div>
+          <div class="hist-sub">Latency</div>
+          <svg class="spark-svg" id="spark-lat-h24" viewBox="0 0 300 36" preserveAspectRatio="none"></svg>
+        </div>
       </div>
     </div>
   </div>
@@ -321,6 +333,51 @@
     }).join('');
   }
 
+  function renderLatencyLine(svgId, buckets) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !buckets) return;
+    const W = 300, H = 36, pad = 3;
+    const n = buckets.length;
+    const vals = buckets.filter(v => v !== null);
+    if (!vals.length) {
+      svg.innerHTML = `<text x="150" y="22" text-anchor="middle" fill="rgba(255,255,255,.15)" font-size="9" font-family="monospace">no data yet</text>`;
+      return;
+    }
+    const maxV = Math.max(...vals);
+    const range = maxV || 1;
+    const avg   = vals.reduce((a,b) => a+b, 0) / vals.length;
+    const stroke = avg < 30 ? '#4caf50' : avg < 150 ? '#ff9800' : '#e53935';
+    const gid = svgId.replace(/[^a-z0-9]/gi, '') + 'g';
+
+    const xOf = i => (i + 0.5) * W / n;
+    const yOf = v => H - pad - (v / range) * (H - pad * 2 - 2);
+
+    // split into segments around nulls
+    const segs = [];
+    let cur = [];
+    buckets.forEach((v, i) => {
+      if (v === null) { if (cur.length) { segs.push(cur); cur = []; } }
+      else cur.push([xOf(i), yOf(v)]);
+    });
+    if (cur.length) segs.push(cur);
+
+    let html = `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0%" stop-color="${stroke}" stop-opacity=".4"/>` +
+      `<stop offset="100%" stop-color="${stroke}" stop-opacity=".03"/>` +
+      `</linearGradient></defs>`;
+
+    for (const s of segs) {
+      if (!s.length) continue;
+      const pts  = s.map(([x,y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+      const area = `${s[0][0].toFixed(1)},${H} ${pts} ${s[s.length-1][0].toFixed(1)},${H}`;
+      html += `<polygon points="${area}" fill="url(#${gid})"/>`;
+      html += `<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+    // peak label
+    html += `<text x="${W-2}" y="9" text-anchor="end" fill="rgba(255,255,255,.3)" font-size="7.5" font-family="monospace">${maxV.toFixed(0)}ms</text>`;
+    svg.innerHTML = html;
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   function render(d) {
     _dev = d;
@@ -371,10 +428,12 @@
       return `<div class="ubar-row"><span class="ubar-lbl">${l}</span><span class="ubar-track"><span class="ubar-fill" style="width:${pct}%;background:${col}"></span></span><span class="ubar-pct" style="color:${col}">${pct}%</span></div>`;
     }).join('');
 
-    // Sparklines
+    // History charts
     const hist = d.history || {};
-    renderSparkline('spark-h1',  hist.h1);
-    renderSparkline('spark-h24', hist.h24);
+    renderSparkline('spark-h1',      hist.h1);
+    renderSparkline('spark-h24',     hist.h24);
+    renderLatencyLine('spark-lat-h1',  hist.lat_h1);
+    renderLatencyLine('spark-lat-h24', hist.lat_h24);
 
     // Ports
     const ports = d.ports || [];

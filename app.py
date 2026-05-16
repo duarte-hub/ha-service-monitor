@@ -566,10 +566,10 @@ _device_history: dict[str, list] = {}  # ip -> [{ts: float, up: bool}, ...]
 _HISTORY_TTL = 90_000  # keep 25 h so the 24 h window is always fully populated
 
 
-def _record_history(ip: str, up: bool) -> None:
+def _record_history(ip: str, up: bool, latency: float | None = None) -> None:
     now  = time.time()
     hist = _device_history.setdefault(ip, [])
-    hist.append({"ts": now, "up": up})
+    hist.append({"ts": now, "up": up, "ms": latency})
     cutoff = now - _HISTORY_TTL
     i = 0
     while i < len(hist) and hist[i]["ts"] < cutoff:
@@ -589,10 +589,10 @@ def _uptime_stats(ip: str) -> dict:
 
 
 def _history_buckets(ip: str) -> dict:
-    """Return bucketed history arrays for sparkline rendering on the device page."""
+    """Return bucketed availability and latency arrays for the device detail page."""
     hist = _device_history.get(ip, [])
     now  = time.time()
-    def _buckets(window: float, n: int) -> list:
+    def _avail(window: float, n: int) -> list:
         size = window / n
         result = []
         for i in range(n):
@@ -601,9 +601,21 @@ def _history_buckets(ip: str) -> dict:
             samples = [e["up"] for e in hist if t_start <= e["ts"] < t_end]
             result.append(round(100 * sum(samples) / len(samples)) if samples else None)
         return result
+    def _lat(window: float, n: int) -> list:
+        size = window / n
+        result = []
+        for i in range(n):
+            t_end   = now - (n - 1 - i) * size
+            t_start = t_end - size
+            samples = [e["ms"] for e in hist
+                       if t_start <= e["ts"] < t_end and e.get("up") and e.get("ms") is not None]
+            result.append(round(sum(samples) / len(samples), 1) if samples else None)
+        return result
     return {
-        "h1":  _buckets(3600,  30),   # 1 h  → 30 × 2-min buckets
-        "h24": _buckets(86400, 48),   # 24 h → 48 × 30-min buckets
+        "h1":     _avail(3600,  30),   # 1 h  → 30 × 2-min buckets
+        "h24":    _avail(86400, 48),   # 24 h → 48 × 30-min buckets
+        "lat_h1": _lat(3600,  30),
+        "lat_h24":_lat(86400, 48),
     }
 
 
@@ -622,7 +634,7 @@ def _ping_monitored() -> None:
             _devices[ip]["ping_latency_ms"] = latency
             if up:
                 _devices[ip]["last_seen"] = now
-        _record_history(ip, up)
+        _record_history(ip, up, latency)
         label = dev.get("name") or dev.get("hostname") or ip
         mode  = dev.get("alert_mode") or "default"
         log.debug("monitored %s (%s): %s", label, ip, "up" if up else "down")
