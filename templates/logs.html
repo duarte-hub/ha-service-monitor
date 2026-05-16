@@ -5,160 +5,296 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Farol — Logs</title>
   <style>
-    :root { --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.12); --text:#e1e1e1; --text-muted:#9b9b9b; --primary:#03a9f4; --green:#4caf50; --red:#db4437; --yellow:#ff9800; --purple:#bb86fc; }
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09);
+      --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563;
+      --primary:#03a9f4; --green:#4caf50; --red:#e53935;
+      --yellow:#ff9800; --purple:#bb86fc; --teal:#26a69a; --orange:#ff7043;
+    }
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; }
-    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; font-size:1.1rem; font-weight:600; flex-shrink:0; }
-    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
-    .topbar a { color:#fff; text-decoration:none; opacity:.85; }
-    .topbar a:hover { opacity:1; }
-    .toolbar { padding:10px 20px; background:var(--card-bg); border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-wrap:wrap; flex-shrink:0; }
-    .toolbar input { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:.82rem; padding:5px 10px; outline:none; width:200px; }
-    .toolbar input:focus { border-color:var(--primary); }
-    .btn { background:rgba(255,255,255,.07); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:5px 12px; font-size:.8rem; cursor:pointer; white-space:nowrap; }
-    .btn:hover { background:rgba(255,255,255,.12); }
-    .btn.active { background:var(--primary); border-color:var(--primary); color:#fff; }
-    .btn.active-err  { background:var(--red);    border-color:var(--red);    color:#fff; }
-    .btn.active-warn { background:var(--yellow);  border-color:var(--yellow); color:#111; }
-    .btn.active-debug{ background:var(--purple);  border-color:var(--purple); color:#fff; }
-    .btn.active-verbose { background:#e91e63; border-color:#e91e63; color:#fff; }
-    .sep { width:1px; height:20px; background:var(--border); }
-    .log-wrap { flex:1; overflow-y:auto; padding:10px 20px; font-family:'SF Mono','Fira Code',monospace; font-size:.76rem; line-height:1.5; }
-    .line { padding:1px 0; white-space:pre-wrap; word-break:break-all; border-bottom:1px solid rgba(255,255,255,.02); }
-    .line.debug { color:rgba(155,155,155,.45); }
-    .line.info  { color:var(--text-muted); }
-    .line.warn  { color:var(--yellow); }
-    .line.err   { color:var(--red); }
-    .status { font-size:.75rem; opacity:.7; }
-    #scroll-btn { position:fixed; bottom:20px; right:20px; background:var(--primary); color:#fff; border:none; border-radius:20px; padding:7px 16px; font-size:.8rem; cursor:pointer; display:none; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+           background:var(--bg); color:var(--text); height:100vh;
+           display:flex; flex-direction:column; overflow:hidden; }
+
+    /* ── Topbar ── */
+    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:50px;
+              display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .topbar-left { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.95rem; }
+    .topbar-right { display:flex; gap:16px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; }
+    .topbar-right a:hover { color:#fff; }
+
+    /* ── Toolbar ── */
+    .toolbar { padding:7px 14px; background:var(--card-bg); border-bottom:1px solid var(--border);
+               display:flex; gap:6px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
+    .filter-wrap { position:relative; min-width:160px; max-width:260px; flex:1; }
+    .filter-wrap svg { position:absolute; left:8px; top:50%; transform:translateY(-50%); pointer-events:none; }
+    #filter { width:100%; background:rgba(255,255,255,.05); border:1px solid var(--border);
+              border-radius:6px; color:var(--text); font-size:.8rem; padding:5px 8px 5px 28px;
+              outline:none; font-family:inherit; }
+    #filter:focus { border-color:var(--primary); }
+    .sep { width:1px; height:18px; background:var(--border); flex-shrink:0; }
+    .btn { background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:6px;
+           padding:4px 10px; font-size:.74rem; cursor:pointer; white-space:nowrap; font-family:inherit;
+           transition:color .12s, border-color .12s, background .12s; }
+    .btn:hover { color:var(--text); border-color:rgba(255,255,255,.22); }
+    .btn.on      { background:var(--primary); border-color:var(--primary); color:#fff; }
+    .btn.on-err  { background:var(--red);    border-color:var(--red);    color:#fff; }
+    .btn.on-warn { background:var(--yellow); border-color:var(--yellow); color:#111; }
+    .btn.on-dbg  { background:var(--purple); border-color:var(--purple); color:#fff; }
+    .btn.on-vrb  { background:#e91e63;       border-color:#e91e63;       color:#fff; }
+    #stat { margin-left:auto; font-size:.71rem; color:var(--dim); white-space:nowrap; }
+
+    /* ── Column headers ── */
+    .col-hdr { display:grid; grid-template-columns:60px 34px 80px 1fr; gap:0 6px;
+               padding:4px 14px 3px; border-bottom:1px solid var(--border);
+               font-size:.6rem; font-weight:600; color:var(--dim); text-transform:uppercase;
+               letter-spacing:.07em; flex-shrink:0; user-select:none; }
+
+    /* ── Log area ── */
+    .log-wrap { flex:1; overflow-y:auto; }
+
+    /* ── Log row ── */
+    .lr { display:grid; grid-template-columns:60px 34px 80px 1fr; gap:0 6px;
+          padding:2px 14px; align-items:baseline;
+          border-bottom:1px solid rgba(255,255,255,.022); }
+    .lr:hover { background:rgba(255,255,255,.025); }
+    .lr.debug { opacity:.4; }
+    .lr.debug:hover { opacity:.65; }
+    .lr.warn  { background:rgba(255,152,0,.025); }
+    .lr.err   { background:rgba(229,57,53,.035); }
+
+    /* Timestamp */
+    .ts { font-family:'SF Mono','Fira Code',Menlo,monospace; font-size:.67rem;
+          color:var(--dim); white-space:nowrap; user-select:none; padding-top:1px; }
+
+    /* Level badge */
+    .lv { font-family:'SF Mono','Fira Code',Menlo,monospace; font-size:.58rem; font-weight:700;
+          letter-spacing:.04em; border-radius:3px; padding:1px 4px; text-align:center;
+          user-select:none; align-self:center; }
+    .lv-I { color:var(--dim); }
+    .lv-W { color:var(--yellow); background:rgba(255,152,0,.12); border:1px solid rgba(255,152,0,.2); }
+    .lv-E { color:var(--red);   background:rgba(229,57,53,.12);  border:1px solid rgba(229,57,53,.2); }
+    .lv-D { color:var(--purple);background:rgba(187,134,252,.08);}
+
+    /* Source chip */
+    .sc { font-size:.65rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+          font-family:'SF Mono','Fira Code',Menlo,monospace; }
+    .sc-ha     { color:#42a5f5; }
+    .sc-ping   { color:#66bb6a; }
+    .sc-snmp   { color:#26c6da; }
+    .sc-probe  { color:#b39ddb; }
+    .sc-peer   { color:var(--orange); }
+    .sc-meraki { color:#42a5f5; }
+    .sc-other  { color:var(--dim); }
+
+    /* Message */
+    .mg { font-family:'SF Mono','Fira Code',Menlo,monospace; font-size:.72rem;
+          line-height:1.5; word-break:break-word; white-space:pre-wrap; color:var(--text); }
+    .lr.warn .mg { color:#ffcc80; }
+    .lr.err  .mg { color:#ef9a9a; }
+    .lr.debug .mg { color:var(--muted); }
+    mark { background:rgba(255,235,59,.22); color:inherit; border-radius:2px; padding:0 1px; }
+
+    /* Scroll-to-bottom */
+    #scroll-btn { position:fixed; bottom:18px; right:18px; background:var(--primary); color:#fff;
+                  border:none; border-radius:20px; padding:6px 14px; font-size:.75rem; cursor:pointer;
+                  display:none; box-shadow:0 2px 10px rgba(0,0,0,.45); }
   </style>
 </head>
 <body>
 
 <div class="topbar">
-  <span>Logs</span>
+  <div class="topbar-left">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+    </svg>
+    Logs
+  </div>
   <div class="topbar-right">
-    <span class="status" id="status">loading…</span>
+    <span id="stat">—</span>
     <a href="/config">Settings</a>
-    <a href="/">&larr; Dashboard</a>
+    <a href="/">← Dashboard</a>
   </div>
 </div>
 
 <div class="toolbar">
-  <input type="text" id="filter" placeholder="Filter…" oninput="renderLines()">
+  <div class="filter-wrap">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--dim)">
+      <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+    </svg>
+    <input type="text" id="filter" placeholder="Filter messages, source…" oninput="render()">
+  </div>
   <div class="sep"></div>
-  <button class="btn" id="btn-err"   onclick="toggleLevelFilter('err')">Errors</button>
-  <button class="btn" id="btn-warn"  onclick="toggleLevelFilter('warn')">Warnings</button>
-  <button class="btn" id="btn-debug" onclick="toggleLevelFilter('debug')">Debug</button>
+  <button class="btn" id="btn-err"  onclick="toggleLevel('err')">Errors</button>
+  <button class="btn" id="btn-warn" onclick="toggleLevel('warn')">Warnings</button>
+  <button class="btn" id="btn-dbg"  onclick="toggleLevel('debug')">Debug</button>
   <div class="sep"></div>
-  <button class="btn" id="btn-verbose" onclick="toggleVerbose()">Verbose: off</button>
-  <button class="btn" id="btn-tail"    onclick="toggleTail()">Tail: on</button>
-  <button class="btn" onclick="clearAll()">Clear filter</button>
+  <button class="btn" id="btn-vrb"  onclick="toggleVerbose()">Verbose</button>
+  <button class="btn on" id="btn-tail" onclick="toggleTail()">Tail</button>
+  <button class="btn" onclick="clearFilters()">Clear</button>
+  <span id="stat">—</span>
+</div>
+
+<div class="col-hdr">
+  <span>Time</span>
+  <span>Lvl</span>
+  <span>Source</span>
+  <span>Message</span>
 </div>
 
 <div class="log-wrap" id="log-wrap"></div>
-<button id="scroll-btn" onclick="scrollToBottom()">&#8595; Bottom</button>
+<button id="scroll-btn" onclick="scrollBot()">&#8595; Bottom</button>
 
 <script>
-  let allLines  = [];
-  let tailing   = true;
-  let verbose   = false;
-  let showOnly  = new Set(); // active level filters (show ONLY these)
+  let _recs    = [];
+  let _tailing = true;
+  let _verbose = false;
+  let _only    = new Set();
 
-  const wrap      = document.getElementById('log-wrap');
-  const filterEl  = document.getElementById('filter');
-  const statusEl  = document.getElementById('status');
-  const scrollBtn = document.getElementById('scroll-btn');
+  const wrap     = document.getElementById('log-wrap');
+  const filterEl = document.getElementById('filter');
+  const statEl   = document.getElementById('stat');
 
   wrap.addEventListener('scroll', () => {
-    const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 40;
-    scrollBtn.style.display = atBottom ? 'none' : 'block';
+    const atBot = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 60;
+    document.getElementById('scroll-btn').style.display = atBot ? 'none' : 'block';
   });
 
-  function scrollToBottom() { wrap.scrollTop = wrap.scrollHeight; }
+  function scrollBot() { wrap.scrollTop = wrap.scrollHeight; }
 
-  function levelOf(line) {
-    if (line.includes('[ERROR]'))   return 'err';
-    if (line.includes('[WARNING]')) return 'warn';
-    if (line.includes('[DEBUG]'))   return 'debug';
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function _lvlOf(r) {
+    const l = r.level || '';
+    if (l === 'ERROR' || l === 'CRITICAL') return 'err';
+    if (l === 'WARNING')  return 'warn';
+    if (l === 'DEBUG')    return 'debug';
     return 'info';
   }
 
-  function renderLines() {
-    const q = filterEl.value.toLowerCase();
-    const frag = document.createDocumentFragment();
-    for (const l of allLines) {
-      const lvl = levelOf(l);
-      if (showOnly.size && !showOnly.has(lvl)) continue;
-      if (q && !l.toLowerCase().includes(q)) continue;
-      const div = document.createElement('div');
-      div.className = 'line ' + lvl;
-      div.textContent = l;
-      frag.appendChild(div);
+  const _LV = {
+    err:   '<span class="lv lv-E">ERR</span>',
+    warn:  '<span class="lv lv-W">WRN</span>',
+    debug: '<span class="lv lv-D">DBG</span>',
+    info:  '<span class="lv lv-I">INF</span>',
+  };
+
+  const _SRC_MAP = {
+    'ha-poller':          {l:'ha-poller',  c:'sc-ha'},
+    'device-ping':        {l:'ping',       c:'sc-ping'},
+    'snmp-poller':        {l:'snmp',       c:'sc-snmp'},
+    'feature-probe':      {l:'probe',      c:'sc-probe'},
+    'peer-health':        {l:'peer',       c:'sc-peer'},
+    'peer-check':         {l:'peer-chk',   c:'sc-peer'},
+    'meraki-api-poller':  {l:'meraki',     c:'sc-meraki'},
+    'MainThread':         {l:'',           c:'sc-other'},
+  };
+
+  function _srcHtml(src) {
+    const s = _SRC_MAP[src];
+    if (s) return `<span class="sc ${s.c}">${esc(s.l)}</span>`;
+    if (!src || /^(Thread-|dummy|_|Dummy)/.test(src)) return `<span class="sc sc-other"></span>`;
+    // Trim "Thread-N (target)" style names
+    const label = src.replace(/\s*\(.*\)$/, '').slice(0, 12);
+    return `<span class="sc sc-other">${esc(label)}</span>`;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function hilite(text, q) {
+    if (!q) return esc(text);
+    const lower = text.toLowerCase(), ql = q.toLowerCase();
+    let out = '', i = 0;
+    while (i < text.length) {
+      const idx = lower.indexOf(ql, i);
+      if (idx < 0) { out += esc(text.slice(i)); break; }
+      out += esc(text.slice(i, idx));
+      out += `<mark>${esc(text.slice(idx, idx + q.length))}</mark>`;
+      i = idx + q.length;
     }
+    return out;
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  function render() {
+    const q     = filterEl.value.trim();
+    const ql    = q.toLowerCase();
+    const frag  = document.createDocumentFragment();
+    let shown   = 0;
+
+    for (const r of _recs) {
+      const lvl = _lvlOf(r);
+      if (_only.size && !_only.has(lvl)) continue;
+      const hay = (r.msg || '') + ' ' + (r.src || '');
+      if (ql && !hay.toLowerCase().includes(ql)) continue;
+      shown++;
+
+      const row = document.createElement('div');
+      row.className = `lr ${lvl}`;
+      row.innerHTML =
+        `<span class="ts">${esc(r.ts || '')}</span>` +
+        _LV[lvl] +
+        _srcHtml(r.src || '') +
+        `<span class="mg">${hilite(r.msg || '', q)}</span>`;
+      frag.appendChild(row);
+    }
+
     wrap.innerHTML = '';
     wrap.appendChild(frag);
-    if (tailing) scrollToBottom();
+    statEl.textContent = shown === _recs.length
+      ? `${_recs.length} lines`
+      : `${shown} / ${_recs.length}`;
+    if (_tailing) scrollBot();
   }
 
+  // ── Controls ──────────────────────────────────────────────────────────────
   function toggleTail() {
-    tailing = !tailing;
-    const btn = document.getElementById('btn-tail');
-    btn.textContent = 'Tail: ' + (tailing ? 'on' : 'off');
-    btn.className = 'btn' + (tailing ? ' active' : '');
-    if (tailing) scrollToBottom();
+    _tailing = !_tailing;
+    document.getElementById('btn-tail').className = 'btn' + (_tailing ? ' on' : '');
+    if (_tailing) scrollBot();
   }
 
-  function toggleLevelFilter(lvl) {
-    if (showOnly.has(lvl)) showOnly.delete(lvl);
-    else showOnly.add(lvl);
-    const btn = document.getElementById('btn-' + lvl);
-    const activeClass = {err:'active-err', warn:'active-warn', debug:'active-debug'}[lvl] || 'active';
-    btn.className = 'btn' + (showOnly.has(lvl) ? ' ' + activeClass : '');
-    renderLines();
+  function toggleLevel(lvl) {
+    const btnId = {err:'btn-err', warn:'btn-warn', debug:'btn-dbg'}[lvl];
+    const onCls = {err:'on-err',  warn:'on-warn',  debug:'on-dbg'}[lvl];
+    if (_only.has(lvl)) _only.delete(lvl); else _only.add(lvl);
+    document.getElementById(btnId).className = 'btn' + (_only.has(lvl) ? ' ' + onCls : '');
+    render();
   }
 
   async function toggleVerbose() {
-    verbose = !verbose;
-    const btn = document.getElementById('btn-verbose');
-    btn.textContent = 'Verbose: ' + (verbose ? 'on' : 'off');
-    btn.className = 'btn' + (verbose ? ' active-verbose' : '');
+    _verbose = !_verbose;
+    document.getElementById('btn-vrb').className = 'btn' + (_verbose ? ' on-vrb' : '');
     await fetch('/api/logs/level', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({verbose}),
+      body: JSON.stringify({verbose: _verbose}),
     });
   }
 
-  function clearAll() {
+  function clearFilters() {
     filterEl.value = '';
-    showOnly.clear();
-    ['err','warn','debug'].forEach(lvl => {
-      document.getElementById('btn-' + lvl).className = 'btn';
-    });
-    renderLines();
+    _only.clear();
+    document.getElementById('btn-err').className  = 'btn';
+    document.getElementById('btn-warn').className = 'btn';
+    document.getElementById('btn-dbg').className  = 'btn';
+    render();
   }
 
+  // ── Poll ──────────────────────────────────────────────────────────────────
   async function poll() {
     try {
-      const r = await fetch('/api/logs?n=2000');
-      const d = await r.json();
-      const prev = allLines.length;
-      allLines = d.lines;
-      // Sync verbose button with backend state
-      if (verbose !== d.verbose) {
-        verbose = d.verbose;
-        const btn = document.getElementById('btn-verbose');
-        btn.textContent = 'Verbose: ' + (verbose ? 'on' : 'off');
-        btn.className = 'btn' + (verbose ? ' active-verbose' : '');
+      const d = await (await fetch('/api/logs?n=2000')).json();
+      _recs = d.records || [];
+      if (_verbose !== d.verbose) {
+        _verbose = d.verbose;
+        document.getElementById('btn-vrb').className = 'btn' + (_verbose ? ' on-vrb' : '');
       }
-      statusEl.textContent = allLines.length + ' lines';
-      if (allLines.length !== prev) renderLines();
-    } catch (_) { statusEl.textContent = 'error'; }
+      render();
+    } catch (_) { statEl.textContent = 'error'; }
   }
-
-  // Initial button states
-  document.getElementById('btn-tail').className = 'btn active';
 
   poll();
   setInterval(poll, 3000);

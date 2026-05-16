@@ -54,22 +54,35 @@ NOTIFY_SERVICE = os.environ.get("NOTIFY_SERVICE", "notify.mobile_app_iphoned")
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-_LOG_BUFFER: list[str] = []
+_LOG_BUFFER: list[dict] = []
 _LOG_BUFFER_MAX = 2000
 
 class _BufferHandler(logging.Handler):
     def emit(self, record):
-        _LOG_BUFFER.append(self.format(record))
-        if len(_LOG_BUFFER) > _LOG_BUFFER_MAX:
-            del _LOG_BUFFER[0]
+        try:
+            msg = record.getMessage()
+            if record.exc_info and not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+            if record.exc_text:
+                msg += "\n" + record.exc_text
+            _LOG_BUFFER.append({
+                "ts":    datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "src":   record.threadName,
+                "msg":   msg,
+            })
+            if len(_LOG_BUFFER) > _LOG_BUFFER_MAX:
+                del _LOG_BUFFER[0]
+        except Exception:
+            self.handleError(record)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
 )
 log = logging.getLogger("farol")
 _buf_handler = _BufferHandler()
-_buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_buf_handler.setFormatter(logging.Formatter("%(message)s"))
 _buf_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(_buf_handler)
 
@@ -2095,7 +2108,8 @@ def logs_page():
 @app.route("/api/logs")
 def api_logs():
     n = min(int(request.args.get("n", 500)), _LOG_BUFFER_MAX)
-    return jsonify({"lines": _LOG_BUFFER[-n:], "verbose": _buf_handler.level == logging.DEBUG})
+    recs = _LOG_BUFFER[-n:]
+    return jsonify({"records": recs, "verbose": _buf_handler.level == logging.DEBUG})
 
 
 @app.route("/api/logs/level", methods=["POST"])
