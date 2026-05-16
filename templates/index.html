@@ -148,6 +148,13 @@
     .update-log { margin-top:5px; max-height:160px; overflow-y:auto; font-size:.67rem; font-family:'SF Mono','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; line-height:1.5; }
     .update-log .log-err { color:var(--red); }
 
+    /* ── Uptime bars ────────────────────────────────────────────────────── */
+    .ubar { display:flex; align-items:center; gap:5px; margin:1.5px 0; }
+    .ubar-lbl { font-size:.58rem; color:var(--muted2); font-family:'SF Mono','Fira Code',monospace; width:20px; text-align:right; flex-shrink:0; }
+    .ubar-track { width:52px; height:4px; border-radius:2px; background:rgba(255,255,255,.07); overflow:hidden; flex-shrink:0; }
+    .ubar-fill { height:100%; border-radius:2px; transition:width .4s ease; }
+    .ubar-val { font-size:.6rem; font-weight:600; font-family:'SF Mono','Fira Code',monospace; width:28px; }
+
     /* ── Feature tags ───────────────────────────────────────────────────── */
     .ftag { display:inline-flex; align-items:center; font-size:.6rem; font-weight:700; border-radius:3px; padding:2px 5px; letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; margin:1px 1px; border:1px solid transparent; cursor:default; }
     .ftag-snmp   { background:rgba(3,169,244,.1);   color:#29b6f6; border-color:rgba(3,169,244,.3); }
@@ -296,6 +303,7 @@
         <th>Source</th>
         <th>Last Seen</th>
         <th>Latency</th>
+        <th>Uptime</th>
         <th>Ports</th>
         <th>Tags</th>
         <th>Monitor</th>
@@ -303,7 +311,7 @@
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="11">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="12">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -430,6 +438,24 @@
     Telnet: 'ftag-warn', Modbus: 'ftag-warn',
     DNS: 'ftag-net', Print: 'ftag-net',
   };
+  function _uptimeCell(d) {
+    if (!d.monitored) return '<span style="color:var(--muted2);font-size:.7rem">—</span>';
+    const u = d.uptime || {};
+    const wins = [{k:'m1',l:'1m'},{k:'h1',l:'1h'},{k:'h24',l:'24h'}];
+    return wins.map(({k, l}) => {
+      const pct = u[k];
+      if (pct == null) {
+        return `<div class="ubar"><span class="ubar-lbl">${l}</span><span class="ubar-track"></span><span class="ubar-val" style="color:var(--muted2)">—</span></div>`;
+      }
+      const col = pct >= 90 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      return `<div class="ubar">
+        <span class="ubar-lbl">${l}</span>
+        <span class="ubar-track"><span class="ubar-fill" style="width:${pct}%;background:${col}"></span></span>
+        <span class="ubar-val" style="color:${col}">${pct}%</span>
+      </div>`;
+    }).join('');
+  }
+
   function _tagsCell(d) {
     const f = d.features || {};
     let html = '';
@@ -476,6 +502,7 @@
       <td class="td-muted">${d.learned_from || '—'}</td>
       <td class="td-muted">${_lastSeen(d.last_seen)}</td>
       <td>${_latencyCell(d)}</td>
+      <td>${_uptimeCell(d)}</td>
       <td>${_portsCell(d)}</td>
       <td>${_tagsCell(d)}</td>
       <td>${_monitorCell(d)}</td>
@@ -507,10 +534,10 @@
     if (!visible.length) {
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML =
-          `<tr class="empty-row"><td colspan="11">No monitored devices yet</td></tr>` +
+          `<tr class="empty-row"><td colspan="12">No monitored devices yet</td></tr>` +
           _devices.map(d => _rowHtml(d, true)).join('');
       } else {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
     } else {
       tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');

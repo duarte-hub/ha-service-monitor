@@ -559,6 +559,35 @@ def _seed_device(ip: str, name: str, ports: list[int]) -> None:
             log.info("Updated seed ports for %s: %s", ip, ports)
         _save_devices()
 
+# ---------------------------------------------------------------------------
+# Uptime history (in-memory ring buffer — not persisted, resets on restart)
+# ---------------------------------------------------------------------------
+_device_history: dict[str, list] = {}  # ip -> [{ts: float, up: bool}, ...]
+_HISTORY_TTL = 90_000  # keep 25 h so the 24 h window is always fully populated
+
+
+def _record_history(ip: str, up: bool) -> None:
+    now  = time.time()
+    hist = _device_history.setdefault(ip, [])
+    hist.append({"ts": now, "up": up})
+    cutoff = now - _HISTORY_TTL
+    i = 0
+    while i < len(hist) and hist[i]["ts"] < cutoff:
+        i += 1
+    if i:
+        del hist[:i]
+
+
+def _uptime_stats(ip: str) -> dict:
+    hist = _device_history.get(ip, [])
+    now  = time.time()
+    def _pct(window: float):
+        cutoff  = now - window
+        samples = [e["up"] for e in hist if e["ts"] >= cutoff]
+        return round(100 * sum(samples) / len(samples)) if samples else None
+    return {"m1": _pct(60), "h1": _pct(3600), "h24": _pct(86400)}
+
+
 def _ping_monitored() -> None:
     with _devices_lock:
         targets = [d.copy() for d in _devices.values() if d.get("monitored")]
@@ -574,6 +603,7 @@ def _ping_monitored() -> None:
             _devices[ip]["ping_latency_ms"] = latency
             if up:
                 _devices[ip]["last_seen"] = now
+        _record_history(ip, up)
         label = dev.get("name") or dev.get("hostname") or ip
         mode  = dev.get("alert_mode") or "default"
         log.debug("monitored %s (%s): %s", label, ip, "up" if up else "down")
@@ -1636,7 +1666,13 @@ def api_health():
 def api_devices():
     with _devices_lock:
         devs = sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")])
-    return jsonify(devs)
+    result = []
+    for d in devs:
+        dev = dict(d)
+        if dev.get("monitored"):
+            dev["uptime"] = _uptime_stats(d["ip"])
+        result.append(dev)
+    return jsonify(result)
 
 
 @app.route("/api/devices/<ip>", methods=["PATCH"])
