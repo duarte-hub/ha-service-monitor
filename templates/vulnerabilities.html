@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farol — Vulnerabilities</title>
+  <style>
+    :root {
+      --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09);
+      --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563;
+      --primary:#03a9f4; --green:#4caf50; --red:#e53935;
+      --yellow:#ff9800; --purple:#7c4dff;
+      --crit:#e53935; --high:#ff6d00; --med:#ff9800; --low:#4caf50; --info:#607d8b;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+           background:var(--bg); color:var(--text); min-height:100vh; }
+
+    .topbar { background:var(--primary); color:#fff; padding:0 20px; height:50px;
+              display:flex; align-items:center; justify-content:space-between; }
+    .topbar-left { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.95rem; }
+    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; }
+    .topbar-right a:hover { color:#fff; }
+
+    .page { max-width:1100px; margin:0 auto; padding:22px 20px; }
+
+    /* Summary bar */
+    .summary { display:flex; gap:12px; margin-bottom:22px; flex-wrap:wrap; align-items:center; }
+    .scard { background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+             padding:12px 18px; min-width:110px; text-align:center; }
+    .scard .num { font-size:1.6rem; font-weight:700; line-height:1; }
+    .scard .lbl { font-size:.68rem; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.07em; margin-top:4px; }
+    .scard.crit .num { color:var(--crit); }
+    .scard.high .num { color:var(--high); }
+    .scard.med  .num { color:var(--med);  }
+    .scard.low  .num { color:var(--low);  }
+    .scard.info .num { color:var(--info); }
+
+    .actions { margin-left:auto; display:flex; gap:10px; align-items:center; }
+    .btn { background:transparent; border:1px solid var(--border); color:var(--muted);
+           border-radius:6px; padding:6px 14px; font-size:.78rem; cursor:pointer;
+           font-family:inherit; transition:color .12s, border-color .12s; }
+    .btn:hover { color:var(--text); border-color:rgba(255,255,255,.22); }
+    .btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; }
+    .btn.primary:hover { opacity:.88; }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    #scan-all-status { font-size:.73rem; color:var(--muted); }
+
+    /* Host table */
+    .card { background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+            overflow:hidden; }
+    table { width:100%; border-collapse:collapse; }
+    thead th { padding:10px 14px; font-size:.72rem; text-transform:uppercase;
+               letter-spacing:.06em; color:var(--muted); text-align:left;
+               border-bottom:1px solid var(--border); font-weight:600; }
+    tbody tr { border-bottom:1px solid var(--border); }
+    tbody tr:last-child { border-bottom:none; }
+    tbody tr.host-row { cursor:pointer; }
+    tbody tr.host-row:hover td { background:rgba(255,255,255,.03); }
+    td { padding:10px 14px; font-size:.82rem; vertical-align:middle; }
+
+    .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+                  margin-right:6px; flex-shrink:0; }
+    .dot-up   { background:var(--green); }
+    .dot-down { background:var(--red); }
+    .dot-unk  { background:var(--dim); }
+
+    .sev-badge { display:inline-block; border-radius:4px; padding:2px 7px;
+                 font-size:.65rem; font-weight:700; letter-spacing:.04em; }
+    .sev-critical { background:rgba(229,57,53,.18);  color:var(--crit); }
+    .sev-high     { background:rgba(255,109,0,.18);  color:var(--high); }
+    .sev-medium   { background:rgba(255,152,0,.18);  color:var(--med);  }
+    .sev-low      { background:rgba(76,175,80,.18);  color:var(--low);  }
+    .sev-info     { background:rgba(96,125,139,.18); color:var(--info); }
+
+    .counts { display:flex; gap:5px; flex-wrap:wrap; }
+
+    .scan-btn { padding:4px 10px; font-size:.72rem; }
+
+    .spinner { display:inline-block; width:12px; height:12px;
+               border:2px solid rgba(255,255,255,.15); border-top-color:var(--primary);
+               border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* Findings detail panel */
+    .findings-row { display:none; }
+    .findings-row.open { display:table-row; }
+    .findings-panel { padding:0 14px 14px; }
+    .findings-table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .findings-table th { padding:7px 10px; font-size:.68rem; text-transform:uppercase;
+                         letter-spacing:.06em; color:var(--muted); text-align:left;
+                         border-bottom:1px solid var(--border); font-weight:600; }
+    .findings-table td { padding:8px 10px; font-size:.78rem; vertical-align:top;
+                         border-bottom:1px solid rgba(255,255,255,.04); }
+    .findings-table tr:last-child td { border-bottom:none; }
+    .no-findings { color:var(--muted); font-size:.78rem; padding:10px 0; }
+    .desc-text { color:var(--muted); font-size:.72rem; max-width:520px;
+                 white-space:pre-wrap; word-break:break-word; margin-top:2px; }
+    .cve-link { color:var(--primary); text-decoration:none; font-size:.72rem; }
+    .cve-link:hover { text-decoration:underline; }
+    .matched { color:var(--dim); font-size:.68rem; word-break:break-all; margin-top:2px; }
+    .source-tag { display:inline-block; border-radius:3px; padding:1px 5px;
+                  font-size:.62rem; font-weight:700; letter-spacing:.04em; }
+    .source-nmap    { background:rgba(3,169,244,.15);  color:var(--primary); }
+    .source-nuclei  { background:rgba(124,77,255,.15); color:var(--purple); }
+
+    .ts-cell { color:var(--muted); font-size:.73rem; white-space:nowrap; }
+    .chevron { font-size:.8rem; color:var(--dim); transition:transform .2s; }
+    .chevron.open { transform:rotate(90deg); }
+    .none-yet { color:var(--muted); font-size:.8rem; font-style:italic; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    Vulnerability Scan
+  </div>
+  <div class="topbar-right">
+    <a href="/topology">Topology</a>
+    <a href="/">← Dashboard</a>
+  </div>
+</div>
+
+<div class="page">
+
+  <div class="summary" id="summary">
+    <div class="scard crit"><div class="num" id="tot-crit">—</div><div class="lbl">Critical</div></div>
+    <div class="scard high"><div class="num" id="tot-high">—</div><div class="lbl">High</div></div>
+    <div class="scard med" ><div class="num" id="tot-med" >—</div><div class="lbl">Medium</div></div>
+    <div class="scard low" ><div class="num" id="tot-low" >—</div><div class="lbl">Low</div></div>
+    <div class="scard info"><div class="num" id="tot-info">—</div><div class="lbl">Info</div></div>
+    <div class="actions">
+      <span id="scan-all-status"></span>
+      <button class="btn primary" onclick="scanAll()">Scan All Hosts</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Host</th>
+          <th>IP</th>
+          <th>Findings</th>
+          <th>Last scan</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="host-tbody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+  const SEV_ORDER = ['critical','high','medium','low','info'];
+
+  function sevBadge(s) {
+    return `<span class="sev-badge sev-${s}">${s}</span>`;
+  }
+
+  function countChips(counts) {
+    const parts = [];
+    for (const s of SEV_ORDER) {
+      if (counts[s] > 0)
+        parts.push(`<span class="sev-badge sev-${s}">${counts[s]} ${s}</span>`);
+    }
+    return parts.length ? `<div class="counts">${parts.join('')}</div>`
+                        : `<span class="none-yet">clean</span>`;
+  }
+
+  function relTime(ts) {
+    if (!ts) return '—';
+    const diff = Math.round(Date.now() / 1000 - ts);
+    if (diff < 60)   return `${diff}s ago`;
+    if (diff < 3600) return `${Math.round(diff/60)}m ago`;
+    if (diff < 86400)return `${Math.round(diff/3600)}h ago`;
+    return `${Math.round(diff/86400)}d ago`;
+  }
+
+  function dotClass(status) {
+    if (status === 'up')   return 'dot-up';
+    if (status === 'down') return 'dot-down';
+    return 'dot-unk';
+  }
+
+  let _data = [];
+
+  function renderTable(hosts) {
+    const tbody = document.getElementById('host-tbody');
+
+    // Track expanded state before re-render
+    const openIps = new Set();
+    tbody.querySelectorAll('.findings-row.open').forEach(r => openIps.add(r.dataset.ip));
+
+    tbody.innerHTML = '';
+    let totals = {critical:0, high:0, medium:0, low:0, info:0};
+
+    for (const h of hosts) {
+      for (const [k,v] of Object.entries(h.counts || {})) totals[k] = (totals[k]||0) + v;
+
+      const isOpen = openIps.has(h.ip);
+
+      // Host row
+      const tr = document.createElement('tr');
+      tr.className = 'host-row';
+      tr.dataset.ip = h.ip;
+
+      const scanBtn = h.scanning
+        ? `<span class="spinner"></span>`
+        : `<button class="btn scan-btn" onclick="scanOne('${h.ip}',event)">Rescan</button>`;
+
+      const vsLabel = h.vuln_status === 'running' ? 'scanning…'
+                    : h.vuln_status === 'error'   ? 'error'
+                    : h.vuln_status === 'done'    ? relTime(h.ts)
+                    : '—';
+
+      tr.innerHTML = `
+        <td><span class="chevron${isOpen?' open':''}">&#x25B6;</span></td>
+        <td>
+          <span class="status-dot ${dotClass(h.status)}"></span>
+          <a href="/device/${h.ip}" style="color:var(--text);text-decoration:none">${h.label}</a>
+        </td>
+        <td style="color:var(--muted);font-size:.78rem">${h.ip}</td>
+        <td>${countChips(h.counts)}</td>
+        <td class="ts-cell">${vsLabel}</td>
+        <td>${scanBtn}</td>
+      `;
+      tr.querySelector('.chevron').parentElement.addEventListener('click', () => toggleFindings(h.ip));
+      tr.addEventListener('click', ev => {
+        if (ev.target.tagName === 'BUTTON' || ev.target.tagName === 'A') return;
+        toggleFindings(h.ip);
+      });
+      tbody.appendChild(tr);
+
+      // Findings detail row
+      const fr = document.createElement('tr');
+      fr.className = `findings-row${isOpen ? ' open' : ''}`;
+      fr.dataset.ip = h.ip;
+      const findings = h.findings || [];
+      let inner = '';
+      if (!h.vuln_status) {
+        inner = `<p class="no-findings">Not scanned yet — click Rescan to start.</p>`;
+      } else if (!findings.length) {
+        inner = `<p class="no-findings">No vulnerabilities found.</p>`;
+      } else {
+        inner = `<table class="findings-table">
+          <thead><tr><th>Severity</th><th>Name</th><th>CVE</th><th>Source</th><th>Details</th></tr></thead>
+          <tbody>
+          ${findings.map(f => `
+            <tr>
+              <td>${sevBadge(f.severity)}</td>
+              <td><strong>${esc(f.name)}</strong>
+                ${f.matched_at ? `<div class="matched">${esc(f.matched_at)}</div>` : ''}
+              </td>
+              <td>${f.cve ? `<a class="cve-link" href="https://nvd.nist.gov/vuln/detail/${f.cve}" target="_blank">${f.cve}</a>` : '—'}</td>
+              <td><span class="source-tag source-${f.source}">${f.source}</span></td>
+              <td><div class="desc-text">${esc(f.description)}</div></td>
+            </tr>
+          `).join('')}
+          </tbody>
+        </table>`;
+      }
+      fr.innerHTML = `<td colspan="6"><div class="findings-panel">${inner}</div></td>`;
+      tbody.appendChild(fr);
+    }
+
+    // Summary cards
+    document.getElementById('tot-crit').textContent = totals.critical || 0;
+    document.getElementById('tot-high').textContent = totals.high     || 0;
+    document.getElementById('tot-med').textContent  = totals.medium   || 0;
+    document.getElementById('tot-low').textContent  = totals.low      || 0;
+    document.getElementById('tot-info').textContent = totals.info     || 0;
+  }
+
+  function toggleFindings(ip) {
+    const fr = document.querySelector(`.findings-row[data-ip="${ip}"]`);
+    const ch = document.querySelector(`.host-row[data-ip="${ip}"] .chevron`);
+    if (!fr) return;
+    const isOpen = fr.classList.toggle('open');
+    if (ch) ch.classList.toggle('open', isOpen);
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  async function load() {
+    try {
+      const d = await (await fetch('/api/vulnerabilities')).json();
+      _data = d.hosts || [];
+      renderTable(_data);
+    } catch(e) { console.error(e); }
+  }
+
+  async function scanOne(ip, ev) {
+    if (ev) ev.stopPropagation();
+    await fetch(`/api/vulnerabilities/${ip}/scan`, {method:'POST'});
+    load();
+    // Poll until done
+    const t = setInterval(async () => {
+      await load();
+      const h = _data.find(x => x.ip === ip);
+      if (!h || !h.scanning) clearInterval(t);
+    }, 3000);
+  }
+
+  const scanAllStatus = document.getElementById('scan-all-status');
+  async function scanAll() {
+    scanAllStatus.textContent = 'Starting…';
+    await fetch('/api/vulnerabilities/scan/all', {method:'POST'});
+    scanAllStatus.textContent = 'Scanning all hosts…';
+    const t = setInterval(async () => {
+      await load();
+      const anyScanning = _data.some(h => h.scanning);
+      if (!anyScanning) {
+        clearInterval(t);
+        scanAllStatus.textContent = 'Done';
+        setTimeout(() => { scanAllStatus.textContent = ''; }, 4000);
+      }
+    }, 4000);
+  }
+
+  // Initial load + 10 s polling while any scan is running
+  load();
+  setInterval(() => {
+    if (_data.some(h => h.scanning)) load();
+  }, 5000);
+</script>
+</body>
+</html>

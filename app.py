@@ -368,6 +368,175 @@ def _run_nmap_all(ips: list) -> None:
              _nmap_all_status["done"], _nmap_all_status["total"], _nmap_all_status["errors"])
 
 
+# ── Vulnerability scanning ───────────────────────────────────────────────────
+_vuln_results:  dict = {}   # ip → {ts, status, findings: [...]}
+_vuln_scanning: set  = set()
+_vuln_lock = threading.Lock()
+_VULN_CONCURRENCY = 2        # heavier scans: keep concurrency low
+
+_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+_NUCLEI_TAGS    = "cves,exposed-panels,default-credentials,misconfiguration"
+
+
+def _cvss_to_severity(score: float) -> str:
+    if score >= 9.0: return "critical"
+    if score >= 7.0: return "high"
+    if score >= 4.0: return "medium"
+    return "low"
+
+
+def _parse_nmap_vuln(xml_str: str) -> list:
+    findings = []
+    try:
+        root = ET.fromstring(xml_str)
+    except Exception:
+        return findings
+
+    for host in root.findall("host"):
+        scripts: list = []
+        hs = host.find("hostscript")
+        if hs is not None:
+            scripts.extend(hs.findall("script"))
+        for port_el in host.findall(".//port"):
+            scripts.extend(port_el.findall("script"))
+
+        for sc in scripts:
+            sid  = sc.get("id", "")
+            sout = sc.get("output", "")
+            if "VULNERABLE" not in sout.upper():
+                continue
+            cves_found = re.findall(r"CVE-\d{4}-\d+", sout, re.IGNORECASE)
+            cvss_m     = re.search(r"CVSS:\s*([\d.]+)", sout, re.IGNORECASE)
+            if cvss_m:
+                try:    severity = _cvss_to_severity(float(cvss_m.group(1)))
+                except: severity = "high"
+            elif "CRITICAL" in sout.upper(): severity = "critical"
+            elif "MEDIUM"   in sout.upper(): severity = "medium"
+            elif "LOW"      in sout.upper(): severity = "low"
+            else:                            severity = "high"
+
+            findings.append({
+                "source":      "nmap",
+                "severity":    severity,
+                "name":        sid,
+                "description": sout[:600].strip(),
+                "cve":         cves_found[0] if cves_found else "",
+                "matched_at":  "",
+            })
+    return findings
+
+
+def _parse_nuclei_output(output: str) -> list:
+    findings = []
+    for raw in output.splitlines():
+        raw = raw.strip()
+        if not raw or not raw.startswith("{"):
+            continue
+        try:
+            item = json.loads(raw)
+        except Exception:
+            continue
+        info = item.get("info", {})
+        sev  = (info.get("severity") or "info").lower()
+        if sev not in _SEVERITY_ORDER:
+            sev = "info"
+        refs = info.get("reference") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        cve = next((r.split("/")[-1].upper() for r in refs if "CVE-" in r.upper()), "")
+        findings.append({
+            "source":      "nuclei",
+            "severity":    sev,
+            "name":        info.get("name") or item.get("template-id", ""),
+            "description": (info.get("description") or "")[:600],
+            "cve":         cve,
+            "matched_at":  item.get("matched-at", ""),
+        })
+    return findings
+
+
+def _run_vuln_scan(ip: str) -> None:
+    sem = threading.Semaphore(_VULN_CONCURRENCY)
+    with sem:
+        with _vuln_lock:
+            _vuln_scanning.add(ip)
+        _vuln_results[ip] = {"ts": None, "status": "running", "findings": []}
+        try:
+            findings: list = []
+
+            # Phase 1: nmap --script vuln
+            try:
+                cmd = ["nmap", "-sV", "--script", "vuln", "-T4", "-oX", "-", ip]
+                r   = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+                if r.stdout:
+                    findings.extend(_parse_nmap_vuln(r.stdout))
+            except FileNotFoundError:
+                log.warning("nmap not installed; skipping nmap vuln for %s", ip)
+            except subprocess.TimeoutExpired:
+                log.warning("nmap vuln scan timed out for %s", ip)
+            except Exception as e:
+                log.error("nmap vuln %s: %s", ip, e)
+
+            # Phase 2: Nuclei
+            try:
+                cmd = [
+                    "nuclei", "-u", ip,
+                    "-t", _NUCLEI_TAGS,
+                    "-json", "-silent",
+                    "-timeout", "10",
+                    "-rate-limit", "50",
+                ]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if r.stdout:
+                    findings.extend(_parse_nuclei_output(r.stdout))
+            except FileNotFoundError:
+                log.warning("nuclei not installed; skipping nuclei for %s", ip)
+            except subprocess.TimeoutExpired:
+                log.warning("nuclei scan timed out for %s", ip)
+            except Exception as e:
+                log.error("nuclei %s: %s", ip, e)
+
+            # Deduplicate by (name, source) and sort by severity
+            seen: set = set()
+            deduped   = []
+            for f in findings:
+                key = (f["name"].lower(), f["source"])
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(f)
+            deduped.sort(key=lambda f: _SEVERITY_ORDER.get(f["severity"], 99))
+
+            _vuln_results[ip] = {
+                "ts":       time.time(),
+                "status":   "done",
+                "findings": deduped,
+            }
+            log.info("Vuln scan %s: %d findings", ip, len(deduped))
+        except Exception as e:
+            log.error("vuln scan %s: %s", ip, e)
+            _vuln_results[ip] = {"ts": time.time(), "status": "error", "findings": []}
+        finally:
+            with _vuln_lock:
+                _vuln_scanning.discard(ip)
+
+
+def _vuln_auto_scan_loop() -> None:
+    """Runs a full network vuln sweep every 24 hours."""
+    time.sleep(300)   # wait 5 min after startup before first auto-sweep
+    while True:
+        with _devices_lock:
+            ips = list(_devices.keys())
+        log.info("Vuln auto-scan: sweeping %d hosts", len(ips))
+        for ip in ips:
+            with _vuln_lock:
+                already = ip in _vuln_scanning
+            if not already:
+                threading.Thread(target=_run_vuln_scan, args=(ip,), daemon=True,
+                                 name=f"vuln-{ip}").start()
+                time.sleep(15)   # stagger: one host every 15 s
+        time.sleep(24 * 3600)
+
+
 # ── SNMP interface diagnostics (IF-MIB) ──────────────────────────────────────
 _SNMP_IF_RESULTS: dict = {}   # ip → result
 _SNMP_IF_RUNNING: set  = set()
@@ -2558,6 +2727,77 @@ def api_snmp_if_get(ip):
     return jsonify(res if res else {"status": "none"})
 
 
+# ── Vulnerability scanning routes ─────────────────────────────────────────────
+@app.route("/vulnerabilities")
+def vulnerabilities_page():
+    return render_template("vulnerabilities.html")
+
+
+@app.route("/api/vulnerabilities")
+def api_vuln_list():
+    with _devices_lock:
+        devs = list(_devices.values())
+    with _vuln_lock:
+        scanning_snap = set(_vuln_scanning)
+
+    hosts = []
+    for d in devs:
+        ip      = d.get("ip", "")
+        vuln    = _vuln_results.get(ip, {})
+        findings = vuln.get("findings", [])
+        counts  = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+        for f in findings:
+            sev = f.get("severity", "info")
+            counts[sev] = counts.get(sev, 0) + 1
+        hosts.append({
+            "ip":         ip,
+            "label":      d.get("name") or d.get("hostname") or d.get("dhcp_hostname") or ip,
+            "status":     d.get("status", "unknown"),
+            "scanning":   ip in scanning_snap,
+            "vuln_status": vuln.get("status"),
+            "ts":          vuln.get("ts"),
+            "counts":      counts,
+            "findings":    findings,
+        })
+    return jsonify({"hosts": hosts})
+
+
+@app.route("/api/vulnerabilities/<ip>/scan", methods=["POST"])
+def api_vuln_scan_start(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return jsonify({"error": "not found"}), 404
+    with _vuln_lock:
+        if ip in _vuln_scanning:
+            return jsonify({"status": "already_running"})
+    threading.Thread(target=_run_vuln_scan, args=(ip,), daemon=True,
+                     name=f"vuln-{ip}").start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/api/vulnerabilities/<ip>", methods=["GET"])
+def api_vuln_get(ip):
+    with _vuln_lock:
+        scanning = ip in _vuln_scanning
+    res = _vuln_results.get(ip, {"status": "none", "findings": []})
+    return jsonify({**res, "scanning": scanning})
+
+
+@app.route("/api/vulnerabilities/scan/all", methods=["POST"])
+def api_vuln_scan_all():
+    with _devices_lock:
+        ips = list(_devices.keys())
+    started = 0
+    for ip in ips:
+        with _vuln_lock:
+            already = ip in _vuln_scanning
+        if not already:
+            threading.Thread(target=_run_vuln_scan, args=(ip,), daemon=True,
+                             name=f"vuln-{ip}").start()
+            started += 1
+    return jsonify({"status": "started", "count": started})
+
+
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])
 def api_nmap_start(ip):
     with _devices_lock:
@@ -3447,6 +3687,7 @@ if __name__ == "__main__":
     threading.Thread(target=_primary_peer_check_loop, daemon=True, name="peer-check").start()
     threading.Thread(target=_feature_probe_loop,      daemon=True, name="feature-probe").start()
     threading.Thread(target=_mdns_listen_loop,        daemon=True, name="mdns-listener").start()
+    threading.Thread(target=_vuln_auto_scan_loop,     daemon=True, name="vuln-auto").start()
 
     # Give the first poll a moment
     time.sleep(2)
