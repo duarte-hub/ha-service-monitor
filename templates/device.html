@@ -155,6 +155,34 @@
                       cursor:pointer; font-family:inherit; margin-left:auto; transition:background .15s; }
     .btn-del-device:hover { background:rgba(229,57,53,.22); }
 
+    /* ── Nmap card ── */
+    .nmap-run-btn { background:rgba(3,169,244,.15); border:1px solid rgba(3,169,244,.35);
+                   color:var(--primary); border-radius:6px; padding:4px 12px; font-size:.73rem;
+                   cursor:pointer; font-family:inherit; transition:background .15s; white-space:nowrap; }
+    .nmap-run-btn:hover:not(:disabled) { background:rgba(3,169,244,.28); }
+    .nmap-run-btn:disabled { opacity:.4; cursor:default; }
+    .nmap-ts { font-size:.69rem; color:var(--muted2); }
+    .nmap-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:.78rem; }
+    .nmap-table th { font-size:.59rem; color:var(--dim); text-transform:uppercase;
+                     letter-spacing:.07em; text-align:left; padding:3px 10px 5px 0;
+                     border-bottom:1px solid var(--border); font-family:inherit; }
+    .nmap-table td { padding:6px 10px 6px 0; border-bottom:1px solid var(--border2);
+                     vertical-align:top; }
+    .nmap-table tr:last-child td { border-bottom:none; }
+    .nmap-port  { font-family:'SF Mono','Fira Code',monospace; font-weight:700; color:var(--primary); }
+    .nmap-proto { font-family:'SF Mono','Fira Code',monospace; color:var(--muted2); font-size:.72rem; }
+    .nmap-svc   { font-weight:500; }
+    .nmap-ver   { font-size:.72rem; color:var(--muted); font-family:'SF Mono','Fira Code',monospace; }
+    .nmap-scripts { margin-top:4px; display:flex; flex-direction:column; gap:3px; }
+    .nmap-script  { font-size:.67rem; font-family:'SF Mono','Fira Code',monospace; }
+    .nmap-sid  { color:#ff9800; }
+    .nmap-sout { color:var(--muted); }
+    .nmap-os   { display:inline-flex; align-items:center; gap:6px; font-size:.78rem; margin-bottom:8px;
+                 background:rgba(187,134,252,.1); border:1px solid rgba(187,134,252,.25);
+                 color:#ce93d8; border-radius:5px; padding:3px 10px; }
+    .nmap-host-scripts { margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
+    .nmap-host-script  { margin-bottom:8px; }
+
     /* ── Dot ── */
     .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
     .dot.up      { background:var(--green); box-shadow:0 0 6px rgba(76,175,80,.6); }
@@ -275,6 +303,20 @@
     <div class="card-body">
       <div class="tags-wrap" id="tags-wrap"></div>
       <div id="snmp-detail" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+    </div>
+  </div>
+
+  <!-- Nmap Scan -->
+  <div class="card mb" id="nmap-card">
+    <div class="card-hdr">
+      <span>Nmap Scan</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="nmap-ts" class="nmap-ts"></span>
+        <button class="nmap-run-btn" id="nmap-btn" onclick="runNmap()">▶ Run Scan</button>
+      </div>
+    </div>
+    <div class="card-body" id="nmap-body">
+      <span style="color:var(--muted);font-size:.82rem">No scan run yet — click Run Scan to discover services</span>
     </div>
   </div>
 
@@ -585,6 +627,111 @@
 
   poll();
   setInterval(poll, 30000);
+
+  // ── Nmap ──────────────────────────────────────────────────────────────────
+  let _nmapPolling = false;
+
+  async function runNmap() {
+    document.getElementById('nmap-btn').disabled = true;
+    document.getElementById('nmap-ts').textContent = '';
+    document.getElementById('nmap-body').innerHTML =
+      '<span style="color:var(--primary);font-size:.82rem">Scanning… this may take 1–2 min</span>';
+    await fetch(`/api/devices/${IP}/nmap`, {method:'POST'});
+    if (!_nmapPolling) _pollNmap();
+  }
+
+  async function _pollNmap() {
+    _nmapPolling = true;
+    try {
+      const d = await (await fetch(`/api/devices/${IP}/nmap`)).json();
+      if (d.status === 'running') { setTimeout(_pollNmap, 3000); return; }
+      _renderNmap(d);
+    } catch(_) {}
+    _nmapPolling = false;
+  }
+
+  function _renderNmap(d) {
+    const btn  = document.getElementById('nmap-btn');
+    const body = document.getElementById('nmap-body');
+    const tsEl = document.getElementById('nmap-ts');
+    btn.disabled = false;
+    if (d.ts) tsEl.textContent = _lastSeen(d.ts);
+
+    if (d.status === 'none') {
+      body.innerHTML = '<span style="color:var(--muted);font-size:.82rem">No scan run yet</span>';
+      return;
+    }
+    if (d.status === 'error' || d.status === 'no_host') {
+      body.innerHTML = `<span style="color:var(--red);font-size:.82rem">${esc(d.error || 'Host not found or scan failed')}</span>`;
+      return;
+    }
+
+    let html = '';
+
+    // OS
+    if (d.os && d.os.length) {
+      const top = d.os[0];
+      html += `<div class="nmap-os">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zm-8-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm8-3H4V6h16v8z"/></svg>
+        ${esc(top.name)}&nbsp;<span style="opacity:.5">${top.accuracy}%</span>
+      </div>`;
+    }
+
+    // Hostnames from nmap (if different from known)
+    if (d.hostnames && d.hostnames.length) {
+      html += `<div style="margin-bottom:8px;font-size:.78rem;color:var(--muted)">
+        DNS: <span style="color:var(--text);font-family:monospace">${d.hostnames.map(esc).join(', ')}</span>
+      </div>`;
+    }
+
+    // Ports table
+    if (d.ports && d.ports.length) {
+      html += `<table class="nmap-table"><thead><tr>
+        <th>Port</th><th>Proto</th><th>Service</th><th>Version</th><th>Scripts</th>
+      </tr></thead><tbody>`;
+      for (const p of d.ports) {
+        const ver = [p.product, p.version, p.extrainfo].filter(Boolean).join(' ');
+        const svcName = p.tunnel === 'ssl' ? (p.name ? p.name + '/ssl' : 'ssl') : (p.name || '');
+        let scripts = '';
+        if (p.scripts && p.scripts.length) {
+          scripts = '<div class="nmap-scripts">';
+          for (const s of p.scripts) {
+            const first = s.output.split('\n')[0].trim().slice(0, 110);
+            scripts += `<div class="nmap-script"><span class="nmap-sid">${esc(s.id)}</span>: <span class="nmap-sout">${esc(first)}</span></div>`;
+          }
+          scripts += '</div>';
+        }
+        html += `<tr>
+          <td class="nmap-port">${p.port}</td>
+          <td class="nmap-proto">${esc(p.proto)}</td>
+          <td class="nmap-svc">${esc(svcName)}</td>
+          <td class="nmap-ver">${esc(ver)}</td>
+          <td>${scripts}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    } else {
+      html += '<div style="color:var(--muted);font-size:.82rem;margin-top:4px">No open ports found</div>';
+    }
+
+    // Host-level scripts (nbstat, smb-os-discovery, etc.)
+    if (d.host_scripts && d.host_scripts.length) {
+      html += '<div class="nmap-host-scripts"><div style="font-size:.59rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Host Scripts</div>';
+      for (const s of d.host_scripts) {
+        const lines = s.output.split('\n').slice(0, 4).map(l => esc(l.trim())).join('<br>');
+        html += `<div class="nmap-host-script">
+          <span class="nmap-sid" style="font-size:.7rem">${esc(s.id)}</span><br>
+          <span style="font-size:.69rem;color:var(--muted);font-family:monospace;line-height:1.5">${lines}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    body.innerHTML = html;
+  }
+
+  // Load existing scan result on page open
+  fetch(`/api/devices/${IP}/nmap`).then(r => r.json()).then(d => { if (d.status !== 'none') _renderNmap(d); });
 </script>
 </body>
 </html>

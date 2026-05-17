@@ -277,6 +277,69 @@ def _do_port_scan(ips: list[str], ports_str: str) -> None:
         log.error("Port scan failed: %s", e)
 
 
+# ── Per-device full nmap scan ─────────────────────────────────────────────────
+_nmap_scan_results: dict = {}
+_nmap_scanning:     set  = set()
+
+def _parse_nmap_full(xml_str: str) -> dict:
+    out: dict = {"ts": datetime.now().isoformat(), "status": "done",
+                 "ports": [], "os": [], "hostnames": [], "host_scripts": []}
+    try:
+        root = ET.fromstring(xml_str)
+    except Exception as e:
+        out.update({"status": "error", "error": f"XML parse error: {e}"}); return out
+    host = root.find("host")
+    if host is None:
+        out["status"] = "no_host"; return out
+    for hn in host.findall("hostnames/hostname"):
+        name = hn.get("name", "")
+        if name: out["hostnames"].append(name)
+    for port_el in host.findall("ports/port"):
+        st = port_el.find("state")
+        if st is None or st.get("state") != "open":
+            continue
+        svc = port_el.find("service")
+        p: dict = {
+            "port":      int(port_el.get("portid", 0)),
+            "proto":     port_el.get("protocol", "tcp"),
+            "name":      svc.get("name", "")      if svc is not None else "",
+            "product":   svc.get("product", "")   if svc is not None else "",
+            "version":   svc.get("version", "")   if svc is not None else "",
+            "extrainfo": svc.get("extrainfo", "") if svc is not None else "",
+            "tunnel":    svc.get("tunnel", "")    if svc is not None else "",
+            "scripts":   [],
+        }
+        for sc in port_el.findall("script"):
+            sid, sout = sc.get("id", ""), sc.get("output", "").strip()
+            if sid and sout: p["scripts"].append({"id": sid, "output": sout})
+        out["ports"].append(p)
+    for om in host.findall("os/osmatch"):
+        out["os"].append({"name": om.get("name", ""), "accuracy": int(om.get("accuracy", 0))})
+    out["os"].sort(key=lambda x: -x["accuracy"])
+    for sc in host.findall("hostscript/script"):
+        sid, sout = sc.get("id", ""), sc.get("output", "").strip()
+        if sid and sout: out["host_scripts"].append({"id": sid, "output": sout})
+    return out
+
+def _run_nmap_full(ip: str) -> None:
+    _nmap_scanning.add(ip)
+    try:
+        cmd = ["nmap", "-sV", "-sC", "-T4", "--open", "-oX", "-", ip]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        _nmap_scan_results[ip] = _parse_nmap_full(r.stdout)
+        log.info("Nmap scan %s: %d open ports", ip, len(_nmap_scan_results[ip].get("ports", [])))
+    except FileNotFoundError:
+        _nmap_scan_results[ip] = {"ts": datetime.now().isoformat(), "status": "error",
+                                   "error": "nmap is not installed on this system"}
+    except subprocess.TimeoutExpired:
+        _nmap_scan_results[ip] = {"ts": datetime.now().isoformat(), "status": "error",
+                                   "error": "Scan timed out (>3 min)"}
+    except Exception as e:
+        _nmap_scan_results[ip] = {"ts": datetime.now().isoformat(), "status": "error", "error": str(e)}
+    finally:
+        _nmap_scanning.discard(ip)
+
+
 def _do_scan(network: str) -> None:
     global _scan_status
     _scan_status = {"state": "running", "message": f"Scanning {network}…"}
@@ -2243,6 +2306,25 @@ def api_device_delete(ip):
         _save_devices()
     _trigger_auto_sync()
     return jsonify({"ok": True})
+
+
+@app.route("/api/devices/<ip>/nmap", methods=["POST"])
+def api_nmap_start(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return jsonify({"error": "not found"}), 404
+    if ip in _nmap_scanning:
+        return jsonify({"status": "running"})
+    threading.Thread(target=_run_nmap_full, args=(ip,), daemon=True, name=f"nmap-{ip}").start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/api/devices/<ip>/nmap", methods=["GET"])
+def api_nmap_result(ip):
+    if ip in _nmap_scanning:
+        return jsonify({"status": "running"})
+    res = _nmap_scan_results.get(ip)
+    return jsonify(res if res else {"status": "none"})
 
 
 @app.route("/api/scan", methods=["POST"])
