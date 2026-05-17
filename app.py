@@ -372,10 +372,35 @@ def _run_nmap_all(ips: list) -> None:
 _vuln_results:  dict = {}   # ip → {ts, status, findings: [...]}
 _vuln_scanning: set  = set()
 _vuln_lock = threading.Lock()
-_VULN_CONCURRENCY = 2        # heavier scans: keep concurrency low
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
-_NUCLEI_TAGS    = "cves,exposed-panels,default-credentials,misconfiguration"
+
+# Runtime-configurable vuln settings (overridden by _apply_config)
+VULN_AUTO_SCAN_ENABLED:       bool = True
+VULN_AUTO_SCAN_INTERVAL:      int  = 24     # hours between auto sweeps
+VULN_SCAN_DELAY:              int  = 15     # seconds between host starts in auto-sweep
+VULN_CONCURRENCY:             int  = 2      # max parallel scans
+VULN_EXCLUDE_IPS:             set  = set()  # IPs to skip entirely
+VULN_SCAN_ON_NEW_DEVICE:      bool = False
+
+VULN_NMAP_ENABLED:            bool = True
+VULN_NMAP_TIMING:             str  = "T4"
+VULN_NMAP_SCRIPTS:            str  = "vuln"
+VULN_NMAP_PORTS:              str  = ""     # empty → nmap default
+
+VULN_NUCLEI_ENABLED:          bool = True
+VULN_NUCLEI_TAGS:             str  = "cves,exposed-panels,default-credentials,misconfiguration"
+VULN_NUCLEI_EXCLUDE_TAGS:     str  = ""
+VULN_NUCLEI_SEVERITY:         str  = "critical,high,medium,low,info"
+VULN_NUCLEI_RATE_LIMIT:       int  = 50
+VULN_NUCLEI_TIMEOUT:          int  = 10
+VULN_NUCLEI_CONCURRENCY:      int  = 25
+VULN_NUCLEI_BULK_SIZE:        int  = 25
+VULN_NUCLEI_RETRIES:          int  = 1
+VULN_NUCLEI_MAX_HOST_ERRORS:  int  = 30
+VULN_NUCLEI_INTERACTSH:       bool = False
+VULN_NUCLEI_HEADLESS:         bool = False
+VULN_NUCLEI_CUSTOM_TEMPLATES: str  = ""
 
 
 def _cvss_to_severity(score: float) -> str:
@@ -455,46 +480,73 @@ def _parse_nuclei_output(output: str) -> list:
     return findings
 
 
+_vuln_sem = threading.Semaphore(VULN_CONCURRENCY)
+
+
 def _run_vuln_scan(ip: str) -> None:
-    sem = threading.Semaphore(_VULN_CONCURRENCY)
-    with sem:
+    with _vuln_sem:
+        if ip in VULN_EXCLUDE_IPS:
+            log.info("Vuln scan skipped (excluded): %s", ip)
+            return
         with _vuln_lock:
             _vuln_scanning.add(ip)
         _vuln_results[ip] = {"ts": None, "status": "running", "findings": []}
         try:
             findings: list = []
 
-            # Phase 1: nmap --script vuln
-            try:
-                cmd = ["nmap", "-sV", "--script", "vuln", "-T4", "-oX", "-", ip]
-                r   = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-                if r.stdout:
-                    findings.extend(_parse_nmap_vuln(r.stdout))
-            except FileNotFoundError:
-                log.warning("nmap not installed; skipping nmap vuln for %s", ip)
-            except subprocess.TimeoutExpired:
-                log.warning("nmap vuln scan timed out for %s", ip)
-            except Exception as e:
-                log.error("nmap vuln %s: %s", ip, e)
+            # Phase 1: nmap --script <scripts>
+            if VULN_NMAP_ENABLED:
+                try:
+                    cmd = ["nmap", "-sV",
+                           "--script", VULN_NMAP_SCRIPTS,
+                           f"-{VULN_NMAP_TIMING}",
+                           "-oX", "-"]
+                    if VULN_NMAP_PORTS:
+                        cmd += ["-p", VULN_NMAP_PORTS]
+                    cmd.append(ip)
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    if r.stdout:
+                        findings.extend(_parse_nmap_vuln(r.stdout))
+                except FileNotFoundError:
+                    log.warning("nmap not installed; skipping nmap vuln for %s", ip)
+                except subprocess.TimeoutExpired:
+                    log.warning("nmap vuln scan timed out for %s", ip)
+                except Exception as e:
+                    log.error("nmap vuln %s: %s", ip, e)
 
             # Phase 2: Nuclei
-            try:
-                cmd = [
-                    "nuclei", "-u", ip,
-                    "-t", _NUCLEI_TAGS,
-                    "-json", "-silent",
-                    "-timeout", "10",
-                    "-rate-limit", "50",
-                ]
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                if r.stdout:
-                    findings.extend(_parse_nuclei_output(r.stdout))
-            except FileNotFoundError:
-                log.warning("nuclei not installed; skipping nuclei for %s", ip)
-            except subprocess.TimeoutExpired:
-                log.warning("nuclei scan timed out for %s", ip)
-            except Exception as e:
-                log.error("nuclei %s: %s", ip, e)
+            if VULN_NUCLEI_ENABLED:
+                try:
+                    cmd = [
+                        "nuclei", "-u", ip,
+                        "-t",           VULN_NUCLEI_TAGS,
+                        "-severity",    VULN_NUCLEI_SEVERITY,
+                        "-rate-limit",  str(VULN_NUCLEI_RATE_LIMIT),
+                        "-timeout",     str(VULN_NUCLEI_TIMEOUT),
+                        "-c",           str(VULN_NUCLEI_CONCURRENCY),
+                        "-bulk-size",   str(VULN_NUCLEI_BULK_SIZE),
+                        "-retries",     str(VULN_NUCLEI_RETRIES),
+                        "-max-host-error", str(VULN_NUCLEI_MAX_HOST_ERRORS),
+                        "-json", "-silent",
+                    ]
+                    if VULN_NUCLEI_EXCLUDE_TAGS:
+                        cmd += ["-etags", VULN_NUCLEI_EXCLUDE_TAGS]
+                    if VULN_NUCLEI_INTERACTSH:
+                        cmd.append("-ni")
+                    if VULN_NUCLEI_HEADLESS:
+                        cmd.append("-headless")
+                    if VULN_NUCLEI_CUSTOM_TEMPLATES:
+                        cmd += ["-t", VULN_NUCLEI_CUSTOM_TEMPLATES]
+                    r = subprocess.run(cmd, capture_output=True, text=True,
+                                       timeout=VULN_NUCLEI_TIMEOUT * 60)
+                    if r.stdout:
+                        findings.extend(_parse_nuclei_output(r.stdout))
+                except FileNotFoundError:
+                    log.warning("nuclei not installed; skipping nuclei for %s", ip)
+                except subprocess.TimeoutExpired:
+                    log.warning("nuclei scan timed out for %s", ip)
+                except Exception as e:
+                    log.error("nuclei %s: %s", ip, e)
 
             # Deduplicate by (name, source) and sort by severity
             seen: set = set()
@@ -521,11 +573,14 @@ def _run_vuln_scan(ip: str) -> None:
 
 
 def _vuln_auto_scan_loop() -> None:
-    """Runs a full network vuln sweep every 24 hours."""
+    """Runs a full network vuln sweep on the configured interval."""
     time.sleep(300)   # wait 5 min after startup before first auto-sweep
     while True:
+        if not VULN_AUTO_SCAN_ENABLED:
+            time.sleep(60)
+            continue
         with _devices_lock:
-            ips = list(_devices.keys())
+            ips = [ip for ip in _devices if ip not in VULN_EXCLUDE_IPS]
         log.info("Vuln auto-scan: sweeping %d hosts", len(ips))
         for ip in ips:
             with _vuln_lock:
@@ -533,8 +588,8 @@ def _vuln_auto_scan_loop() -> None:
             if not already:
                 threading.Thread(target=_run_vuln_scan, args=(ip,), daemon=True,
                                  name=f"vuln-{ip}").start()
-                time.sleep(15)   # stagger: one host every 15 s
-        time.sleep(24 * 3600)
+                time.sleep(VULN_SCAN_DELAY)
+        time.sleep(VULN_AUTO_SCAN_INTERVAL * 3600)
 
 
 # ── SNMP interface diagnostics (IF-MIB) ──────────────────────────────────────
@@ -1866,6 +1921,32 @@ _CONFIG_FIELDS = {
     "peer_url":               {"label": "Peer instance URL",               "default": ""},
     "alert_role":             {"label": "Alert role",                      "default": "standalone"},
     "auto_sync_peer":         {"label": "Auto-sync to peer on change",     "default": "false"},
+    # Vulnerability scanning — general
+    "vuln_auto_scan_enabled":       {"label": "Auto-scan enabled",                  "default": "true"},
+    "vuln_auto_scan_interval":      {"label": "Auto-scan interval (hours)",          "default": "24"},
+    "vuln_scan_delay":              {"label": "Delay between hosts in sweep (s)",   "default": "15"},
+    "vuln_concurrency":             {"label": "Max concurrent scans",               "default": "2"},
+    "vuln_exclude_ips":             {"label": "Exclude IPs (comma-separated)",      "default": ""},
+    "vuln_scan_on_new_device":      {"label": "Scan on new device discovery",       "default": "false"},
+    # Vulnerability scanning — nmap
+    "vuln_nmap_enabled":            {"label": "nmap phase enabled",                 "default": "true"},
+    "vuln_nmap_timing":             {"label": "nmap timing template (T0–T5)",       "default": "T4"},
+    "vuln_nmap_scripts":            {"label": "nmap scripts",                       "default": "vuln"},
+    "vuln_nmap_ports":              {"label": "nmap port range (empty=default)",    "default": ""},
+    # Vulnerability scanning — Nuclei
+    "vuln_nuclei_enabled":          {"label": "Nuclei phase enabled",               "default": "true"},
+    "vuln_nuclei_tags":             {"label": "Nuclei template tags",               "default": "cves,exposed-panels,default-credentials,misconfiguration"},
+    "vuln_nuclei_exclude_tags":     {"label": "Nuclei exclude tags",                "default": ""},
+    "vuln_nuclei_severity":         {"label": "Nuclei severity filter",             "default": "critical,high,medium,low,info"},
+    "vuln_nuclei_rate_limit":       {"label": "Nuclei rate limit (req/s)",          "default": "50"},
+    "vuln_nuclei_timeout":          {"label": "Nuclei request timeout (s)",         "default": "10"},
+    "vuln_nuclei_concurrency":      {"label": "Nuclei template concurrency",        "default": "25"},
+    "vuln_nuclei_bulk_size":        {"label": "Nuclei bulk size (hosts/batch)",     "default": "25"},
+    "vuln_nuclei_retries":          {"label": "Nuclei retries",                     "default": "1"},
+    "vuln_nuclei_max_host_errors":  {"label": "Nuclei max host errors",             "default": "30"},
+    "vuln_nuclei_interactsh":       {"label": "Nuclei interactsh (OOB)",            "default": "false"},
+    "vuln_nuclei_headless":         {"label": "Nuclei headless browser mode",       "default": "false"},
+    "vuln_nuclei_custom_templates": {"label": "Nuclei extra templates path",        "default": ""},
 }
 
 def _load_config() -> dict:
@@ -1947,6 +2028,46 @@ def _apply_config(data: dict) -> None:
     if "alert_role"             in data: ALERT_ROLE             = data["alert_role"]               or "standalone"
     if "auto_sync_peer"         in data: AUTO_SYNC_PEER         = str(data["auto_sync_peer"]).lower() in ("true", "1", "yes")
     if "snmp_community"         in data: SNMP_COMMUNITY         = data["snmp_community"] or "public"
+
+    # Vulnerability scanning
+    global VULN_AUTO_SCAN_ENABLED, VULN_AUTO_SCAN_INTERVAL, VULN_SCAN_DELAY, VULN_CONCURRENCY
+    global VULN_EXCLUDE_IPS, VULN_SCAN_ON_NEW_DEVICE
+    global VULN_NMAP_ENABLED, VULN_NMAP_TIMING, VULN_NMAP_SCRIPTS, VULN_NMAP_PORTS
+    global VULN_NUCLEI_ENABLED, VULN_NUCLEI_TAGS, VULN_NUCLEI_EXCLUDE_TAGS, VULN_NUCLEI_SEVERITY
+    global VULN_NUCLEI_RATE_LIMIT, VULN_NUCLEI_TIMEOUT, VULN_NUCLEI_CONCURRENCY
+    global VULN_NUCLEI_BULK_SIZE, VULN_NUCLEI_RETRIES, VULN_NUCLEI_MAX_HOST_ERRORS
+    global VULN_NUCLEI_INTERACTSH, VULN_NUCLEI_HEADLESS, VULN_NUCLEI_CUSTOM_TEMPLATES
+
+    def _b(k): return str(data.get(k, "")).lower() in ("true", "1", "yes")
+    def _i(k, d):
+        try: return int(data[k]) if k in data else d
+        except (ValueError, TypeError): return d
+
+    if "vuln_auto_scan_enabled"       in data: VULN_AUTO_SCAN_ENABLED       = _b("vuln_auto_scan_enabled")
+    if "vuln_auto_scan_interval"      in data: VULN_AUTO_SCAN_INTERVAL      = _i("vuln_auto_scan_interval", 24)
+    if "vuln_scan_delay"              in data: VULN_SCAN_DELAY              = _i("vuln_scan_delay", 15)
+    if "vuln_concurrency"             in data: VULN_CONCURRENCY             = _i("vuln_concurrency", 2)
+    if "vuln_exclude_ips"             in data:
+        raw = data.get("vuln_exclude_ips") or ""
+        VULN_EXCLUDE_IPS = {s.strip() for s in raw.split(",") if s.strip()}
+    if "vuln_scan_on_new_device"      in data: VULN_SCAN_ON_NEW_DEVICE      = _b("vuln_scan_on_new_device")
+    if "vuln_nmap_enabled"            in data: VULN_NMAP_ENABLED            = _b("vuln_nmap_enabled")
+    if "vuln_nmap_timing"             in data: VULN_NMAP_TIMING             = data["vuln_nmap_timing"]             or "T4"
+    if "vuln_nmap_scripts"            in data: VULN_NMAP_SCRIPTS            = data["vuln_nmap_scripts"]            or "vuln"
+    if "vuln_nmap_ports"              in data: VULN_NMAP_PORTS              = data["vuln_nmap_ports"]              or ""
+    if "vuln_nuclei_enabled"          in data: VULN_NUCLEI_ENABLED          = _b("vuln_nuclei_enabled")
+    if "vuln_nuclei_tags"             in data: VULN_NUCLEI_TAGS             = data["vuln_nuclei_tags"]             or "cves"
+    if "vuln_nuclei_exclude_tags"     in data: VULN_NUCLEI_EXCLUDE_TAGS     = data["vuln_nuclei_exclude_tags"]     or ""
+    if "vuln_nuclei_severity"         in data: VULN_NUCLEI_SEVERITY         = data["vuln_nuclei_severity"]         or "critical,high,medium,low,info"
+    if "vuln_nuclei_rate_limit"       in data: VULN_NUCLEI_RATE_LIMIT       = _i("vuln_nuclei_rate_limit", 50)
+    if "vuln_nuclei_timeout"          in data: VULN_NUCLEI_TIMEOUT          = _i("vuln_nuclei_timeout", 10)
+    if "vuln_nuclei_concurrency"      in data: VULN_NUCLEI_CONCURRENCY      = _i("vuln_nuclei_concurrency", 25)
+    if "vuln_nuclei_bulk_size"        in data: VULN_NUCLEI_BULK_SIZE        = _i("vuln_nuclei_bulk_size", 25)
+    if "vuln_nuclei_retries"          in data: VULN_NUCLEI_RETRIES          = _i("vuln_nuclei_retries", 1)
+    if "vuln_nuclei_max_host_errors"  in data: VULN_NUCLEI_MAX_HOST_ERRORS  = _i("vuln_nuclei_max_host_errors", 30)
+    if "vuln_nuclei_interactsh"       in data: VULN_NUCLEI_INTERACTSH       = _b("vuln_nuclei_interactsh")
+    if "vuln_nuclei_headless"         in data: VULN_NUCLEI_HEADLESS         = _b("vuln_nuclei_headless")
+    if "vuln_nuclei_custom_templates" in data: VULN_NUCLEI_CUSTOM_TEMPLATES = data["vuln_nuclei_custom_templates"] or ""
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -2731,6 +2852,28 @@ def api_snmp_if_get(ip):
 @app.route("/vulnerabilities")
 def vulnerabilities_page():
     return render_template("vulnerabilities.html")
+
+
+@app.route("/vulnerabilities/config")
+def vuln_config_page():
+    return render_template("vuln_config.html")
+
+
+@app.route("/api/vulnerabilities/config", methods=["GET"])
+def api_vuln_config_get():
+    keys = [k for k in _CONFIG_FIELDS if k.startswith("vuln_")]
+    return jsonify({k: _runtime_config.get(k, _CONFIG_FIELDS[k]["default"]) for k in keys})
+
+
+@app.route("/api/vulnerabilities/config", methods=["POST"])
+def api_vuln_config_post():
+    data = request.json or {}
+    allowed = {k for k in _CONFIG_FIELDS if k.startswith("vuln_")}
+    filtered = {k: v for k, v in data.items() if k in allowed}
+    _runtime_config.update(filtered)
+    _save_config(_runtime_config)
+    _apply_config(filtered)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/vulnerabilities")
