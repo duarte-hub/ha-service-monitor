@@ -282,13 +282,13 @@
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
     // Tier labels (background, low-opacity)
-    const hasAps = nodes.some(n => n.type === 'ap');
+    const hasAps = nodes.some(n => n.type === 'ap' || n.type === 'switch');
     if (hasAps) {
       const xs = nodes.map(n => n.x);
       const minX = Math.min(...xs) - 30, maxX = Math.max(...xs) + 30;
       [
         {y: GW_Y - 35,  label: 'Gateway'},
-        {y: AP_Y - 35,  label: 'Access Points'},
+        {y: AP_Y - 35,  label: 'APs / Switches'},
         {y: DEV_Y - 35, label: 'Devices'},
       ].forEach(({y, label}) => {
         svgTxt(label, {
@@ -402,7 +402,7 @@
       const cls = n.status === 'up' ? 'up' : n.status === 'down' ? 'down' : 'unk';
       html += `<span class="badge ${cls}">${n.status}</span>`;
     }
-    if (n.type === 'ap') {
+    if (n.type === 'ap' || n.type === 'switch') {
       const cnt = _edges.filter(e => e.from === n.id).length;
       html += `<div class="tr">${cnt} device${cnt !== 1 ? 's' : ''} connected</div>`;
     }

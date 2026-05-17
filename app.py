@@ -3050,14 +3050,36 @@ def topology_page():
     return render_template("topology.html")
 
 
+_WIRELESS_KEYWORDS = ("ath", "wlan", "wifi", "bss", "vap", "wl")
+
+
+def _snmp_node_type(switch_ip: str) -> str:
+    """Return 'ap' if any port recorded for switch_ip has a wireless interface name."""
+    with _mac_port_lock:
+        for info in _mac_to_port.values():
+            if info["switch_ip"] == switch_ip:
+                if any(kw in (info.get("if_name") or "").lower() for kw in _WIRELESS_KEYWORDS):
+                    return "ap"
+    return "switch"
+
+
 @app.route("/api/topology")
 def api_topology():
     with _devices_lock:
         devs = list(_devices.values())
+        dev_by_ip = {d["ip"]: d for d in devs if "ip" in d}
+
+    # Snapshot mac→port so we don't hold the lock during topology build
+    with _mac_port_lock:
+        mac_port_snap = dict(_mac_to_port)
+
+    # IPs that act as intermediate SNMP nodes (Aruba APs / managed switches)
+    snmp_intermediate_ips: set = set(info["switch_ip"] for info in mac_port_snap.values())
 
     nodes = []
     edges = []
-    seen_aps: set = set()
+    seen_aps: set = set()        # Meraki conn names already added
+    seen_snmp: set = set()       # SNMP intermediate IPs already added
     gateway_ips: set = set()
 
     for d in devs:
@@ -3065,10 +3087,18 @@ def api_topology():
         if ip.endswith(".1") or ip.endswith(".254"):
             gateway_ips.add(ip)
 
+    mac_to_ip = {d.get("mac", "").lower(): d.get("ip", "") for d in devs if d.get("mac")}
+
     for d in devs:
         ip = d.get("ip", "")
         label = d.get("name") or d.get("hostname") or d.get("dhcp_hostname") or ip
-        node_type = "gateway" if ip in gateway_ips else "device"
+        if ip in gateway_ips:
+            node_type = "gateway"
+        elif ip in snmp_intermediate_ips:
+            node_type = _snmp_node_type(ip)
+        else:
+            node_type = "device"
+
         nodes.append({
             "id": ip,
             "label": label,
@@ -3078,20 +3108,45 @@ def api_topology():
             "vendor": d.get("vendor", ""),
             "mac": d.get("mac", ""),
         })
+
+        # Meraki wireless association edge
         conn_name = d.get("meraki_connection") or ""
         if conn_name:
-            # Classify by actual Meraki device model; fall back to "ap" if unknown
             dev_type = _meraki_net_devs.get(conn_name, "ap")
             conn_id  = f"meraki:{conn_name}"
             if conn_name not in seen_aps:
                 seen_aps.add(conn_name)
                 nodes.append({"id": conn_id, "label": conn_name, "type": dev_type, "status": "online"})
             edges.append({"from": ip, "to": conn_id})
+            continue  # already connected via Meraki; skip SNMP edge for this device
 
-    if gateway_ips:
-        gw = sorted(gateway_ips)[0]
+        # SNMP bridge edge (Aruba / managed switch)
+        mac_lc = (d.get("mac") or "").lower()
+        port_info = mac_port_snap.get(mac_lc)
+        if port_info:
+            sw_ip = port_info["switch_ip"]
+            if sw_ip not in seen_snmp and sw_ip not in gateway_ips:
+                seen_snmp.add(sw_ip)
+                sw_dev = dev_by_ip.get(sw_ip, {})
+                sw_label = sw_dev.get("name") or sw_dev.get("hostname") or sw_dev.get("dhcp_hostname") or sw_ip
+                sw_type = _snmp_node_type(sw_ip)
+                # Only add a separate node if this IP isn't already in the main device loop
+                # (it will be added there); mark it so the main loop sets the right type
+                if sw_ip not in dev_by_ip:
+                    nodes.append({
+                        "id": sw_ip, "label": sw_label, "type": sw_type,
+                        "status": "online", "ip": sw_ip, "vendor": "", "mac": "",
+                    })
+            if sw_ip not in gateway_ips:
+                edges.append({"from": ip, "to": sw_ip})
+
+    gw = sorted(gateway_ips)[0] if gateway_ips else None
+
+    if gw:
         for conn_name in seen_aps:
             edges.append({"from": f"meraki:{conn_name}", "to": gw})
+        for sw_ip in seen_snmp:
+            edges.append({"from": sw_ip, "to": gw})
 
     return jsonify({"nodes": nodes, "edges": edges})
 
