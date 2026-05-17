@@ -368,6 +368,96 @@ def _run_nmap_all(ips: list) -> None:
              _nmap_all_status["done"], _nmap_all_status["total"], _nmap_all_status["errors"])
 
 
+# ── SNMP interface diagnostics (IF-MIB) ──────────────────────────────────────
+_SNMP_IF_RESULTS: dict = {}   # ip → result
+_SNMP_IF_RUNNING: set  = set()
+
+# IF-MIB column numbers → field names
+_IF_COL: dict = {
+    "2": "descr", "5": "speed", "7": "admin", "8": "oper",
+    "10": "in_oct", "13": "in_disc", "14": "in_err",
+    "16": "out_oct", "19": "out_disc", "20": "out_err",
+}
+_IFX_COL: dict = {
+    "1": "name", "6": "hc_in", "10": "hc_out", "15": "high_speed", "18": "alias",
+}
+_IF_OPER: dict = {
+    "1": "up", "2": "down", "3": "testing", "4": "unknown",
+    "5": "dormant", "6": "notPresent", "7": "lowerLayerDown",
+}
+
+def _sv(val_str: str) -> str:
+    """Strip 'TYPE: ' prefix from snmpwalk value and surrounding quotes."""
+    v = val_str.split(": ", 1)[-1].strip() if ": " in val_str else val_str.strip()
+    return v.strip('"')
+
+def _si(val_str: str) -> int:
+    try: return int(_sv(val_str))
+    except (ValueError, TypeError): return 0
+
+def _run_snmp_if_diag(ip: str, community: str) -> None:
+    _SNMP_IF_RUNNING.add(ip)
+    try:
+        ifaces: dict = {}  # idx → {field: value}
+
+        def _collect(base_oid: str, col_map: dict) -> None:
+            for oid_str, val_str in _snmpwalk(ip, community, base_oid, timeout=25):
+                parts = oid_str.lstrip(".").split(".")
+                if len(parts) < 2:
+                    continue
+                col_s, idx_s = parts[-2], parts[-1]
+                try:
+                    idx = int(idx_s)
+                except ValueError:
+                    continue
+                field = col_map.get(col_s)
+                if field:
+                    if idx not in ifaces:
+                        ifaces[idx] = {"idx": idx}
+                    ifaces[idx][field] = _sv(val_str)
+
+        _collect("1.3.6.1.2.1.2.2.1",   _IF_COL)
+        _collect("1.3.6.1.2.1.31.1.1.1", _IFX_COL)
+
+        iface_list = []
+        for idx in sorted(ifaces):
+            d = ifaces[idx]
+            speed = None
+            if "high_speed" in d:
+                try: speed = int(d["high_speed"])
+                except ValueError: pass
+            if speed is None and "speed" in d:
+                try: speed = int(d["speed"]) // 1_000_000
+                except ValueError: pass
+            in_oct  = _si(d["hc_in"])  if "hc_in"  in d else (_si(d["in_oct"])  if "in_oct"  in d else None)
+            out_oct = _si(d["hc_out"]) if "hc_out" in d else (_si(d["out_oct"]) if "out_oct" in d else None)
+            iface_list.append({
+                "idx":       idx,
+                "name":      d.get("name") or d.get("descr") or f"if{idx}",
+                "alias":     d.get("alias", ""),
+                "oper":      _IF_OPER.get(d.get("oper", ""), d.get("oper", "?")),
+                "admin":     _IF_OPER.get(d.get("admin", ""), d.get("admin", "?")),
+                "speed_mbps": speed,
+                "in_err":    _si(d["in_err"])   if "in_err"   in d else None,
+                "out_err":   _si(d["out_err"])  if "out_err"  in d else None,
+                "in_disc":   _si(d["in_disc"])  if "in_disc"  in d else None,
+                "out_disc":  _si(d["out_disc"]) if "out_disc" in d else None,
+                "in_octets":  in_oct,
+                "out_octets": out_oct,
+            })
+
+        _SNMP_IF_RESULTS[ip] = {
+            "ts": datetime.now().isoformat(), "status": "done",
+            "interfaces": iface_list,
+        }
+        err_count = sum(1 for i in iface_list if (i["in_err"] or 0) + (i["out_err"] or 0) > 0)
+        log.info("SNMP if-diag %s: %d interfaces, %d with errors", ip, len(iface_list), err_count)
+    except Exception as e:
+        _SNMP_IF_RESULTS[ip] = {"ts": datetime.now().isoformat(), "status": "error", "error": str(e)}
+    finally:
+        _SNMP_IF_RUNNING.discard(ip)
+
+
 def _do_scan(network: str) -> None:
     global _scan_status
     _scan_status = {"state": "running", "message": f"Scanning {network}…"}
@@ -2355,6 +2445,27 @@ def api_nmap_all_start():
 @app.route("/api/nmap/all", methods=["GET"])
 def api_nmap_all_get():
     return jsonify(_nmap_all_status)
+
+
+@app.route("/api/devices/<ip>/snmp/interfaces", methods=["POST"])
+def api_snmp_if_start(ip):
+    with _devices_lock:
+        if ip not in _devices:
+            return jsonify({"error": "not found"}), 404
+    if ip in _SNMP_IF_RUNNING:
+        return jsonify({"status": "running"})
+    community = (request.json or {}).get("community") or SNMP_COMMUNITY
+    threading.Thread(target=_run_snmp_if_diag, args=(ip, community),
+                     daemon=True, name=f"snmp-if-{ip}").start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/api/devices/<ip>/snmp/interfaces", methods=["GET"])
+def api_snmp_if_get(ip):
+    if ip in _SNMP_IF_RUNNING:
+        return jsonify({"status": "running"})
+    res = _SNMP_IF_RESULTS.get(ip)
+    return jsonify(res if res else {"status": "none"})
 
 
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])

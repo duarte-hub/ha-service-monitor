@@ -155,6 +155,47 @@
                       cursor:pointer; font-family:inherit; margin-left:auto; transition:background .15s; }
     .btn-del-device:hover { background:rgba(229,57,53,.22); }
 
+    /* ── Switch diagnostics ── */
+    .diag-btn { background:rgba(38,166,154,.15); border:1px solid rgba(38,166,154,.4);
+                color:#4db6ac; border-radius:6px; padding:4px 12px; font-size:.73rem;
+                cursor:pointer; font-family:inherit; transition:background .15s; white-space:nowrap; }
+    .diag-btn:hover:not(:disabled) { background:rgba(38,166,154,.28); }
+    .diag-btn:disabled { opacity:.4; cursor:default; }
+    .diag-community { background:rgba(255,255,255,.05); border:1px solid var(--border);
+                      border-radius:5px; color:var(--text); font-size:.75rem; padding:3px 8px;
+                      width:90px; outline:none; font-family:inherit; }
+    .diag-community:focus { border-color:#4db6ac; }
+    .diag-ts { font-size:.69rem; color:var(--muted2); }
+    .diag-summary { font-size:.75rem; color:var(--muted); margin-bottom:10px; }
+    .diag-summary .s-err  { color:var(--red);    font-weight:700; }
+    .diag-summary .s-disc { color:var(--yellow); font-weight:700; }
+    .diag-summary .s-ok   { color:var(--green);  font-weight:700; }
+    .if-filters { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+    .if-filter-btn { background:transparent; border:1px solid var(--border); color:var(--muted);
+                     border-radius:5px; padding:3px 9px; font-size:.7rem; cursor:pointer;
+                     font-family:inherit; transition:all .12s; }
+    .if-filter-btn.active { background:#4db6ac; border-color:#4db6ac; color:#111; font-weight:600; }
+    .if-table { width:100%; border-collapse:collapse; font-size:.77rem; }
+    .if-table th { font-size:.58rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em;
+                   text-align:right; padding:3px 8px 5px; border-bottom:1px solid var(--border); font-family:inherit; }
+    .if-table th:first-child { text-align:left; }
+    .if-table td { padding:5px 8px; border-bottom:1px solid var(--border2); vertical-align:middle; text-align:right; }
+    .if-table td:first-child { text-align:left; }
+    .if-table tr:last-child td { border-bottom:none; }
+    .if-table tr.if-err  > td { background:rgba(229,57,53,.05); }
+    .if-table tr.if-disc > td { background:rgba(255,152,0,.04); }
+    .if-table tr.if-down { opacity:.38; }
+    .if-name  { font-family:'SF Mono','Fira Code',monospace; font-weight:600; }
+    .if-alias { font-size:.68rem; color:var(--muted); display:block; font-weight:400; font-family:inherit; }
+    .if-oper-up   { color:var(--green); font-size:.7rem; font-weight:700; }
+    .if-oper-down { color:var(--red);   font-size:.7rem; font-weight:700; }
+    .if-oper-x    { color:var(--muted); font-size:.7rem; }
+    .if-speed { font-family:monospace; color:var(--muted2); font-size:.72rem; }
+    .if-zero  { color:var(--dim); }
+    .if-err-val  { color:var(--red);    font-weight:700; font-family:monospace; }
+    .if-disc-val { color:var(--yellow); font-weight:600; font-family:monospace; }
+    .if-oct   { font-family:monospace; font-size:.7rem; color:var(--muted2); }
+
     /* ── Nmap card ── */
     .nmap-run-btn { background:rgba(3,169,244,.15); border:1px solid rgba(3,169,244,.35);
                    color:var(--primary); border-radius:6px; padding:4px 12px; font-size:.73rem;
@@ -303,6 +344,21 @@
     <div class="card-body">
       <div class="tags-wrap" id="tags-wrap"></div>
       <div id="snmp-detail" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+    </div>
+  </div>
+
+  <!-- Switch Interface Diagnostics -->
+  <div class="card mb" id="swdiag-card">
+    <div class="card-hdr">
+      <span>Switch Diagnostics — Interface Errors</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="swdiag-ts" class="diag-ts"></span>
+        <input class="diag-community" id="swdiag-community" placeholder="community" title="SNMP community string">
+        <button class="diag-btn" id="swdiag-btn" onclick="runSwDiag()">▶ Run SNMP Scan</button>
+      </div>
+    </div>
+    <div class="card-body" id="swdiag-body">
+      <span style="color:var(--muted);font-size:.82rem">No scan run yet — runs snmpwalk against IF-MIB to show per-interface error counters</span>
     </div>
   </div>
 
@@ -627,6 +683,174 @@
 
   poll();
   setInterval(poll, 30000);
+
+  // ── Switch Interface Diagnostics ──────────────────────────────────────────
+  let _swDiagPolling = false;
+  let _swDiagFilter  = 'all';
+  let _swDiagData    = null;
+
+  async function runSwDiag() {
+    const btn  = document.getElementById('swdiag-btn');
+    const comm = document.getElementById('swdiag-community').value.trim() || null;
+    btn.disabled = true;
+    document.getElementById('swdiag-ts').textContent = '';
+    document.getElementById('swdiag-body').innerHTML =
+      '<span style="color:#4db6ac;font-size:.82rem">Scanning interfaces… (snmpwalk IF-MIB)</span>';
+    await fetch(`/api/devices/${IP}/snmp/interfaces`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({community: comm}),
+    });
+    if (!_swDiagPolling) _pollSwDiag();
+  }
+
+  async function _pollSwDiag() {
+    _swDiagPolling = true;
+    try {
+      const d = await (await fetch(`/api/devices/${IP}/snmp/interfaces`)).json();
+      if (d.status === 'running') { setTimeout(_pollSwDiag, 3000); return; }
+      _renderSwDiag(d);
+    } catch(_) {}
+    _swDiagPolling = false;
+  }
+
+  function _fmtOctets(n) {
+    if (n === null || n === undefined) return '—';
+    if (n >= 1e12) return (n/1e12).toFixed(1) + ' TB';
+    if (n >= 1e9)  return (n/1e9).toFixed(1)  + ' GB';
+    if (n >= 1e6)  return (n/1e6).toFixed(1)  + ' MB';
+    if (n >= 1e3)  return (n/1e3).toFixed(0)  + ' KB';
+    return n + ' B';
+  }
+
+  function _fmtSpeed(mbps) {
+    if (!mbps && mbps !== 0) return '—';
+    if (mbps >= 1000) return (mbps/1000) + ' Gbps';
+    if (mbps > 0)     return mbps + ' Mbps';
+    return '—';
+  }
+
+  function _setIfFilter(f) {
+    _swDiagFilter = f;
+    document.querySelectorAll('.if-filter-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('if-f-' + f).classList.add('active');
+    if (_swDiagData) _renderIfTable(_swDiagData.interfaces);
+  }
+
+  function _renderIfTable(ifaces) {
+    const body = document.getElementById('swdiag-table-body');
+    if (!body) return;
+    const rows = ifaces.filter(i => {
+      if (_swDiagFilter === 'errors')  return (i.in_err||0)+(i.out_err||0) > 0;
+      if (_swDiagFilter === 'active')  return i.admin === 'up';
+      if (_swDiagFilter === 'up')      return i.oper  === 'up';
+      return true;
+    });
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:14px">No interfaces match this filter</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows.map(i => {
+      const hasErr  = (i.in_err||0)+(i.out_err||0) > 0;
+      const hasDisc = (i.in_disc||0)+(i.out_disc||0) > 0;
+      const isDown  = i.admin === 'up' && i.oper !== 'up';
+      const rowCls  = hasErr ? 'if-err' : hasDisc ? 'if-disc' : isDown ? 'if-down' : '';
+
+      const operCls = i.oper === 'up' ? 'if-oper-up' : i.oper === 'down' ? 'if-oper-down' : 'if-oper-x';
+      const operDot = i.oper === 'up' ? '●' : i.oper === 'down' ? '●' : '○';
+
+      const errIn  = i.in_err  !== null ? (i.in_err  > 0 ? `<span class="if-err-val">${i.in_err}</span>`  : `<span class="if-zero">0</span>`) : '—';
+      const errOut = i.out_err !== null ? (i.out_err > 0 ? `<span class="if-err-val">${i.out_err}</span>` : `<span class="if-zero">0</span>`) : '—';
+      const discIn  = i.in_disc  !== null ? (i.in_disc  > 0 ? `<span class="if-disc-val">${i.in_disc}</span>`  : `<span class="if-zero">0</span>`) : '—';
+      const discOut = i.out_disc !== null ? (i.out_disc > 0 ? `<span class="if-disc-val">${i.out_disc}</span>` : `<span class="if-zero">0</span>`) : '—';
+
+      const traffic = (i.in_octets !== null || i.out_octets !== null)
+        ? `<span class="if-oct">↓${_fmtOctets(i.in_octets)} ↑${_fmtOctets(i.out_octets)}</span>`
+        : '<span class="if-zero">—</span>';
+
+      return `<tr class="${rowCls}">
+        <td><span class="if-name">${esc(i.name)}</span>${i.alias ? `<span class="if-alias">${esc(i.alias)}</span>` : ''}</td>
+        <td><span class="${operCls}">${operDot} ${esc(i.oper)}</span></td>
+        <td><span class="if-speed">${_fmtSpeed(i.speed_mbps)}</span></td>
+        <td>${errIn}</td>
+        <td>${errOut}</td>
+        <td>${discIn}</td>
+        <td>${discOut}</td>
+        <td>${traffic}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function _renderSwDiag(d) {
+    const btn  = document.getElementById('swdiag-btn');
+    const body = document.getElementById('swdiag-body');
+    const tsEl = document.getElementById('swdiag-ts');
+    btn.disabled = false;
+    if (d.ts) tsEl.textContent = _lastSeen(d.ts);
+
+    if (d.status === 'none') {
+      body.innerHTML = '<span style="color:var(--muted);font-size:.82rem">No scan run yet</span>';
+      return;
+    }
+    if (d.status === 'error') {
+      body.innerHTML = `<span style="color:var(--red);font-size:.82rem">${esc(d.error || 'SNMP scan failed — check community string and that SNMP is enabled on this device')}</span>`;
+      return;
+    }
+
+    _swDiagData = d;
+    const ifaces = d.interfaces || [];
+    const up       = ifaces.filter(i => i.oper === 'up').length;
+    const withErr  = ifaces.filter(i => (i.in_err||0)+(i.out_err||0) > 0).length;
+    const withDisc = ifaces.filter(i => (i.in_disc||0)+(i.out_disc||0) > 0).length;
+
+    // Sort: errors first, then discards, then up, then rest
+    ifaces.sort((a, b) => {
+      const ea = (a.in_err||0)+(a.out_err||0), eb = (b.in_err||0)+(b.out_err||0);
+      if (ea !== eb) return eb - ea;
+      const da = (a.in_disc||0)+(a.out_disc||0), db = (b.in_disc||0)+(b.out_disc||0);
+      if (da !== db) return db - da;
+      if (a.oper !== b.oper) return a.oper === 'up' ? -1 : 1;
+      return a.idx - b.idx;
+    });
+
+    const summaryParts = [
+      `<span class="s-ok">${up}</span> up`,
+      ifaces.length - up > 0 ? `${ifaces.length - up} down/disabled` : '',
+      withErr  > 0 ? `<span class="s-err">${withErr} with errors</span>` : '',
+      withDisc > 0 ? `<span class="s-disc">${withDisc} with discards</span>` : '',
+    ].filter(Boolean).join(' · ');
+
+    body.innerHTML = `
+      <div class="diag-summary">${ifaces.length} interfaces — ${summaryParts}</div>
+      <div class="if-filters">
+        <button class="if-filter-btn active" id="if-f-all"    onclick="_setIfFilter('all')">All (${ifaces.length})</button>
+        <button class="if-filter-btn"        id="if-f-errors" onclick="_setIfFilter('errors')">Errors (${withErr})</button>
+        <button class="if-filter-btn"        id="if-f-up"     onclick="_setIfFilter('up')">Up (${up})</button>
+        <button class="if-filter-btn"        id="if-f-active" onclick="_setIfFilter('active')">Admin up</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="if-table">
+          <thead><tr>
+            <th style="text-align:left">Interface</th>
+            <th>Status</th>
+            <th>Speed</th>
+            <th>In Err</th>
+            <th>Out Err</th>
+            <th>In Disc</th>
+            <th>Out Disc</th>
+            <th>Traffic</th>
+          </tr></thead>
+          <tbody id="swdiag-table-body"></tbody>
+        </table>
+      </div>`;
+    _renderIfTable(ifaces);
+  }
+
+  // Load saved results on page open
+  fetch(`/api/devices/${IP}/snmp/interfaces`).then(r => r.json()).then(d => {
+    if (d.status !== 'none') _renderSwDiag(d);
+    // pre-populate community if we know it
+  });
 
   // ── Nmap ──────────────────────────────────────────────────────────────────
   let _nmapPolling = false;
