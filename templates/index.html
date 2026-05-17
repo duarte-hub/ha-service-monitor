@@ -296,6 +296,8 @@
   <input type="text" id="scan-network" placeholder="Network CIDR (e.g. 192.168.0.0/24 — leave blank to auto-detect)">
   <button class="btn-filter active" id="btn-monitored" onclick="toggleMonitoredFilter()">Monitored only</button>
   <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
+  <button class="btn-scan" id="btn-nmap-all" onclick="startNmapAll()" style="background:rgba(3,169,244,.18);border:1px solid rgba(3,169,244,.5);">Nmap All</button>
+  <span id="nmap-all-info" style="font-size:.75rem;color:var(--muted);white-space:nowrap"></span>
 </div>
 
 <div class="card">
@@ -630,6 +632,59 @@
     } catch(_) {}
   }
 
+  // ── Nmap all hosts ─────────────────────────────────────────────────────
+  let _nmapAllPoller = null;
+
+  async function startNmapAll() {
+    const btn = document.getElementById('btn-nmap-all');
+    btn.disabled = true;
+    document.getElementById('nmap-all-info').textContent = 'Starting…';
+    const d = await (await fetch('/api/nmap/all', {method:'POST'})).json();
+    if (d.status === 'no_devices') {
+      document.getElementById('nmap-all-info').textContent = 'No devices found';
+      btn.disabled = false; return;
+    }
+    _pollNmapAll();
+  }
+
+  function _pollNmapAll() {
+    if (_nmapAllPoller) clearInterval(_nmapAllPoller);
+    _nmapAllPoller = setInterval(async () => {
+      try {
+        const d = await (await fetch('/api/nmap/all')).json();
+        const infoEl = document.getElementById('nmap-all-info');
+        const btn    = document.getElementById('btn-nmap-all');
+        if (d.state === 'running') {
+          infoEl.textContent = `Nmap: ${d.done}/${d.total} scanned…`;
+        } else {
+          clearInterval(_nmapAllPoller);
+          btn.disabled = false;
+          if (d.state === 'done') {
+            infoEl.textContent = d.errors
+              ? `Nmap done — ${d.done - d.errors}/${d.total} OK, ${d.errors} errors`
+              : `Nmap done — ${d.done}/${d.total} scanned`;
+          } else {
+            infoEl.textContent = '';
+          }
+        }
+      } catch(_) {}
+    }, 2000);
+  }
+
+  async function _initNmapAll() {
+    try {
+      const d = await (await fetch('/api/nmap/all')).json();
+      if (d.state === 'running') {
+        document.getElementById('btn-nmap-all').disabled = true;
+        document.getElementById('nmap-all-info').textContent = `Nmap: ${d.done}/${d.total} scanned…`;
+        _pollNmapAll();
+      } else if (d.state === 'done') {
+        document.getElementById('nmap-all-info').textContent =
+          d.errors ? `Last nmap: ${d.done - d.errors}/${d.total} OK` : `Last nmap: ${d.done} scanned`;
+      }
+    } catch(_) {}
+  }
+
   // ── Z2M update ─────────────────────────────────────────────────────────
   function toggleZ2mLog() {
     const log = document.getElementById('z2m-log');
@@ -726,6 +781,7 @@
   // ── Init ───────────────────────────────────────────────────────────────
   setInterval(loadDevices, {{ poll_interval }} * 1000);
   initScan();
+  _initNmapAll();
   loadDevices();
 </script>
 </body>

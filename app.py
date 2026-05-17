@@ -340,6 +340,34 @@ def _run_nmap_full(ip: str) -> None:
         _nmap_scanning.discard(ip)
 
 
+_nmap_all_status: dict = {"state": "idle", "done": 0, "total": 0, "errors": 0}
+_nmap_all_lock = threading.Lock()
+_NMAP_ALL_CONCURRENCY = 4
+
+
+def _run_nmap_all(ips: list) -> None:
+    global _nmap_all_status
+    sem = threading.Semaphore(_NMAP_ALL_CONCURRENCY)
+
+    def _one(ip: str) -> None:
+        with sem:
+            _run_nmap_full(ip)
+            with _nmap_all_lock:
+                _nmap_all_status["done"] += 1
+                if _nmap_scan_results.get(ip, {}).get("status") == "error":
+                    _nmap_all_status["errors"] += 1
+
+    threads = [threading.Thread(target=_one, args=(ip,), daemon=True) for ip in ips]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with _nmap_all_lock:
+        _nmap_all_status["state"] = "done"
+    log.info("Nmap all-hosts scan complete: %d/%d, %d errors",
+             _nmap_all_status["done"], _nmap_all_status["total"], _nmap_all_status["errors"])
+
+
 def _do_scan(network: str) -> None:
     global _scan_status
     _scan_status = {"state": "running", "message": f"Scanning {network}…"}
@@ -2306,6 +2334,27 @@ def api_device_delete(ip):
         _save_devices()
     _trigger_auto_sync()
     return jsonify({"ok": True})
+
+
+@app.route("/api/nmap/all", methods=["POST"])
+def api_nmap_all_start():
+    global _nmap_all_status
+    with _nmap_all_lock:
+        if _nmap_all_status.get("state") == "running":
+            return jsonify({"status": "already_running", **_nmap_all_status})
+    with _devices_lock:
+        ips = list(_devices.keys())
+    if not ips:
+        return jsonify({"status": "no_devices"})
+    with _nmap_all_lock:
+        _nmap_all_status = {"state": "running", "done": 0, "total": len(ips), "errors": 0}
+    threading.Thread(target=_run_nmap_all, args=(ips,), daemon=True, name="nmap-all").start()
+    return jsonify({"status": "started", "total": len(ips)})
+
+
+@app.route("/api/nmap/all", methods=["GET"])
+def api_nmap_all_get():
+    return jsonify(_nmap_all_status)
 
 
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])
