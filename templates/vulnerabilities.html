@@ -110,6 +110,32 @@
     .chevron { font-size:.8rem; color:var(--dim); transition:transform .2s; }
     .chevron.open { transform:rotate(90deg); }
     .none-yet { color:var(--muted); font-size:.8rem; font-style:italic; }
+
+    /* Log panel */
+    .log-panel { background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+                 margin-top:18px; overflow:hidden; }
+    .log-header { display:flex; align-items:center; gap:10px; padding:10px 14px;
+                  border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
+    .log-header-left { display:flex; align-items:center; gap:8px; font-size:.78rem;
+                       font-weight:600; color:var(--muted); }
+    .log-title { font-size:.78rem; font-weight:600; }
+    .log-live-dot { width:7px; height:7px; border-radius:50%; background:var(--dim);
+                    transition:background .3s; flex-shrink:0; }
+    .log-live-dot.active { background:#4caf50; animation:pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .log-actions { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    .log-body { height:280px; overflow-y:auto; font-family:'SF Mono',ui-monospace,monospace;
+                font-size:.72rem; line-height:1.55; padding:10px 14px;
+                background:rgba(0,0,0,.25); }
+    .log-empty { color:var(--dim); font-style:italic; padding:8px 0; }
+    .log-line { display:flex; gap:8px; margin-bottom:2px; }
+    .log-ts  { color:var(--dim); flex-shrink:0; white-space:nowrap; }
+    .log-lvl { flex-shrink:0; font-weight:700; width:5ch; text-align:right; }
+    .log-lvl.info    { color:#607d8b; }
+    .log-lvl.warning { color:var(--yellow); }
+    .log-lvl.error   { color:var(--red); }
+    .log-msg { color:var(--text); word-break:break-all; }
+    .log-msg .ip-tag { color:var(--primary); font-weight:600; }
   </style>
 </head>
 <body>
@@ -159,6 +185,24 @@
       </thead>
       <tbody id="host-tbody"></tbody>
     </table>
+  </div>
+
+  <!-- Log panel -->
+  <div class="log-panel">
+    <div class="log-header" onclick="toggleLog()">
+      <div class="log-header-left">
+        <div class="log-live-dot" id="log-dot"></div>
+        <span class="log-title">Scan Log</span>
+        <span id="log-count" style="font-size:.68rem;color:var(--dim)"></span>
+      </div>
+      <div class="log-actions" onclick="event.stopPropagation()">
+        <button class="btn" style="padding:3px 9px;font-size:.7rem" onclick="clearLog()">Clear</button>
+        <button class="btn" style="padding:3px 9px;font-size:.7rem" id="log-scroll-btn" onclick="toggleAutoScroll()">Auto-scroll ✓</button>
+      </div>
+    </div>
+    <div class="log-body" id="log-body" style="display:block">
+      <div class="log-empty" id="log-empty">No scan activity yet.</div>
+    </div>
   </div>
 
 </div>
@@ -337,6 +381,74 @@
   setInterval(() => {
     if (_data.some(h => h.scanning)) load();
   }, 5000);
+
+  // ── Scan log ───────────────────────────────────────────────────────────────
+  let _logSeq     = 0;
+  let _autoScroll = true;
+  let _logOpen    = true;
+  const logBody   = document.getElementById('log-body');
+  const logEmpty  = document.getElementById('log-empty');
+  const logDot    = document.getElementById('log-dot');
+  const logCount  = document.getElementById('log-count');
+
+  function toggleLog() {
+    _logOpen = !_logOpen;
+    logBody.style.display = _logOpen ? 'block' : 'none';
+  }
+
+  function toggleAutoScroll() {
+    _autoScroll = !_autoScroll;
+    document.getElementById('log-scroll-btn').textContent =
+      _autoScroll ? 'Auto-scroll ✓' : 'Auto-scroll';
+  }
+
+  function clearLog() {
+    logEmpty.style.display = 'block';
+    logEmpty.textContent   = 'Log cleared.';
+    // Remove all line elements
+    logBody.querySelectorAll('.log-line').forEach(el => el.remove());
+    // Reset seq so we get fresh lines from server
+    _logSeq = 0;
+  }
+
+  function fmtTs(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString('en-GB', {hour12:false});
+  }
+
+  function appendLogLines(entries) {
+    if (!entries.length) return;
+    logEmpty.style.display = 'none';
+    for (const e of entries) {
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      // Highlight [ip] tags
+      const msg = esc(e.msg).replace(/\[([^\]]+)\]/g,
+        '<span class="ip-tag">[$1]</span>');
+      line.innerHTML =
+        `<span class="log-ts">${fmtTs(e.ts)}</span>` +
+        `<span class="log-lvl ${e.level}">${e.level.slice(0,4).toUpperCase()}</span>` +
+        `<span class="log-msg">${msg}</span>`;
+      logBody.appendChild(line);
+    }
+    logCount.textContent = `(${logBody.querySelectorAll('.log-line').length} lines)`;
+    if (_autoScroll) logBody.scrollTop = logBody.scrollHeight;
+  }
+
+  async function pollLog() {
+    try {
+      const d = await (await fetch(`/api/vulnerabilities/log?since=${_logSeq}`)).json();
+      if (d.entries && d.entries.length) {
+        appendLogLines(d.entries);
+        _logSeq = d.entries[d.entries.length - 1].seq;
+      }
+      logDot.classList.toggle('active', d.scanning);
+    } catch(e) { /* ignore */ }
+  }
+
+  // Load existing log immediately, then poll every 2 s
+  pollLog();
+  setInterval(pollLog, 2000);
 </script>
 </body>
 </html>

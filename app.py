@@ -12,6 +12,7 @@ import uuid
 import logging
 import smtplib
 import ipaddress
+import collections
 import threading
 import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
@@ -373,6 +374,22 @@ _vuln_results:  dict = {}   # ip → {ts, status, findings: [...]}
 _vuln_scanning: set  = set()
 _vuln_lock = threading.Lock()
 
+# Rolling log buffer — last 1000 lines, seq-numbered for incremental polling
+_vuln_log: collections.deque = collections.deque(maxlen=1000)
+_vuln_log_seq: int = 0
+_vuln_log_lock = threading.Lock()
+
+
+def _vlog(level: str, msg: str, *args) -> None:
+    global _vuln_log_seq
+    text = msg % args if args else msg
+    getattr(log, level, log.info)(text)
+    with _vuln_log_lock:
+        _vuln_log_seq += 1
+        _vuln_log.append({"seq": _vuln_log_seq, "ts": time.time(),
+                          "level": level, "msg": text})
+
+
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
 
 # Runtime-configurable vuln settings (overridden by _apply_config)
@@ -486,7 +503,7 @@ _vuln_sem = threading.Semaphore(VULN_CONCURRENCY)
 def _run_vuln_scan(ip: str) -> None:
     with _vuln_sem:
         if ip in VULN_EXCLUDE_IPS:
-            log.info("Vuln scan skipped (excluded): %s", ip)
+            _vlog("info", "[%s] skipped (in exclusion list)", ip)
             return
         with _vuln_lock:
             _vuln_scanning.add(ip)
@@ -504,15 +521,22 @@ def _run_vuln_scan(ip: str) -> None:
                     if VULN_NMAP_PORTS:
                         cmd += ["-p", VULN_NMAP_PORTS]
                     cmd.append(ip)
+                    _vlog("info", "[%s] nmap phase starting: %s", ip, " ".join(cmd))
                     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                    if r.stdout:
-                        findings.extend(_parse_nmap_vuln(r.stdout))
+                    nmap_findings = _parse_nmap_vuln(r.stdout) if r.stdout else []
+                    findings.extend(nmap_findings)
+                    _vlog("info", "[%s] nmap phase done: %d finding(s)", ip, len(nmap_findings))
+                    if r.stderr and r.stderr.strip():
+                        for line in r.stderr.strip().splitlines():
+                            _vlog("info", "[%s] nmap stderr: %s", ip, line)
                 except FileNotFoundError:
-                    log.warning("nmap not installed; skipping nmap vuln for %s", ip)
+                    _vlog("warning", "[%s] nmap not installed; skipping nmap phase", ip)
                 except subprocess.TimeoutExpired:
-                    log.warning("nmap vuln scan timed out for %s", ip)
+                    _vlog("warning", "[%s] nmap phase timed out (>300 s)", ip)
                 except Exception as e:
-                    log.error("nmap vuln %s: %s", ip, e)
+                    _vlog("error", "[%s] nmap phase error: %s", ip, e)
+            else:
+                _vlog("info", "[%s] nmap phase disabled", ip)
 
             # Phase 2: Nuclei
             if VULN_NUCLEI_ENABLED:
@@ -537,16 +561,25 @@ def _run_vuln_scan(ip: str) -> None:
                         cmd.append("-headless")
                     if VULN_NUCLEI_CUSTOM_TEMPLATES:
                         cmd += ["-t", VULN_NUCLEI_CUSTOM_TEMPLATES]
+                    _vlog("info", "[%s] nuclei phase starting (tags: %s, severity: %s)",
+                          ip, VULN_NUCLEI_TAGS, VULN_NUCLEI_SEVERITY)
                     r = subprocess.run(cmd, capture_output=True, text=True,
                                        timeout=VULN_NUCLEI_TIMEOUT * 60)
-                    if r.stdout:
-                        findings.extend(_parse_nuclei_output(r.stdout))
+                    nuclei_findings = _parse_nuclei_output(r.stdout) if r.stdout else []
+                    findings.extend(nuclei_findings)
+                    _vlog("info", "[%s] nuclei phase done: %d finding(s)", ip, len(nuclei_findings))
+                    if r.stderr:
+                        for line in r.stderr.strip().splitlines():
+                            if line.strip():
+                                _vlog("info", "[%s] nuclei: %s", ip, line)
                 except FileNotFoundError:
-                    log.warning("nuclei not installed; skipping nuclei for %s", ip)
+                    _vlog("warning", "[%s] nuclei not installed; skipping nuclei phase", ip)
                 except subprocess.TimeoutExpired:
-                    log.warning("nuclei scan timed out for %s", ip)
+                    _vlog("warning", "[%s] nuclei phase timed out", ip)
                 except Exception as e:
-                    log.error("nuclei %s: %s", ip, e)
+                    _vlog("error", "[%s] nuclei phase error: %s", ip, e)
+            else:
+                _vlog("info", "[%s] nuclei phase disabled", ip)
 
             # Deduplicate by (name, source) and sort by severity
             seen: set = set()
@@ -563,9 +596,15 @@ def _run_vuln_scan(ip: str) -> None:
                 "status":   "done",
                 "findings": deduped,
             }
-            log.info("Vuln scan %s: %d findings", ip, len(deduped))
+            _vlog("info", "[%s] scan complete: %d unique finding(s) (critical=%d high=%d medium=%d low=%d)",
+                  ip,
+                  len(deduped),
+                  sum(1 for f in deduped if f["severity"] == "critical"),
+                  sum(1 for f in deduped if f["severity"] == "high"),
+                  sum(1 for f in deduped if f["severity"] == "medium"),
+                  sum(1 for f in deduped if f["severity"] == "low"))
         except Exception as e:
-            log.error("vuln scan %s: %s", ip, e)
+            _vlog("error", "[%s] scan failed: %s", ip, e)
             _vuln_results[ip] = {"ts": time.time(), "status": "error", "findings": []}
         finally:
             with _vuln_lock:
@@ -581,7 +620,8 @@ def _vuln_auto_scan_loop() -> None:
             continue
         with _devices_lock:
             ips = [ip for ip in _devices if ip not in VULN_EXCLUDE_IPS]
-        log.info("Vuln auto-scan: sweeping %d hosts", len(ips))
+        _vlog("info", "[auto-sweep] starting sweep of %d hosts (interval=%dh delay=%ds)",
+              len(ips), VULN_AUTO_SCAN_INTERVAL, VULN_SCAN_DELAY)
         for ip in ips:
             with _vuln_lock:
                 already = ip in _vuln_scanning
@@ -2942,6 +2982,16 @@ def api_vuln_scan_all():
                              name=f"vuln-{ip}").start()
             started += 1
     return jsonify({"status": "started", "count": started})
+
+
+@app.route("/api/vulnerabilities/log")
+def api_vuln_log():
+    since = int(request.args.get("since", 0))
+    with _vuln_log_lock:
+        entries = [e for e in _vuln_log if e["seq"] > since]
+        scanning = bool(_vuln_scanning)
+    return jsonify({"entries": entries, "scanning": scanning,
+                    "max_seq": _vuln_log_seq})
 
 
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])
