@@ -287,6 +287,8 @@
         <div class="info-row" id="row-dhcp" style="display:none"><span class="info-key">DHCP Name</span><span class="info-val mono" id="d-dhcp-name"></span></div>
         <div class="info-row" id="row-conn" style="display:none"><span class="info-key">Meraki AP</span><span class="info-val" id="d-meraki-conn"></span></div>
         <div class="info-row" id="row-ssid" style="display:none"><span class="info-key">SSID</span><span class="info-val" id="d-meraki-ssid"></span></div>
+        <div class="info-row" id="row-sw" style="display:none"><span class="info-key">Switch</span><span class="info-val" id="d-sw-ip"></span></div>
+        <div class="info-row" id="row-sw-port" style="display:none"><span class="info-key">Port</span><span class="info-val" id="d-sw-port"></span></div>
       </div>
     </div>
 
@@ -524,6 +526,28 @@
     _showRow('row-dhcp', 'd-dhcp-name',   d.dhcp_hostname);
     _showRow('row-conn', 'd-meraki-conn', d.meraki_connection);
     _showRow('row-ssid', 'd-meraki-ssid', d.meraki_ssid);
+
+    // Switch port (from Bridge MIB scan)
+    const sp = d.switch_port;
+    const swRow  = document.getElementById('row-sw');
+    const spRow  = document.getElementById('row-sw-port');
+    if (sp) {
+      if (swRow) swRow.style.display = '';
+      if (spRow) spRow.style.display = '';
+      const swIpEl = document.getElementById('d-sw-ip');
+      if (swIpEl) swIpEl.innerHTML =
+        `<a href="/device/${sp.switch_ip}" style="color:var(--primary)">${sp.switch_ip}</a>`;
+      const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
+      const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
+      const errBadge = errs  ? ` <span style="font-size:.68rem;background:rgba(229,57,53,.18);color:#ef9a9a;border-radius:3px;padding:1px 5px;font-weight:700">⚠ ${errs} errors</span>` : '';
+      const discBadge= discs ? ` <span style="font-size:.68rem;background:rgba(255,152,0,.15);color:#ffb74d;border-radius:3px;padding:1px 5px">▲ ${discs} discards</span>` : '';
+      const portEl = document.getElementById('d-sw-port');
+      if (portEl) portEl.innerHTML =
+        `<span style="font-family:monospace">${esc(sp.if_name)}</span>${sp.if_alias ? ` <span style="color:var(--muted);font-size:.8em">${esc(sp.if_alias)}</span>` : ''}${errBadge}${discBadge}`;
+    } else {
+      if (swRow) swRow.style.display = 'none';
+      if (spRow) spRow.style.display = 'none';
+    }
 
     // Name (editable)
     if (!_editingName) {

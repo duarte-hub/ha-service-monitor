@@ -452,10 +452,73 @@ def _run_snmp_if_diag(ip: str, community: str) -> None:
         }
         err_count = sum(1 for i in iface_list if (i["in_err"] or 0) + (i["out_err"] or 0) > 0)
         log.info("SNMP if-diag %s: %d interfaces, %d with errors", ip, len(iface_list), err_count)
+        # Auto-run bridge scan so device→port links are up to date
+        _run_bridge_scan(ip, community, iface_list)
     except Exception as e:
         _SNMP_IF_RESULTS[ip] = {"ts": datetime.now().isoformat(), "status": "error", "error": str(e)}
     finally:
         _SNMP_IF_RUNNING.discard(ip)
+
+
+# ── Bridge MIB: MAC → switch port mapping ─────────────────────────────────────
+_mac_to_port: dict = {}   # "aa:bb:cc:dd:ee:ff" → {switch_ip, if_name, if_alias, if_idx, in_err, out_err, in_disc, out_disc}
+_mac_port_lock = threading.Lock()
+
+def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
+    """Walk dot1dTpFdbTable to map learned MACs to switch interfaces."""
+    # Bridge port → ifIndex
+    bport_to_ifidx: dict = {}
+    for oid_str, val_str in _snmpwalk(switch_ip, community, "1.3.6.1.2.1.17.1.4.1.2", timeout=15):
+        parts = oid_str.lstrip(".").split(".")
+        try:
+            bport_to_ifidx[int(parts[-1])] = int(_sv(val_str))
+        except ValueError:
+            pass
+
+    if not bport_to_ifidx:
+        return  # device doesn't support Bridge MIB
+
+    # ifIndex → interface record
+    ifidx_map = {i["idx"]: i for i in iface_list}
+
+    # dot1dTpFdbPort: MAC (encoded in OID suffix) → bridge port
+    new_entries: dict = {}
+    base_fdb  = "1.3.6.1.2.1.17.4.3.1.2"
+    base_len  = len(base_fdb.split("."))
+    for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20):
+        parts = oid_str.lstrip(".").split(".")
+        suffix = parts[base_len:]
+        if len(suffix) != 6:
+            continue
+        try:
+            mac   = ":".join(f"{int(b):02x}" for b in suffix)
+            bport = int(_sv(val_str))
+        except ValueError:
+            continue
+        ifidx = bport_to_ifidx.get(bport)
+        if ifidx is None:
+            continue
+        iface = ifidx_map.get(ifidx)
+        if iface is None:
+            continue
+        new_entries[mac] = {
+            "switch_ip":  switch_ip,
+            "if_name":    iface.get("name", f"if{ifidx}"),
+            "if_alias":   iface.get("alias", ""),
+            "if_idx":     ifidx,
+            "in_err":     iface.get("in_err"),
+            "out_err":    iface.get("out_err"),
+            "in_disc":    iface.get("in_disc"),
+            "out_disc":   iface.get("out_disc"),
+        }
+
+    with _mac_port_lock:
+        # Remove stale entries from this switch, then add fresh ones
+        for k in [k for k, v in _mac_to_port.items() if v["switch_ip"] == switch_ip]:
+            del _mac_to_port[k]
+        _mac_to_port.update(new_entries)
+
+    log.info("Bridge scan %s: %d MACs mapped", switch_ip, len(new_entries))
 
 
 def _do_scan(network: str) -> None:
@@ -2384,11 +2447,16 @@ def api_health():
 def api_devices():
     with _devices_lock:
         devs = sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")])
+    with _mac_port_lock:
+        port_snap = dict(_mac_to_port)
     result = []
     for d in devs:
         dev = dict(d)
         if dev.get("monitored"):
             dev["uptime"] = _uptime_stats(d["ip"])
+        mac = (dev.get("mac") or "").lower()
+        if mac and mac in port_snap:
+            dev["switch_port"] = port_snap[mac]
         result.append(dev)
     return jsonify(result)
 
@@ -2401,6 +2469,12 @@ def api_device_get(ip):
         dev = dict(_devices[ip])
     dev["uptime"]  = _uptime_stats(ip)
     dev["history"] = _history_buckets(ip)
+    mac = (dev.get("mac") or "").lower()
+    if mac:
+        with _mac_port_lock:
+            port_info = _mac_to_port.get(mac)
+        if port_info:
+            dev["switch_port"] = port_info
     return jsonify(dev)
 
 

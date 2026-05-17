@@ -109,6 +109,12 @@
     .port-unknown::before { background:var(--muted); opacity:.5; }
     .port-add { color:var(--muted); font-size:.72rem; cursor:pointer; padding:2px 4px; opacity:.6; }
     .port-add:hover { color:var(--primary); opacity:1; }
+    .sw-port-chip { display:inline-flex; align-items:center; gap:4px; font-size:.68rem;
+                    font-family:'SF Mono','Fira Code',monospace; border-radius:4px; padding:2px 7px;
+                    border:1px solid rgba(38,166,154,.3); background:rgba(38,166,154,.08); color:#4db6ac;
+                    cursor:default; white-space:nowrap; }
+    .sw-port-chip.has-err  { border-color:rgba(229,57,53,.4);  background:rgba(229,57,53,.1);  color:#ef9a9a; }
+    .sw-port-chip.has-disc { border-color:rgba(255,152,0,.35); background:rgba(255,152,0,.08); color:#ffb74d; }
 
     /* ── Alert select ────────────────────────────────────────────────────── */
     .alert-sel { background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; color:var(--muted); font-size:.7rem; padding:2px 4px; cursor:pointer; outline:none; margin-top:3px; width:100%; }
@@ -311,13 +317,14 @@
         <th>Latency</th>
         <th>Uptime</th>
         <th>Ports</th>
+        <th>Sw Port</th>
         <th>Tags</th>
         <th>Monitor</th>
         <th style="width:32px"></th>
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="10">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="11">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -498,6 +505,22 @@
     return `<div style="display:flex;flex-direction:column;gap:3px">${toggle}${sel}</div>`;
   }
 
+  function _swPortCell(d) {
+    const sp = d.switch_port;
+    if (!sp) return '<span style="color:var(--dim);font-size:.7rem">—</span>';
+    const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
+    const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
+    const cls   = errs ? 'has-err' : discs ? 'has-disc' : '';
+    const icon  = errs  ? '⚠ '  : '';
+    const tip   = [
+      `Switch: ${sp.switch_ip}`,
+      sp.if_alias ? `Alias: ${sp.if_alias}` : '',
+      errs  ? `Errors: ${errs}`  : '',
+      discs ? `Discards: ${discs}` : '',
+    ].filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+    return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${sp.if_name}</span>`;
+  }
+
   function goDevice(ip) { window.location.href = '/device/' + ip; }
 
   function _rowHtml(d, dim) {
@@ -512,6 +535,7 @@
       <td>${_latencyCell(d)}</td>
       <td>${_uptimeCell(d)}</td>
       <td onclick="event.stopPropagation()">${_portsCell(d)}</td>
+      <td>${_swPortCell(d)}</td>
       <td>${_tagsCell(d)}</td>
       <td onclick="event.stopPropagation()">${_monitorCell(d)}</td>
       <td onclick="event.stopPropagation()"><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
@@ -542,10 +566,10 @@
     if (!visible.length) {
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML =
-          `<tr class="empty-row"><td colspan="10">No monitored devices yet</td></tr>` +
+          `<tr class="empty-row"><td colspan="11">No monitored devices yet</td></tr>` +
           _devices.map(d => _rowHtml(d, true)).join('');
       } else {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
     } else {
       tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');
