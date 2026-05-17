@@ -2046,7 +2046,10 @@ def _apply_config(data: dict) -> None:
     if "vuln_auto_scan_enabled"       in data: VULN_AUTO_SCAN_ENABLED       = _b("vuln_auto_scan_enabled")
     if "vuln_auto_scan_interval"      in data: VULN_AUTO_SCAN_INTERVAL      = _i("vuln_auto_scan_interval", 24)
     if "vuln_scan_delay"              in data: VULN_SCAN_DELAY              = _i("vuln_scan_delay", 15)
-    if "vuln_concurrency"             in data: VULN_CONCURRENCY             = _i("vuln_concurrency", 2)
+    if "vuln_concurrency" in data:
+        VULN_CONCURRENCY = _i("vuln_concurrency", 2)
+        global _vuln_sem
+        _vuln_sem = threading.Semaphore(VULN_CONCURRENCY)
     if "vuln_exclude_ips"             in data:
         raw = data.get("vuln_exclude_ips") or ""
         VULN_EXCLUDE_IPS = {s.strip() for s in raw.split(",") if s.strip()}
