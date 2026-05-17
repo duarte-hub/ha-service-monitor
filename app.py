@@ -1561,12 +1561,28 @@ def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list
         log.warning("Meraki API %s failed: %s", path, e)
     return None
 
+_meraki_net_devs: dict = {}   # device name → "ap" | "gateway" | "switch" | "other"
+
+def _meraki_dev_type(model: str) -> str:
+    m = (model or "").upper()
+    if m.startswith("MR"):                    return "ap"
+    if m.startswith("MX") or m.startswith("Z"): return "gateway"
+    if m.startswith("MS"):                    return "switch"
+    return "other"
+
 def _poll_meraki_api_clients() -> int:
     """Fetch clients from Meraki Dashboard API; enrich _devices with MAC/vendor/hostname."""
+    global _meraki_net_devs
     key     = MERAKI_API_KEY
     net_id  = MERAKI_NETWORK_ID
     if not key or not net_id:
         return 0
+
+    # Fetch network devices so we can classify by model (MR=AP, MX=gateway, MS=switch)
+    net_devs = _meraki_api_get(f"/networks/{net_id}/devices", key) or []
+    _meraki_net_devs = {d.get("name", ""): _meraki_dev_type(d.get("model", ""))
+                        for d in net_devs if d.get("name")}
+
     clients = _meraki_api_get(f"/networks/{net_id}/clients", key, {"timespan": 86400, "perPage": 1000})
     if not clients:
         return 0
@@ -3062,17 +3078,20 @@ def api_topology():
             "vendor": d.get("vendor", ""),
             "mac": d.get("mac", ""),
         })
-        ap_name = d.get("meraki_connection") or ""
-        if ap_name:
-            if ap_name not in seen_aps:
-                seen_aps.add(ap_name)
-                nodes.append({"id": f"ap:{ap_name}", "label": ap_name, "type": "ap", "status": "online"})
-            edges.append({"from": ip, "to": f"ap:{ap_name}"})
+        conn_name = d.get("meraki_connection") or ""
+        if conn_name:
+            # Classify by actual Meraki device model; fall back to "ap" if unknown
+            dev_type = _meraki_net_devs.get(conn_name, "ap")
+            conn_id  = f"meraki:{conn_name}"
+            if conn_name not in seen_aps:
+                seen_aps.add(conn_name)
+                nodes.append({"id": conn_id, "label": conn_name, "type": dev_type, "status": "online"})
+            edges.append({"from": ip, "to": conn_id})
 
     if gateway_ips:
         gw = sorted(gateway_ips)[0]
-        for ap_name in seen_aps:
-            edges.append({"from": f"ap:{ap_name}", "to": gw})
+        for conn_name in seen_aps:
+            edges.append({"from": f"meraki:{conn_name}", "to": gw})
 
     return jsonify({"nodes": nodes, "edges": edges})
 

@@ -87,6 +87,7 @@
 <div class="legend">
   <div class="leg"><div class="leg-dia"></div> Gateway</div>
   <div class="leg"><div class="leg-sq"></div> Access Point</div>
+  <div class="leg"><div class="leg-sq" style="background:#7c4dff"></div> Switch</div>
   <div class="leg"><div class="leg-dot-g"></div> Up</div>
   <div class="leg"><div class="leg-dot-r"></div> Down</div>
   <div class="leg"><div class="leg-dot-u"></div> Unknown</div>
@@ -199,10 +200,11 @@
     }
 
     const gateways  = nodes.filter(n => n.type === 'gateway');
-    const aps       = nodes.filter(n => n.type === 'ap');
+    // APs and switches both appear in the middle tier
+    const aps       = nodes.filter(n => n.type === 'ap' || n.type === 'switch');
     const allDevIds = new Set(nodes.filter(n => n.type === 'device').map(n => n.id));
 
-    // APs' device children
+    // Middle-tier nodes' device children
     const apDevs = {};
     for (const ap of aps) {
       apDevs[ap.id] = (children[ap.id] || []).map(id => nodeMap[id]).filter(n => n && n.type === 'device');
@@ -330,18 +332,19 @@
           points: '0,-20 16,0 0,20 -16,0',
           fill: '#ff9800', stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
         }, g);
-      } else if (n.type === 'ap') {
+      } else if (n.type === 'ap' || n.type === 'switch') {
         const devCount = edges.filter(e => e.from === n.id).length;
+        const fill = n.type === 'switch' ? '#7c4dff' : '#03a9f4';
         svgEl('rect', {
           x:-18, y:-11, width:36, height:22, rx:5,
-          fill: '#03a9f4', stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
+          fill, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
         }, g);
         if (devCount > 0) {
           const badge = svgEl('g', {transform: 'translate(14,-12)'}, g);
-          svgEl('circle', {r: 9, fill: '#1c1c1e', stroke: '#03a9f4', 'stroke-width': 1.5}, badge);
+          svgEl('circle', {r: 9, fill: '#1c1c1e', stroke: fill, 'stroke-width': 1.5}, badge);
           svgTxt(String(devCount), {
             'text-anchor': 'middle', dy: '0.35em',
-            fill: '#03a9f4', 'font-size': 9, 'font-weight': '700',
+            fill, 'font-size': 9, 'font-weight': '700',
             'font-family': 'system-ui,sans-serif', 'user-select': 'none',
           }, badge);
         }
@@ -351,11 +354,11 @@
       }
 
       // Label
-      const rawLabel = (n.label || n.id).replace(/^ap:/, '');
+      const rawLabel = (n.label || n.id).replace(/^(ap|meraki):/, '');
       const label = rawLabel.length > 16 ? rawLabel.slice(0, 15) + '…' : rawLabel;
       svgTxt(label, {
         'text-anchor': 'middle',
-        dy: n.type === 'gateway' ? 34 : n.type === 'ap' ? 28 : 26,
+        dy: n.type === 'gateway' ? 34 : (n.type === 'ap' || n.type === 'switch') ? 28 : 26,
         fill: '#bbb', 'font-size': 10,
         'font-family': 'system-ui,sans-serif',
         'pointer-events': 'none', 'user-select': 'none',
@@ -390,7 +393,7 @@
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
   function showTip(n, ev) {
-    const label = (n.label || n.id).replace(/^ap:/, '');
+    const label = (n.label || n.id).replace(/^(ap|meraki):/, '');
     let html = `<strong>${label}</strong>`;
     if (n.ip)     html += `<div class="tr">IP <span>${n.ip}</span></div>`;
     if (n.mac)    html += `<div class="tr">MAC <span>${n.mac}</span></div>`;
