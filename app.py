@@ -770,51 +770,99 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
         except ValueError:
             pass
 
-    if not bport_to_ifidx:
-        return  # device doesn't support Bridge MIB
-
     # ifIndex → interface record
     ifidx_map = {i["idx"]: i for i in iface_list}
 
-    # dot1dTpFdbPort: MAC (encoded in OID suffix) → bridge port
-    # Also count MACs per ifidx to identify uplinks (many MACs) vs access ports (few MACs)
     new_entries: dict = {}
-    port_mac_count: dict = {}  # ifidx → count of MACs seen on that port
-    base_fdb  = "1.3.6.1.2.1.17.4.3.1.2"
-    base_len  = len(base_fdb.split("."))
-    for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20, port=snmp_port):
-        parts = oid_str.lstrip(".").split(".")
-        suffix = parts[base_len:]
-        if len(suffix) != 6:
-            continue
-        try:
-            mac   = ":".join(f"{int(b):02x}" for b in suffix)
-            bport = int(_sv(val_str))
-        except ValueError:
-            continue
-        ifidx = bport_to_ifidx.get(bport)
-        if ifidx is None:
-            continue
-        iface = ifidx_map.get(ifidx)
-        if iface is None:
-            continue
-        port_mac_count[ifidx] = port_mac_count.get(ifidx, 0) + 1
-        new_entries[mac] = {
-            "switch_ip":    switch_ip,
-            "switch_name":  sw_name,
-            "if_name":      iface.get("name", f"if{ifidx}"),
-            "if_alias":     iface.get("alias", ""),
-            "if_idx":       ifidx,
-            "is_wireless":  is_ap_source,
-            "in_err":       iface.get("in_err"),
-            "out_err":      iface.get("out_err"),
-            "in_disc":      iface.get("in_disc"),
-            "out_disc":     iface.get("out_disc"),
-        }
 
-    # Stamp each entry with the count of MACs on its port
-    for entry in new_entries.values():
-        entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
+    if bport_to_ifidx:
+        # Normal path: we have bridge-port → ifIndex mapping; resolve to interface names
+        port_mac_count: dict = {}  # ifidx → count of MACs seen on that port
+        base_fdb = "1.3.6.1.2.1.17.4.3.1.2"
+        base_len = len(base_fdb.split("."))
+        for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20, port=snmp_port):
+            parts = oid_str.lstrip(".").split(".")
+            suffix = parts[base_len:]
+            if len(suffix) != 6:
+                continue
+            try:
+                mac   = ":".join(f"{int(b):02x}" for b in suffix)
+                bport = int(_sv(val_str))
+            except ValueError:
+                continue
+            ifidx = bport_to_ifidx.get(bport)
+            if ifidx is None:
+                continue
+            iface = ifidx_map.get(ifidx)
+            if iface is None:
+                continue
+            port_mac_count[ifidx] = port_mac_count.get(ifidx, 0) + 1
+            new_entries[mac] = {
+                "switch_ip":    switch_ip,
+                "switch_name":  sw_name,
+                "if_name":      iface.get("name", f"if{ifidx}"),
+                "if_alias":     iface.get("alias", ""),
+                "if_idx":       ifidx,
+                "is_wireless":  is_ap_source,
+                "in_err":       iface.get("in_err"),
+                "out_err":      iface.get("out_err"),
+                "in_disc":      iface.get("in_disc"),
+                "out_disc":     iface.get("out_disc"),
+            }
+        for entry in new_entries.values():
+            entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
+
+    elif is_ap_source:
+        # AP fallback: dot1dBasePortIfIndex not exposed by this AP firmware.
+        # Walk the FDB directly, group by bridge-port number.
+        # On an AP the uplink port (to upstream switch) has the FEWEST MACs;
+        # all other ports are client-side (wireless associations).
+        bport_macs: dict = {}
+        base_fdb = "1.3.6.1.2.1.17.4.3.1.2"
+        base_len = len(base_fdb.split("."))
+        for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20, port=snmp_port):
+            parts = oid_str.lstrip(".").split(".")
+            suffix = parts[base_len:]
+            if len(suffix) != 6:
+                continue
+            try:
+                mac   = ":".join(f"{int(b):02x}" for b in suffix)
+                bport = int(_sv(val_str))
+            except ValueError:
+                continue
+            bport_macs.setdefault(bport, []).append(mac)
+
+        if not bport_macs:
+            log.debug("Bridge scan %s (%s): no FDB data from AP, skipping", switch_ip, sw_name)
+            return
+
+        # The uplink port has the fewest MACs. Skip it; keep everything else as wireless clients.
+        min_count = min(len(ms) for ms in bport_macs.values())
+        uplink_ports = {bp for bp, ms in bport_macs.items() if len(ms) == min_count}
+        # If every port has the same count (single-port AP?), don't exclude anything
+        if len(uplink_ports) == len(bport_macs):
+            uplink_ports = set()
+
+        for bport, macs in bport_macs.items():
+            if bport in uplink_ports:
+                continue
+            for mac in macs:
+                new_entries[mac] = {
+                    "switch_ip":    switch_ip,
+                    "switch_name":  sw_name,
+                    "if_name":      f"radio{bport}",
+                    "if_alias":     "",
+                    "if_idx":       bport,
+                    "is_wireless":  True,
+                    "port_mac_count": len(macs),
+                    "in_err": None, "out_err": None,
+                    "in_disc": None, "out_disc": None,
+                }
+        log.info("Bridge scan %s (%s): AP fallback mode, %d client ports, %d MACs",
+                 switch_ip, sw_name, len(bport_macs) - len(uplink_ports), len(new_entries))
+    else:
+        log.debug("Bridge scan %s (%s): no Bridge MIB, skipping", switch_ip, sw_name)
+        return
 
     # For switch sources, drop trunk/uplink ports (high MAC count = not a direct connection).
     # AP sources skip this filter — every MAC they learn is a direct wireless association.
