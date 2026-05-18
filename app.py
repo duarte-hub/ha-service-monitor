@@ -1895,6 +1895,9 @@ def _poll_meraki_api_clients() -> int:
         dhcp_name  = c.get("dhcpHostname") or ""
         connection = c.get("recentDeviceName") or ""
         ssid       = c.get("ssid") or ""
+        sw_port    = c.get("switchport") or ""
+        conn_type  = (c.get("recentDeviceConnection") or "").lower()
+        wired      = conn_type == "wired" or (bool(sw_port) and not ssid)
         online     = (c.get("status") or "").lower() == "online"
         with _devices_lock:
             if ip not in _devices:
@@ -1904,6 +1907,8 @@ def _poll_meraki_api_clients() -> int:
                     "dhcp_hostname": dhcp_name,
                     "meraki_connection": connection,
                     "meraki_ssid": ssid,
+                    "meraki_port": sw_port,
+                    "meraki_wired": wired,
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
@@ -1929,6 +1934,9 @@ def _poll_meraki_api_clients() -> int:
                     _devices[ip]["meraki_connection"] = connection; changed = True
                 if ssid:
                     _devices[ip]["meraki_ssid"] = ssid; changed = True
+                if sw_port:
+                    _devices[ip]["meraki_port"] = sw_port; changed = True
+                _devices[ip]["meraki_wired"] = wired; changed = True
                 ms = "online" if online else "offline"
                 if d.get("meraki_status") != ms:
                     _devices[ip]["meraki_status"] = ms; changed = True

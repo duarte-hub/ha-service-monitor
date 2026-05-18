@@ -506,20 +506,36 @@
   }
 
   function _swPortCell(d) {
+    // SNMP Bridge MIB data — most specific, shown first
     const sp = d.switch_port;
-    if (!sp) return '<span style="color:var(--dim);font-size:.7rem">—</span>';
-    const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
-    const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
-    const cls   = errs ? 'has-err' : discs ? 'has-disc' : '';
-    const icon  = errs  ? '⚠ '  : '';
-    const swLabel = sp.switch_name || sp.switch_ip;
-    const tip   = [
-      `Switch: ${swLabel}`,
-      sp.if_alias ? `Alias: ${sp.if_alias}` : '',
-      errs  ? `Errors: ${errs}`  : '',
-      discs ? `Discards: ${discs}` : '',
-    ].filter(Boolean).join(' | ').replace(/"/g, '&quot;');
-    return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${swLabel}:${sp.if_name}</span>`;
+    if (sp) {
+      const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
+      const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
+      const cls   = errs ? 'has-err' : discs ? 'has-disc' : '';
+      const icon  = errs  ? '⚠ ' : '';
+      const swLabel = sp.switch_name || sp.switch_ip;
+      const tip   = [
+        `Switch: ${swLabel}`,
+        sp.if_alias ? `Alias: ${sp.if_alias}` : '',
+        errs  ? `Errors: ${errs}`  : '',
+        discs ? `Discards: ${discs}` : '',
+      ].filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+      return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${swLabel}:${sp.if_name}</span>`;
+    }
+    // Meraki API — AP/switch association
+    const ap = d.meraki_connection;
+    if (ap) {
+      if (d.meraki_wired) {
+        const port = d.meraki_port ? `:${d.meraki_port}` : '';
+        const tip  = [`Switch: ${ap}`, d.meraki_port ? `Port: ${d.meraki_port}` : ''].filter(Boolean).join(' | ').replace(/"/g,'&quot;');
+        return `<span class="sw-port-chip" title="${tip}" style="background:rgba(41,182,246,.12);border-color:rgba(41,182,246,.3);color:#4fc3f7">${ap}${port}</span>`;
+      } else {
+        const ssid = d.meraki_ssid ? ` ${d.meraki_ssid}` : '';
+        const tip  = [`AP: ${ap}`, d.meraki_ssid ? `SSID: ${d.meraki_ssid}` : ''].filter(Boolean).join(' | ').replace(/"/g,'&quot;');
+        return `<span class="sw-port-chip" title="${tip}" style="background:rgba(102,187,106,.12);border-color:rgba(102,187,106,.3);color:#81c784">&#x25cb; ${ap}${ssid}</span>`;
+      }
+    }
+    return '<span style="color:var(--dim);font-size:.7rem">—</span>';
   }
 
   function goDevice(ip) { window.location.href = '/device/' + ip; }
