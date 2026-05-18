@@ -954,7 +954,10 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
 
     # For switch sources, drop trunk/uplink ports (high MAC count = not a direct connection).
     # AP sources skip this filter — every MAC they learn is a direct wireless association.
-    _TRUNK_THRESHOLD = 5
+    # Threshold of 50: AP uplink ports have ~10-20 MACs (bridged wireless clients) and must
+    # pass through so the AP device itself is attributed correctly; true switch-to-switch
+    # trunk ports have far more MACs and are still filtered.
+    _TRUNK_THRESHOLD = 50
     if not is_ap_source:
         new_entries = {mac: e for mac, e in new_entries.items()
                        if e["port_mac_count"] <= _TRUNK_THRESHOLD}
