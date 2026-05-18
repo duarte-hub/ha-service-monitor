@@ -727,8 +727,30 @@ def _run_snmp_if_diag(ip: str, community: str) -> None:
 
 
 # ── Bridge MIB: MAC → switch port mapping ─────────────────────────────────────
+_MAC_PORT_PATH = os.environ.get("MAC_PORT_PATH", "/data/mac_to_port.json")
 _mac_to_port: dict = {}   # "aa:bb:cc:dd:ee:ff" → {switch_ip, switch_name, if_name, if_alias, if_idx, port_mac_count, in_err, out_err, in_disc, out_disc}
 _mac_port_lock = threading.Lock()
+
+def _load_mac_to_port() -> None:
+    global _mac_to_port
+    try:
+        with open(_MAC_PORT_PATH) as fh:
+            data = json.load(fh)
+        with _mac_port_lock:
+            _mac_to_port = data
+        log.info("Loaded %d MAC→port entries from disk", len(data))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("Failed to load mac_to_port: %s", e)
+
+def _save_mac_to_port() -> None:
+    try:
+        with _mac_port_lock:
+            snap = dict(_mac_to_port)
+        _atomic_write(_MAC_PORT_PATH, snap)
+    except Exception as e:
+        log.warning("Failed to save mac_to_port: %s", e)
 
 def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     """Walk dot1dTpFdbTable to map learned MACs to switch interfaces."""
@@ -790,20 +812,57 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     for entry in new_entries.values():
         entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
 
+    _wireless_kws = ("ath", "wlan", "wifi", "bss", "vap", "wl", "ra", "mon")
+
     with _mac_port_lock:
         # Remove stale entries from this switch
         for k in [k for k, v in _mac_to_port.items() if v["switch_ip"] == switch_ip]:
             del _mac_to_port[k]
-        # Merge: for MACs already claimed by another switch, prefer the entry whose port
-        # has fewer MACs (= more direct / access-port connection; uplinks learn many MACs).
+        # Merge: for MACs already claimed by another device, prefer the most-direct connection.
+        # Rule 1: a wireless interface (AP radio) always beats a wired switch port — the AP
+        #         is the direct association point; the switch only sees the MAC via uplink.
+        # Rule 2: among wired entries, prefer the port with fewer MACs (access > uplink).
         for mac, entry in new_entries.items():
             existing = _mac_to_port.get(mac)
             if existing and existing["switch_ip"] != switch_ip:
+                ex_if = (existing.get("if_name") or "").lower()
+                ex_wireless = any(kw in ex_if for kw in _wireless_kws)
+                if ex_wireless:
+                    continue  # AP's direct wireless association wins; skip switch entry
                 if entry["port_mac_count"] >= existing.get("port_mac_count", 1):
-                    continue  # existing from another switch is equally or more specific
+                    continue  # existing wired entry is equally or more specific
             _mac_to_port[mac] = entry
 
     log.info("Bridge scan %s (%s): %d MACs mapped", switch_ip, sw_name, len(new_entries))
+    _save_mac_to_port()
+
+
+def _bridge_scan_all() -> None:
+    """Run IF-MIB + Bridge MIB scan for every configured SNMP switch/AP."""
+    switches = list(SNMP_SWITCHES)
+    if not switches:
+        return
+    log.info("Bridge scan: starting sweep of %d device(s)", len(switches))
+    for sw in switches:
+        ip        = sw.get("ip", "")
+        community = sw.get("community") or SNMP_COMMUNITY
+        if not ip:
+            continue
+        if ip in _SNMP_IF_RUNNING:
+            log.debug("Bridge scan: %s already running, skipping", ip)
+            continue
+        try:
+            _run_snmp_if_diag(ip, community)
+        except Exception as e:
+            log.warning("Bridge scan failed for %s: %s", ip, e)
+
+
+def _snmp_bridge_scan_loop() -> None:
+    """Run a full bridge scan on startup then on the configured interval."""
+    time.sleep(15)  # give startup a moment to settle
+    while True:
+        _bridge_scan_all()
+        time.sleep(SNMP_BRIDGE_SCAN_INTERVAL * 60)
 
 
 def _do_scan(network: str) -> None:
@@ -1996,6 +2055,7 @@ _CONFIG_FIELDS = {
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
     "snmp_community":         {"label": "SNMP community string",            "default": "public"},
     "snmp_switches":          {"label": "SNMP switches (JSON list)",        "default": "[]"},
+    "snmp_bridge_scan_interval": {"label": "Bridge scan interval (minutes)", "default": "60"},
     # Polling intervals
     "poll_interval":          {"label": "Device ping interval (s)",         "default": str(POLL_INTERVAL)},
     "ha_poll_interval":       {"label": "HA add-on poll interval (s)",      "default": str(HA_POLL_INTERVAL)},
@@ -2056,8 +2116,9 @@ MERAKI_NETWORK_ID:    str  = ""
 PEER_URL:             str  = ""
 ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
 AUTO_SYNC_PEER:       bool = False
-SNMP_COMMUNITY:       str  = "public"
-SNMP_SWITCHES:        list = []   # [{"name": str, "ip": str, "port": int, "community": str}]
+SNMP_COMMUNITY:            str  = "public"
+SNMP_SWITCHES:             list = []   # [{"name": str, "ip": str, "port": int, "community": str}]
+SNMP_BRIDGE_SCAN_INTERVAL: int  = 60  # minutes between automatic bridge scans
 
 _peer_reachable:      bool = True   # updated by _peer_health_loop
 _peer_fail_streak:    int  = 0
@@ -2067,7 +2128,7 @@ def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY, SNMP_SWITCHES
+    global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY, SNMP_SWITCHES, SNMP_BRIDGE_SCAN_INTERVAL
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -2119,6 +2180,8 @@ def _apply_config(data: dict) -> None:
                 SNMP_SWITCHES = parsed
         except Exception:
             pass
+    if "snmp_bridge_scan_interval" in data:
+        SNMP_BRIDGE_SCAN_INTERVAL = max(1, int(data["snmp_bridge_scan_interval"] or 60))
 
     # Vulnerability scanning
     global VULN_AUTO_SCAN_ENABLED, VULN_AUTO_SCAN_INTERVAL, VULN_SCAN_DELAY, VULN_CONCURRENCY
@@ -3932,6 +3995,9 @@ if __name__ == "__main__":
     _seed_device("192.168.0.14", "SLZB-MR1",  [80, 7638])
     _seed_device("192.168.0.15", "SLZB-MR1U", [80, 6638])
 
+    # Load persisted bridge MIB data so switch ports are visible before first scan
+    _load_mac_to_port()
+
     # Start background pollers
     threading.Thread(target=_ha_poller_loop,          daemon=True, name="ha-poller").start()
     threading.Thread(target=_device_ping_loop,        daemon=True, name="device-ping").start()
@@ -3942,6 +4008,7 @@ if __name__ == "__main__":
     threading.Thread(target=_feature_probe_loop,      daemon=True, name="feature-probe").start()
     threading.Thread(target=_mdns_listen_loop,        daemon=True, name="mdns-listener").start()
     threading.Thread(target=_vuln_auto_scan_loop,     daemon=True, name="vuln-auto").start()
+    threading.Thread(target=_snmp_bridge_scan_loop,   daemon=True, name="bridge-scan").start()
 
     # Give the first poll a moment
     time.sleep(2)

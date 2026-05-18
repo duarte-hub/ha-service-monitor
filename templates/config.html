@@ -292,7 +292,12 @@
       </thead>
       <tbody id="snmp-sw-body"></tbody>
     </table>
-    <button class="btn btn-secondary" style="margin-top:8px;font-size:.8rem" onclick="addSwitch()">+ Add switch</button>
+    <button class="btn btn-secondary" style="margin-top:8px;font-size:.8rem" onclick="addSwitch()">+ Add device</button>
+    <div class="field" style="max-width:180px;margin-top:14px;margin-bottom:0">
+      <label>Scan interval (minutes)</label>
+      <input type="number" id="snmp_bridge_scan_interval" min="1" placeholder="60">
+      <div class="hint">How often to re-scan all bridge sources. Runs once on startup regardless.</div>
+    </div>
   </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveScan()">Save</button>
@@ -509,6 +514,7 @@
       set('poll_interval', d.poll_interval || '30');
       try { _snmpSwitches = JSON.parse(d.snmp_switches || '[]'); } catch(e) { _snmpSwitches = []; }
       renderSwitches();
+      set('snmp_bridge_scan_interval', d.snmp_bridge_scan_interval || '60');
 
       set('peer_url', d.peer_url || '');
       const roleEl = document.getElementById('alert_role');
@@ -697,7 +703,7 @@
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
   async function saveScan() {
-    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community'), snmp_switches: JSON.stringify(_snmpSwitches)});
+    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community'), snmp_switches: JSON.stringify(_snmpSwitches), snmp_bridge_scan_interval: val('snmp_bridge_scan_interval')});
     flash('scan-status', 'Saved', 'ok');
   }
 
