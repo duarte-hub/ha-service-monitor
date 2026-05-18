@@ -161,12 +161,21 @@ _devices: dict[str, dict] = {}
 _devices_lock = threading.Lock()
 _scan_status: dict = {"state": "idle", "message": ""}
 
+_DOCKER_NETS = [ipaddress.IPv4Network("172.16.0.0/12"), ipaddress.IPv4Network("127.0.0.0/8")]
+
+def _is_docker_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.IPv4Address(ip)
+        return any(addr in net for net in _DOCKER_NETS)
+    except Exception:
+        return False
+
 def _load_devices() -> dict:
     try:
         with open(_DEVICES_PATH) as fh:
-            devices = {d["ip"]: d for d in json.load(fh)}
+            devices = {d["ip"]: d for d in json.load(fh) if not _is_docker_ip(d["ip"])}
         for d in devices.values():
-            d["port_status"] = {}  # always re-check on startup so down ports re-alert
+            d["port_status"] = {}
         return devices
     except Exception:
         return {}
@@ -1026,6 +1035,12 @@ def _do_scan(network: str) -> None:
             capture_output=True, text=True, timeout=180,
         )
         found = _parse_nmap_xml(result.stdout)
+        # Drop any discovered IPs not in the scanned subnet (e.g. Docker bridge 172.17.x.x)
+        try:
+            _scan_net = ipaddress.IPv4Network(network, strict=False)
+            found = [d for d in found if ipaddress.IPv4Address(d["ip"]) in _scan_net]
+        except Exception:
+            pass
         now = datetime.now(timezone.utc).isoformat()
         with _devices_lock:
             for d in found:
