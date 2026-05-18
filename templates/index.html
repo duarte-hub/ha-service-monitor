@@ -546,12 +546,27 @@
       return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${swLabel}:${sp.if_name}</span>`;
     }
 
-    // Priority 4: Meraki wired switch port
+    // Priority 4: Aruba Central wireless
+    if (d.aruba_connection && !d.aruba_wired) {
+      const ssid = d.aruba_ssid ? ` ${d.aruba_ssid}` : '';
+      const tip  = [`AP: ${d.aruba_connection}`, d.aruba_ssid ? `SSID: ${d.aruba_ssid}` : '']
+        .filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+      return `<span class="sw-port-chip" title="${tip}" style="background:rgba(255,152,0,.12);border-color:rgba(255,152,0,.3);color:#ffb74d">&#x25cb; ${d.aruba_connection}${ssid}</span>`;
+    }
+
+    // Priority 5: Meraki wired switch port
     if (d.meraki_connection) {
       const port = d.meraki_port ? `:${d.meraki_port}` : '';
       const tip  = [`Switch: ${d.meraki_connection}`, d.meraki_port ? `Port: ${d.meraki_port}` : '']
         .filter(Boolean).join(' | ').replace(/"/g, '&quot;');
       return `<span class="sw-port-chip" title="${tip}" style="background:rgba(41,182,246,.12);border-color:rgba(41,182,246,.3);color:#4fc3f7">${d.meraki_connection}${port}</span>`;
+    }
+
+    // Priority 6: Aruba Central wired
+    if (d.aruba_connection) {
+      const port = d.aruba_port ? `:${d.aruba_port}` : '';
+      const tip  = `Switch: ${d.aruba_connection}${port ? ' | Port: ' + d.aruba_port : ''}`;
+      return `<span class="sw-port-chip" title="${tip}" style="background:rgba(255,152,0,.12);border-color:rgba(255,152,0,.3);color:#ffb74d">${d.aruba_connection}${port}</span>`;
     }
 
     return '<span style="color:var(--dim);font-size:.7rem">—</span>';

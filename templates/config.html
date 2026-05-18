@@ -153,10 +153,31 @@
       <input type="number" id="meraki_poll_interval" min="30" placeholder="300">
     </div>
   </div>
+  <div class="sub">
+    <div class="sub-label">Aruba Central API</div>
+    <div class="hint" style="margin-bottom:10px">Create an API Gateway token in Aruba Central → Account Home → Global Settings → API Gateway. Grants client-to-AP association data for all Aruba APs.</div>
+    <div class="grid3" style="margin-bottom:12px">
+      <div class="field" style="margin:0">
+        <label>Access token</label>
+        <input type="password" id="aruba_central_api_token" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
+        <span class="show-pass" onclick="toggleVis('aruba_central_api_token')">show</span>
+      </div>
+      <div class="field" style="margin:0">
+        <label>API URL (region)</label>
+        <input type="text" id="aruba_central_api_url" placeholder="https://apigw-prod2.central.arubanetworks.com">
+        <div class="hint">US: apigw-prod2 &nbsp; EU: apigw-eu-1 &nbsp; AP: apigw-apac-1</div>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Poll interval (seconds)</label>
+        <input type="number" id="aruba_central_poll_interval" min="60" placeholder="300">
+      </div>
+    </div>
+  </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveConnections()">Save</button>
     <button class="btn btn-secondary" onclick="testMerakiApi()">Test Meraki</button>
     <button class="btn btn-secondary" onclick="pollMerakiNow()">Poll Meraki</button>
+    <button class="btn btn-secondary" onclick="pollArubaNow()">Poll Aruba</button>
     <span class="status-msg" id="connections-status"></span>
   </div>
 </div>
@@ -492,6 +513,9 @@
       if (d.ha_token)      document.getElementById('ha_token').placeholder      = '(saved — enter to replace)';
       if (d.meraki_api_key) document.getElementById('meraki_api_key').placeholder = '(saved — enter to replace)';
       set('meraki_network_id',    d.meraki_network_id    || '');
+      if (d.aruba_central_api_token) document.getElementById('aruba_central_api_token').placeholder = '(saved — enter to replace)';
+      set('aruba_central_api_url',          d.aruba_central_api_url          || '');
+      set('aruba_central_poll_interval',    d.aruba_central_poll_interval    || '300');
       set('ha_poll_interval',     d.ha_poll_interval     || '30');
       set('meraki_poll_interval', d.meraki_poll_interval || '300');
 
@@ -615,13 +639,16 @@
 
   // ── Connections ────────────────────────────────────────────────────────────
   async function saveConnections() {
-    const payload = {ha_url: val('ha_url'), ha_poll_interval: val('ha_poll_interval'), meraki_poll_interval: val('meraki_poll_interval')};
-    const t = val('ha_token'); if (t) payload.ha_token = t;
-    const k = document.getElementById('meraki_api_key').value.trim(); if (k) payload.meraki_api_key = k;
-    const n = val('meraki_network_id'); if (n) payload.meraki_network_id = n;
+    const payload = {ha_url: val('ha_url'), ha_poll_interval: val('ha_poll_interval'), meraki_poll_interval: val('meraki_poll_interval'),
+                     aruba_central_api_url: val('aruba_central_api_url'), aruba_central_poll_interval: val('aruba_central_poll_interval')};
+    const t  = val('ha_token');                    if (t)  payload.ha_token                = t;
+    const k  = document.getElementById('meraki_api_key').value.trim(); if (k) payload.meraki_api_key = k;
+    const n  = val('meraki_network_id');            if (n)  payload.meraki_network_id       = n;
+    const at = document.getElementById('aruba_central_api_token').value.trim(); if (at) payload.aruba_central_api_token = at;
     await post(payload);
-    if (payload.ha_token)       { document.getElementById('ha_token').value = '';       document.getElementById('ha_token').placeholder       = '(saved — enter to replace)'; }
-    if (payload.meraki_api_key) { document.getElementById('meraki_api_key').value = ''; document.getElementById('meraki_api_key').placeholder = '(saved — enter to replace)'; }
+    if (payload.ha_token)               { document.getElementById('ha_token').value = '';               document.getElementById('ha_token').placeholder               = '(saved — enter to replace)'; }
+    if (payload.meraki_api_key)         { document.getElementById('meraki_api_key').value = '';         document.getElementById('meraki_api_key').placeholder         = '(saved — enter to replace)'; }
+    if (payload.aruba_central_api_token){ document.getElementById('aruba_central_api_token').value = ''; document.getElementById('aruba_central_api_token').placeholder = '(saved — enter to replace)'; }
     flash('connections-status', 'Saved', 'ok');
   }
   async function fetchMerakiNetworks() {
@@ -648,6 +675,12 @@
     const r = await fetch('/api/meraki_api/poll', {method:'POST'});
     const d = await r.json();
     flash('connections-status', d.ok ? 'Poll started' : d.error, d.ok ? 'ok' : 'err');
+  }
+  async function pollArubaNow() {
+    flash('connections-status', 'Polling Aruba Central…', '');
+    const r = await fetch('/api/aruba_central/poll', {method:'POST'});
+    const d = await r.json();
+    flash('connections-status', d.ok ? 'Poll started' : (d.error || 'Error'), d.ok ? 'ok' : 'err');
   }
 
   // ── Notifications ──────────────────────────────────────────────────────────

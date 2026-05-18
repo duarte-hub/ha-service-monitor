@@ -2078,6 +2078,105 @@ def _meraki_api_poller_loop() -> None:
         time.sleep(MERAKI_POLL_INTERVAL)
 
 # ---------------------------------------------------------------------------
+# Aruba Central API
+# ---------------------------------------------------------------------------
+ARUBA_CENTRAL_API_URL:   str = ""   # e.g. https://apigw-prod2.central.arubanetworks.com
+ARUBA_CENTRAL_API_TOKEN: str = ""   # Access token (long-lived) from Central API Gateway
+ARUBA_CENTRAL_POLL_INTERVAL: int = 300  # seconds
+
+def _aruba_central_get(path: str, token: str, base: str,
+                        params: dict | None = None) -> list | dict | None:
+    try:
+        resp = requests.get(
+            f"{base.rstrip('/')}{path}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            params=params or {},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        log.warning("Aruba Central %s → %d: %s", path, resp.status_code, resp.text[:200])
+    except Exception as e:
+        log.warning("Aruba Central %s failed: %s", path, e)
+    return None
+
+def _poll_aruba_central_clients() -> int:
+    base  = ARUBA_CENTRAL_API_URL
+    token = ARUBA_CENTRAL_API_TOKEN
+    if not base or not token:
+        return 0
+    # Fetch all clients (wireless and wired), paginated
+    all_clients: list = []
+    offset = 0
+    limit  = 1000
+    while True:
+        resp = _aruba_central_get("/monitoring/v2/clients", token, base,
+                                   {"calculate_total": "true", "limit": limit, "offset": offset})
+        if not resp:
+            break
+        batch = resp.get("clients") or []
+        all_clients.extend(batch)
+        if len(batch) < limit:
+            break
+        offset += limit
+
+    if not all_clients:
+        log.debug("Aruba Central: no clients returned")
+        return 0
+
+    updated = 0
+    for c in all_clients:
+        ip  = c.get("ip_address") or ""
+        mac = (c.get("macaddr") or "").lower().replace("-", ":")
+        if not ip or not mac:
+            continue
+        ap_name  = c.get("associated_device") or c.get("associated_device_name") or ""
+        ssid     = c.get("network") or c.get("ssid") or ""
+        wired    = (c.get("client_type") or c.get("connection") or "").lower() == "wired"
+        hostname = c.get("name") or c.get("hostname") or ""
+        vendor   = c.get("manufacturer") or ""
+        with _devices_lock:
+            if ip not in _devices:
+                _devices[ip] = {
+                    "ip": ip, "mac": mac, "vendor": vendor,
+                    "hostname": hostname, "name": "",
+                    "aruba_connection": ap_name,
+                    "aruba_ssid": ssid,
+                    "aruba_wired": wired,
+                    "learned_from": "Aruba Central",
+                    "monitored": False, "alert_mode": "default", "status": "unknown",
+                    "last_seen": None, "ping_latency_ms": None,
+                    "ports": [], "port_status": {},
+                }
+                _check_new_device(ip, mac, vendor, hostname, "Aruba Central")
+                log.info("Aruba Central discovered %s — %s (%s)", ip, mac, vendor or "unknown")
+                updated += 1
+            else:
+                d = _devices[ip]
+                changed = False
+                if mac and not d.get("mac"):       _devices[ip]["mac"] = mac;           changed = True
+                if vendor and not d.get("vendor"): _devices[ip]["vendor"] = vendor;     changed = True
+                if hostname and not d.get("hostname"): _devices[ip]["hostname"] = hostname; changed = True
+                if ap_name: _devices[ip]["aruba_connection"] = ap_name; changed = True
+                if ssid:    _devices[ip]["aruba_ssid"]       = ssid;    changed = True
+                _devices[ip]["aruba_wired"] = wired;                                    changed = True
+                if not d.get("learned_from"): _devices[ip]["learned_from"] = "Aruba Central"; changed = True
+                if changed:
+                    updated += 1
+        _save_devices()
+    log.info("Aruba Central: %d clients, %d updated", len(all_clients), updated)
+    return updated
+
+def _aruba_central_poller_loop() -> None:
+    while True:
+        try:
+            if ARUBA_CENTRAL_API_URL and ARUBA_CENTRAL_API_TOKEN:
+                _poll_aruba_central_clients()
+        except Exception as e:
+            log.exception("Aruba Central poll error: %s", e)
+        time.sleep(ARUBA_CENTRAL_POLL_INTERVAL)
+
+# ---------------------------------------------------------------------------
 # Runtime config overlay (persisted to disk, overrides env vars at runtime)
 # ---------------------------------------------------------------------------
 _CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/monitor_config.json")
@@ -2112,6 +2211,10 @@ _CONFIG_FIELDS = {
     # Meraki Dashboard API
     "meraki_api_key":         {"label": "Meraki API key",                  "default": "", "secret": True},
     "meraki_network_id":      {"label": "Meraki network ID",               "default": ""},
+    # Aruba Central API
+    "aruba_central_api_url":   {"label": "Aruba Central API URL",          "default": ""},
+    "aruba_central_api_token": {"label": "Aruba Central access token",     "default": "", "secret": True},
+    "aruba_central_poll_interval": {"label": "Aruba Central poll interval (s)", "default": "300"},
     # Network scan
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
     "snmp_community":         {"label": "SNMP community string",            "default": "public"},
@@ -2174,6 +2277,9 @@ notify_recovery:      bool = False
 new_device_alerts:    bool = False
 MERAKI_API_KEY:       str  = ""
 MERAKI_NETWORK_ID:    str  = ""
+ARUBA_CENTRAL_API_URL:       str = ""
+ARUBA_CENTRAL_API_TOKEN:     str = ""
+ARUBA_CENTRAL_POLL_INTERVAL: int = 300
 PEER_URL:             str  = ""
 ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
 AUTO_SYNC_PEER:       bool = False
@@ -2190,6 +2296,7 @@ def _apply_config(data: dict) -> None:
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
     global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY, SNMP_SWITCHES, SNMP_BRIDGE_SCAN_INTERVAL
+    global ARUBA_CENTRAL_API_URL, ARUBA_CENTRAL_API_TOKEN, ARUBA_CENTRAL_POLL_INTERVAL
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -2226,6 +2333,9 @@ def _apply_config(data: dict) -> None:
         ADDON_CONFIG["Mosquitto Broker"]["health_port"]["port"] = int(data["mqtt_probe_port"] or 1883)
     if "meraki_api_key"         in data: MERAKI_API_KEY     = data["meraki_api_key"]    or ""
     if "meraki_network_id"      in data: MERAKI_NETWORK_ID  = data["meraki_network_id"] or ""
+    if "aruba_central_api_url"   in data: ARUBA_CENTRAL_API_URL   = data["aruba_central_api_url"]   or ""
+    if "aruba_central_api_token" in data: ARUBA_CENTRAL_API_TOKEN = data["aruba_central_api_token"] or ""
+    if "aruba_central_poll_interval" in data: ARUBA_CENTRAL_POLL_INTERVAL = int(data["aruba_central_poll_interval"] or 300)
     if "scan_ports"             in data: SCAN_PORTS             = data["scan_ports"]             or ""
     if "poll_interval"          in data: POLL_INTERVAL          = int(data["poll_interval"]        or 30)
     if "ha_poll_interval"       in data: HA_POLL_INTERVAL       = int(data["ha_poll_interval"]     or 30)
@@ -3350,6 +3460,14 @@ def api_meraki_api_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
+@app.route("/api/aruba_central/poll", methods=["POST"])
+def api_aruba_central_poll():
+    if not ARUBA_CENTRAL_API_URL or not ARUBA_CENTRAL_API_TOKEN:
+        return jsonify({"ok": False, "error": "Aruba Central API not configured"}), 400
+    threading.Thread(target=_poll_aruba_central_clients, daemon=True).start()
+    return jsonify({"ok": True, "message": "Poll started"})
+
+
 def _peer_health_loop() -> None:
     """Periodically check primary health; flip _peer_reachable for secondary failover."""
     global _peer_reachable, _peer_fail_streak, _peer_ok_streak
@@ -4064,6 +4182,7 @@ if __name__ == "__main__":
     threading.Thread(target=_device_ping_loop,        daemon=True, name="device-ping").start()
     threading.Thread(target=_snmp_poller_loop,        daemon=True, name="snmp-poller").start()
     threading.Thread(target=_meraki_api_poller_loop,  daemon=True, name="meraki-api-poller").start()
+    threading.Thread(target=_aruba_central_poller_loop, daemon=True, name="aruba-central-poller").start()
     threading.Thread(target=_peer_health_loop,        daemon=True, name="peer-health").start()
     threading.Thread(target=_primary_peer_check_loop, daemon=True, name="peer-check").start()
     threading.Thread(target=_feature_probe_loop,      daemon=True, name="feature-probe").start()
