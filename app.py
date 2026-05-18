@@ -812,25 +812,27 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     for entry in new_entries.values():
         entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
 
-    _wireless_kws = ("ath", "wlan", "wifi", "bss", "vap", "wl", "ra", "mon")
+    _wireless_kws = ("ath", "wlan", "wifi", "bss", "vap", "wl", "ra", "mon", "dot11", "ssid", "mbss")
 
     with _mac_port_lock:
         # Remove stale entries from this switch
         for k in [k for k, v in _mac_to_port.items() if v["switch_ip"] == switch_ip]:
             del _mac_to_port[k]
         # Merge: for MACs already claimed by another device, prefer the most-direct connection.
-        # Rule 1: a wireless interface (AP radio) always beats a wired switch port — the AP
-        #         is the direct association point; the switch only sees the MAC via uplink.
-        # Rule 2: among wired entries, prefer the port with fewer MACs (access > uplink).
+        # Wireless (AP radio) always beats wired (switch uplink) regardless of scan order.
+        # Among same-type entries, prefer the port with fewer MACs (access > uplink).
         for mac, entry in new_entries.items():
             existing = _mac_to_port.get(mac)
             if existing and existing["switch_ip"] != switch_ip:
-                ex_if = (existing.get("if_name") or "").lower()
-                ex_wireless = any(kw in ex_if for kw in _wireless_kws)
-                if ex_wireless:
-                    continue  # AP's direct wireless association wins; skip switch entry
-                if entry["port_mac_count"] >= existing.get("port_mac_count", 1):
-                    continue  # existing wired entry is equally or more specific
+                ex_if  = (existing.get("if_name") or "").lower()
+                new_if = (entry.get("if_name") or "").lower()
+                ex_wireless  = any(kw in ex_if  for kw in _wireless_kws)
+                new_wireless = any(kw in new_if for kw in _wireless_kws)
+                if ex_wireless and not new_wireless:
+                    continue  # existing wireless AP entry beats new wired switch entry
+                if not new_wireless and entry["port_mac_count"] >= existing.get("port_mac_count", 1):
+                    continue  # both wired: existing is equally or more specific
+                # new_wireless=True always overwrites existing wired entry (fall through to store)
             _mac_to_port[mac] = entry
 
     log.info("Bridge scan %s (%s): %d MACs mapped", switch_ip, sw_name, len(new_entries))

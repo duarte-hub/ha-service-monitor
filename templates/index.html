@@ -317,7 +317,7 @@
         <th>Latency</th>
         <th>Uptime</th>
         <th>Ports</th>
-        <th>Sw Port</th>
+        <th>Connection</th>
         <th>Tags</th>
         <th>Monitor</th>
         <th style="width:32px"></th>
@@ -505,16 +505,37 @@
     return `<div style="display:flex;flex-direction:column;gap:3px">${toggle}${sel}</div>`;
   }
 
+  // Wireless interface name patterns (Aruba, Qualcomm Atheros, MediaTek, generic)
+  const _wifiPat = /^(ath|wlan|wifi|bss|vap|wl|ra|mon|dot11|ssid|mbss|ap\d)/i;
+
   function _swPortCell(d) {
-    // SNMP Bridge MIB data — most specific, shown first
     const sp = d.switch_port;
+    const spWireless = sp && _wifiPat.test(sp.if_name || '');
+
+    // Priority 1: SNMP wireless (AP direct association via Bridge MIB)
+    if (spWireless) {
+      const swLabel = sp.switch_name || sp.switch_ip;
+      const tip = [`AP: ${swLabel}`, `Radio: ${sp.if_name}`, sp.if_alias ? `Alias: ${sp.if_alias}` : '']
+        .filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+      return `<span class="sw-port-chip" title="${tip}" style="background:rgba(171,71,188,.12);border-color:rgba(171,71,188,.3);color:#ce93d8">&#x25cb; ${swLabel}:${sp.if_name}</span>`;
+    }
+
+    // Priority 2: Meraki wireless (definitive AP association from Meraki cloud)
+    if (d.meraki_connection && !d.meraki_wired) {
+      const ssid = d.meraki_ssid ? ` ${d.meraki_ssid}` : '';
+      const tip  = [`AP: ${d.meraki_connection}`, d.meraki_ssid ? `SSID: ${d.meraki_ssid}` : '']
+        .filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+      return `<span class="sw-port-chip" title="${tip}" style="background:rgba(102,187,106,.12);border-color:rgba(102,187,106,.3);color:#81c784">&#x25cb; ${d.meraki_connection}${ssid}</span>`;
+    }
+
+    // Priority 3: SNMP wired switch port
     if (sp) {
       const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
       const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
       const cls   = errs ? 'has-err' : discs ? 'has-disc' : '';
-      const icon  = errs  ? '⚠ ' : '';
+      const icon  = errs ? '⚠ ' : '';
       const swLabel = sp.switch_name || sp.switch_ip;
-      const tip   = [
+      const tip = [
         `Switch: ${swLabel}`,
         sp.if_alias ? `Alias: ${sp.if_alias}` : '',
         errs  ? `Errors: ${errs}`  : '',
@@ -522,19 +543,15 @@
       ].filter(Boolean).join(' | ').replace(/"/g, '&quot;');
       return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${swLabel}:${sp.if_name}</span>`;
     }
-    // Meraki API — AP/switch association
-    const ap = d.meraki_connection;
-    if (ap) {
-      if (d.meraki_wired) {
-        const port = d.meraki_port ? `:${d.meraki_port}` : '';
-        const tip  = [`Switch: ${ap}`, d.meraki_port ? `Port: ${d.meraki_port}` : ''].filter(Boolean).join(' | ').replace(/"/g,'&quot;');
-        return `<span class="sw-port-chip" title="${tip}" style="background:rgba(41,182,246,.12);border-color:rgba(41,182,246,.3);color:#4fc3f7">${ap}${port}</span>`;
-      } else {
-        const ssid = d.meraki_ssid ? ` ${d.meraki_ssid}` : '';
-        const tip  = [`AP: ${ap}`, d.meraki_ssid ? `SSID: ${d.meraki_ssid}` : ''].filter(Boolean).join(' | ').replace(/"/g,'&quot;');
-        return `<span class="sw-port-chip" title="${tip}" style="background:rgba(102,187,106,.12);border-color:rgba(102,187,106,.3);color:#81c784">&#x25cb; ${ap}${ssid}</span>`;
-      }
+
+    // Priority 4: Meraki wired switch port
+    if (d.meraki_connection) {
+      const port = d.meraki_port ? `:${d.meraki_port}` : '';
+      const tip  = [`Switch: ${d.meraki_connection}`, d.meraki_port ? `Port: ${d.meraki_port}` : '']
+        .filter(Boolean).join(' | ').replace(/"/g, '&quot;');
+      return `<span class="sw-port-chip" title="${tip}" style="background:rgba(41,182,246,.12);border-color:rgba(41,182,246,.3);color:#4fc3f7">${d.meraki_connection}${port}</span>`;
     }
+
     return '<span style="color:var(--dim);font-size:.7rem">—</span>';
   }
 
