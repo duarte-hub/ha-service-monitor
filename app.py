@@ -1825,7 +1825,9 @@ def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list
         log.warning("Meraki API %s failed: %s", path, e)
     return None
 
-_meraki_net_devs: dict = {}   # device name → "ap" | "gateway" | "switch" | "other"
+_meraki_net_devs: dict  = {}   # device name → "ap" | "gateway" | "switch" | "other"
+_meraki_net_macs: dict  = {}   # mac (lower) → {name, model, type, serial}
+_meraki_topology: dict  = {}   # raw link-layer topology {nodes, links} or {}
 
 def _meraki_dev_type(model: str) -> str:
     m = (model or "").upper()
@@ -1836,7 +1838,7 @@ def _meraki_dev_type(model: str) -> str:
 
 def _poll_meraki_api_clients() -> int:
     """Fetch clients from Meraki Dashboard API; enrich _devices with MAC/vendor/hostname."""
-    global _meraki_net_devs
+    global _meraki_net_devs, _meraki_net_macs, _meraki_topology
     key     = MERAKI_API_KEY
     net_id  = MERAKI_NETWORK_ID
     if not key or not net_id:
@@ -1846,6 +1848,17 @@ def _poll_meraki_api_clients() -> int:
     net_devs = _meraki_api_get(f"/networks/{net_id}/devices", key) or []
     _meraki_net_devs = {d.get("name", ""): _meraki_dev_type(d.get("model", ""))
                         for d in net_devs if d.get("name")}
+    _meraki_net_macs = {(d.get("mac") or "").lower(): {
+        "name":   d.get("name", ""),
+        "model":  d.get("model", ""),
+        "type":   _meraki_dev_type(d.get("model", "")),
+        "serial": d.get("serial", ""),
+        "ip":     d.get("lanIp") or d.get("wan1Ip") or "",
+    } for d in net_devs if d.get("mac")}
+
+    # Fetch physical link-layer topology (best-effort — not all firmware versions expose this)
+    topo = _meraki_api_get(f"/networks/{net_id}/topology/linkLayer", key)
+    _meraki_topology = topo if isinstance(topo, dict) else {}
 
     clients = _meraki_api_get(f"/networks/{net_id}/clients", key, {"timespan": 86400, "perPage": 1000})
     if not clients:
@@ -3453,32 +3466,6 @@ def api_config():
     return jsonify(safe)
 
 
-@app.route("/sensors")
-def sensors_page():
-    return render_template("sensors.html", version=VERSION)
-
-
-@app.route("/api/sensors")
-def api_sensors():
-    try:
-        sensors = _ha_discover_sensors()
-    except Exception as e:
-        return jsonify({"error": str(e), "sensors": []}), 200
-    return jsonify({"sensors": sensors})
-
-
-@app.route("/api/sensors/history")
-def api_sensor_history():
-    ids_param = request.args.get("ids", "")
-    hours = min(int(request.args.get("hours", "24")), 168)
-    entity_ids = [x.strip() for x in ids_param.split(",") if x.strip()]
-    if not entity_ids:
-        return jsonify({"error": "ids parameter required"}), 400
-    try:
-        history = _ha_sensor_history(entity_ids, hours=hours)
-    except Exception as e:
-        return jsonify({"error": str(e), "history": {}}), 200
-    return jsonify({"history": history})
 
 
 @app.route("/topology")
@@ -3502,89 +3489,122 @@ def _snmp_node_type(switch_ip: str) -> str:
 @app.route("/api/topology")
 def api_topology():
     with _devices_lock:
-        devs = list(_devices.values())
+        devs     = list(_devices.values())
         dev_by_ip = {d["ip"]: d for d in devs if "ip" in d}
 
-    # Snapshot mac→port so we don't hold the lock during topology build
     with _mac_port_lock:
         mac_port_snap = dict(_mac_to_port)
 
-    # IPs that act as intermediate SNMP nodes (Aruba APs / managed switches)
-    snmp_intermediate_ips: set = set(info["switch_ip"] for info in mac_port_snap.values())
+    topo     = _meraki_topology          # snapshot (dict, may be empty)
+    net_macs = dict(_meraki_net_macs)    # mac → {name, model, type, ip}
+    net_devs = dict(_meraki_net_devs)    # name → type
 
-    nodes = []
-    edges = []
-    seen_aps: set = set()        # Meraki conn names already added
-    seen_snmp: set = set()       # SNMP intermediate IPs already added
-    gateway_ips: set = set()
+    nodes: list = []
+    edges: list = []
+    node_ids: set = set()
+
+    def _add_node(n: dict) -> None:
+        if n["id"] not in node_ids:
+            node_ids.add(n["id"])
+            nodes.append(n)
+
+    # ── Build infrastructure layer from Meraki link-layer topology ────────────
+    infra_mac_to_id: dict = {}   # mac → node id used in edges
+
+    if topo.get("nodes"):
+        for tn in topo["nodes"]:
+            mac_lc = (tn.get("mac") or "").lower()
+            info   = net_macs.get(mac_lc, {})
+            name   = info.get("name") or tn.get("meraki", {}).get("device", {}).get("name") or mac_lc
+            model  = info.get("model") or tn.get("meraki", {}).get("device", {}).get("model") or ""
+            ntype  = _meraki_dev_type(model) if model else "switch"
+            ip     = info.get("ip") or ""
+            nid    = ip or f"meraki:{name}"
+            infra_mac_to_id[mac_lc] = nid
+            _add_node({"id": nid, "label": name, "type": ntype,
+                       "status": "online", "ip": ip, "vendor": model, "mac": mac_lc,
+                       "infra": True})
+
+        for lnk in (topo.get("links") or []):
+            ends = lnk.get("ends") or []
+            if len(ends) < 2:
+                continue
+            id_a = infra_mac_to_id.get((ends[0].get("node") or {}).get("mac", "").lower())
+            id_b = infra_mac_to_id.get((ends[1].get("node") or {}).get("mac", "").lower())
+            if id_a and id_b and id_a != id_b:
+                edges.append({"from": id_a, "to": id_b, "infra": True})
+
+    # ── Fallback: infer gateway from IP heuristic if no topology ────────────
+    gateway_node_id: str = ""
+    gw_candidates = [n for n in nodes if n.get("type") == "gateway"]
+    if gw_candidates:
+        gateway_node_id = gw_candidates[0]["id"]
+    else:
+        for d in devs:
+            ip = d.get("ip", "")
+            if ip.endswith(".1") or ip.endswith(".254"):
+                gateway_node_id = ip
+                _add_node({"id": ip,
+                           "label": d.get("name") or ip,
+                           "type": "gateway", "status": d.get("status", "unknown"),
+                           "ip": ip, "vendor": d.get("vendor", ""), "mac": d.get("mac", "")})
+                break
+
+    # ── Client/device layer ───────────────────────────────────────────────────
+    snmp_intermediate_ips = set(info["switch_ip"] for info in mac_port_snap.values())
 
     for d in devs:
-        ip = d.get("ip", "")
-        if ip.endswith(".1") or ip.endswith(".254"):
-            gateway_ips.add(ip)
+        ip     = d.get("ip", "")
+        mac_lc = (d.get("mac") or "").lower()
+        label  = d.get("name") or d.get("hostname") or d.get("dhcp_hostname") or ip
 
-    mac_to_ip = {d.get("mac", "").lower(): d.get("ip", "") for d in devs if d.get("mac")}
+        # Skip if already added as an infrastructure node
+        if ip and ip in node_ids:
+            continue
+        if mac_lc and mac_lc in infra_mac_to_id:
+            continue
 
-    for d in devs:
-        ip = d.get("ip", "")
-        label = d.get("name") or d.get("hostname") or d.get("dhcp_hostname") or ip
-        if ip in gateway_ips:
-            node_type = "gateway"
-        elif ip in snmp_intermediate_ips:
-            node_type = _snmp_node_type(ip)
-        else:
-            node_type = "device"
+        is_infra_snmp = ip in snmp_intermediate_ips
+        ntype = "device"
+        if is_infra_snmp:
+            ntype = _snmp_node_type(ip)
 
-        nodes.append({
-            "id": ip,
-            "label": label,
-            "type": node_type,
-            "status": d.get("status", "unknown"),
-            "ip": ip,
-            "vendor": d.get("vendor", ""),
-            "mac": d.get("mac", ""),
-        })
+        _add_node({"id": ip, "label": label, "type": ntype,
+                   "status": d.get("status", "unknown"),
+                   "ip": ip, "vendor": d.get("vendor", ""), "mac": mac_lc})
 
-        # Meraki wireless association edge
+        # Connect to Meraki AP/switch by association name
         conn_name = d.get("meraki_connection") or ""
         if conn_name:
-            dev_type = _meraki_net_devs.get(conn_name, "ap")
-            conn_id  = f"meraki:{conn_name}"
-            if conn_name not in seen_aps:
-                seen_aps.add(conn_name)
-                nodes.append({"id": conn_id, "label": conn_name, "type": dev_type, "status": "online"})
-            edges.append({"from": ip, "to": conn_id})
-            continue  # already connected via Meraki; skip SNMP edge for this device
+            parent_info = next((v for v in net_macs.values() if v.get("name") == conn_name), None)
+            parent_ip   = parent_info.get("ip", "") if parent_info else ""
+            parent_id   = parent_ip or f"meraki:{conn_name}"
+            if parent_id not in node_ids:
+                # AP not in link-layer topo → add standalone
+                ptype = net_devs.get(conn_name, "ap")
+                _add_node({"id": parent_id, "label": conn_name, "type": ptype,
+                           "status": "online", "ip": parent_ip, "vendor": "", "mac": ""})
+                if gateway_node_id and gateway_node_id != parent_id:
+                    edges.append({"from": parent_id, "to": gateway_node_id})
+            edges.append({"from": ip, "to": parent_id})
+            continue
 
-        # SNMP bridge edge (Aruba / managed switch)
-        mac_lc = (d.get("mac") or "").lower()
+        # Connect via SNMP bridge data (Aruba / managed switch)
         port_info = mac_port_snap.get(mac_lc)
         if port_info:
             sw_ip = port_info["switch_ip"]
-            if sw_ip not in seen_snmp and sw_ip not in gateway_ips:
-                seen_snmp.add(sw_ip)
+            if sw_ip not in node_ids:
                 sw_dev = dev_by_ip.get(sw_ip, {})
-                sw_label = sw_dev.get("name") or sw_dev.get("hostname") or sw_dev.get("dhcp_hostname") or sw_ip
-                sw_type = _snmp_node_type(sw_ip)
-                # Only add a separate node if this IP isn't already in the main device loop
-                # (it will be added there); mark it so the main loop sets the right type
-                if sw_ip not in dev_by_ip:
-                    nodes.append({
-                        "id": sw_ip, "label": sw_label, "type": sw_type,
-                        "status": "online", "ip": sw_ip, "vendor": "", "mac": "",
-                    })
-            if sw_ip not in gateway_ips:
-                edges.append({"from": ip, "to": sw_ip})
+                sw_label = sw_dev.get("name") or sw_dev.get("hostname") or sw_ip
+                _add_node({"id": sw_ip, "label": sw_label,
+                           "type": _snmp_node_type(sw_ip),
+                           "status": "online", "ip": sw_ip, "vendor": "", "mac": ""})
+                if gateway_node_id and gateway_node_id != sw_ip:
+                    edges.append({"from": sw_ip, "to": gateway_node_id})
+            edges.append({"from": ip, "to": sw_ip})
 
-    gw = sorted(gateway_ips)[0] if gateway_ips else None
-
-    if gw:
-        for conn_name in seen_aps:
-            edges.append({"from": f"meraki:{conn_name}", "to": gw})
-        for sw_ip in seen_snmp:
-            edges.append({"from": sw_ip, "to": gw})
-
-    return jsonify({"nodes": nodes, "edges": edges})
+    return jsonify({"nodes": nodes, "edges": edges,
+                    "meraki_topo": bool(topo.get("nodes"))})
 
 
 @app.route("/logs")

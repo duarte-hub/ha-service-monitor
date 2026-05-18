@@ -8,8 +8,7 @@
     :root {
       --bg:#111827; --card-bg:#1c1c1e; --border:rgba(225,225,225,.09);
       --text:#e1e1e1; --muted:#9b9b9b; --dim:#4b5563;
-      --primary:#03a9f4; --green:#4caf50; --red:#e53935;
-      --yellow:#ff9800;
+      --primary:#03a9f4; --green:#4caf50; --red:#e53935; --yellow:#ff9800;
     }
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
@@ -32,13 +31,16 @@
            padding:4px 10px; font-size:.74rem; cursor:pointer; font-family:inherit;
            transition:color .12s, border-color .12s; }
     .btn:hover { color:var(--text); border-color:rgba(255,255,255,.22); }
+    .btn.active { color:var(--primary); border-color:var(--primary); }
     #stat { margin-left:auto; font-size:.71rem; color:var(--dim); }
+    #source-label { font-size:.7rem; color:var(--dim); font-style:italic; }
 
     .legend { padding:5px 14px; background:var(--card-bg); border-bottom:1px solid var(--border);
               display:flex; gap:16px; align-items:center; flex-shrink:0; font-size:.72rem; color:var(--muted); }
     .leg { display:flex; align-items:center; gap:5px; }
     .leg-dia { width:9px; height:9px; background:#ff9800; transform:rotate(45deg); border-radius:1px; }
     .leg-sq  { width:10px; height:8px; background:var(--primary); border-radius:2px; }
+    .leg-sq-p{ width:10px; height:8px; background:#7c4dff; border-radius:2px; }
     .leg-dot-g { width:9px; height:9px; background:#4caf50; border-radius:50%; }
     .leg-dot-r { width:9px; height:9px; background:#e53935; border-radius:50%; }
     .leg-dot-u { width:9px; height:9px; background:#4b5563; border-radius:50%; }
@@ -60,6 +62,7 @@
     #tip .badge.up   { background:rgba(76,175,80,.2);  color:#4caf50; }
     #tip .badge.down { background:rgba(229,57,53,.2);  color:#e53935; }
     #tip .badge.unk  { background:rgba(75,85,99,.3);   color:#9b9b9b; }
+    #tip .badge.inf  { background:rgba(3,169,244,.2);  color:#03a9f4; }
   </style>
 </head>
 <body>
@@ -74,7 +77,6 @@
     Network Topology
   </div>
   <div class="topbar-right">
-    <button class="btn" onclick="fitView()">Fit</button>
     <a href="/vulnerabilities">Vulns</a>
     <a href="/">← Dashboard</a>
   </div>
@@ -82,17 +84,20 @@
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Search devices…" oninput="applySearch()">
+  <button class="btn active" id="btn-clients" onclick="toggleClients()">Clients</button>
+  <button class="btn" onclick="fitView()">Fit</button>
+  <span id="source-label"></span>
   <span id="stat">—</span>
 </div>
 
 <div class="legend">
   <div class="leg"><div class="leg-dia"></div> Gateway</div>
-  <div class="leg"><div class="leg-sq"></div> Access Point</div>
-  <div class="leg"><div class="leg-sq" style="background:#7c4dff"></div> Switch</div>
+  <div class="leg"><div class="leg-sq"></div> AP</div>
+  <div class="leg"><div class="leg-sq-p"></div> Switch</div>
   <div class="leg"><div class="leg-dot-g"></div> Up</div>
   <div class="leg"><div class="leg-dot-r"></div> Down</div>
   <div class="leg"><div class="leg-dot-u"></div> Unknown</div>
-  <div class="hint">Scroll to zoom · Drag to pan · Click device to inspect</div>
+  <div class="hint">Scroll to zoom · Drag to pan · Click AP/switch to expand clients</div>
 </div>
 
 <div id="wrap">
@@ -108,9 +113,9 @@
   const search = document.getElementById('search');
   const stat   = document.getElementById('stat');
 
-  // Viewport state
   let vx = 0, vy = 0, vz = 1;
   let panning = false, panStart = null, panOrigin = null;
+  let _showClients = true;
 
   // ── Pan ────────────────────────────────────────────────────────────────────
   wrap.addEventListener('mousedown', ev => {
@@ -132,7 +137,7 @@
     const rect = wrap.getBoundingClientRect();
     const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
     const factor = ev.deltaY < 0 ? 1.12 : 0.89;
-    const nz = Math.max(0.15, Math.min(4, vz * factor));
+    const nz = Math.max(0.1, Math.min(4, vz * factor));
     vx = mx - (mx - vx) * (nz / vz);
     vy = my - (my - vy) * (nz / vz);
     vz = nz;
@@ -148,11 +153,11 @@
     const {minX, minY, maxX, maxY} = _bounds;
     const W = wrap.clientWidth, H = wrap.clientHeight;
     const pad = 60;
-    const scaleX = (W - pad * 2) / (maxX - minX + 1);
-    const scaleY = (H - pad * 2) / (maxY - minY + 1);
+    const scaleX = (W - pad*2) / Math.max(maxX - minX + 1, 1);
+    const scaleY = (H - pad*2) / Math.max(maxY - minY + 1, 1);
     vz = Math.min(scaleX, scaleY, 2);
-    vx = pad + (W - pad * 2 - (maxX - minX) * vz) / 2 - minX * vz;
-    vy = pad + (H - pad * 2 - (maxY - minY) * vz) / 2 - minY * vz;
+    vx = pad + (W - pad*2 - (maxX - minX)*vz) / 2 - minX*vz;
+    vy = pad + (H - pad*2 - (maxY - minY)*vz) / 2 - minY*vz;
     applyTransform();
   }
 
@@ -161,7 +166,7 @@
 
   function svgEl(tag, attrs, parent) {
     const e = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    for (const [k,v] of Object.entries(attrs||{})) e.setAttribute(k,v);
     if (parent) parent.appendChild(e);
     return e;
   }
@@ -171,110 +176,112 @@
     return e;
   }
 
-  // ── Colour helpers ─────────────────────────────────────────────────────────
   function devColor(n) {
-    if (n.status === 'up')   return '#4caf50';
-    if (n.status === 'down') return '#e53935';
+    if (n.status==='up')   return '#4caf50';
+    if (n.status==='down') return '#e53935';
     return '#4b5563';
   }
 
-  // ── Layout constants ───────────────────────────────────────────────────────
-  const DEV_W    = 64;   // horizontal spacing between device centres
-  const AP_GAP   = 48;   // extra gap between AP groups
-  const GW_Y     = 80;
-  const AP_Y     = 220;
-  const DEV_Y    = 370;
-  const UNCON_Y  = 370;  // unconnected devices same tier
-
-  // ── Data ───────────────────────────────────────────────────────────────────
-  let _nodes = [], _edges = [], _bounds = null;
-
   // ── Layout ─────────────────────────────────────────────────────────────────
+  const GW_Y   = 80;
+  const INFRA_Y = 240;
+  const DEV_Y  = 400;
+  const H_GAP  = 90;   // horizontal spacing between infra nodes
+  const D_GAP  = 56;   // horizontal spacing between client nodes
+
   function computeLayout(nodes, edges) {
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
-
-    // Build parent→children map
-    const children = {};
+    const children = {};  // parent id → [child ids]
     for (const e of edges) {
+      if (!children[e.to]) children[e.to] = [];   // edges are from client → parent
       if (!children[e.from]) children[e.from] = [];
-      children[e.from].push(e.to);
+    }
+    // Build parent → clients map (edges go FROM device TO infra/gateway)
+    const parentOf = {};  // child id → parent id
+    for (const e of edges) {
+      parentOf[e.from] = e.to;
     }
 
-    const gateways  = nodes.filter(n => n.type === 'gateway');
-    // APs and switches both appear in the middle tier
-    const aps       = nodes.filter(n => n.type === 'ap' || n.type === 'switch');
-    const allDevIds = new Set(nodes.filter(n => n.type === 'device').map(n => n.id));
+    const gateways = nodes.filter(n => n.type === 'gateway');
+    const infra    = nodes.filter(n => n.type === 'ap' || n.type === 'switch');
+    const clients  = nodes.filter(n => n.type === 'device' || n.type === 'other');
 
-    // Middle-tier nodes' device children
-    const apDevs = {};
-    for (const ap of aps) {
-      apDevs[ap.id] = (children[ap.id] || []).map(id => nodeMap[id]).filter(n => n && n.type === 'device');
+    // Group clients by their parent infra node
+    const infraClients = {};   // infra_id → [client nodes]
+    for (const c of clients) {
+      const pid = parentOf[c.id];
+      if (pid && nodeMap[pid] && (nodeMap[pid].type === 'ap' || nodeMap[pid].type === 'switch')) {
+        if (!infraClients[pid]) infraClients[pid] = [];
+        infraClients[pid].push(c);
+      }
     }
-
-    // Unconnected devices
-    const connectedIds = new Set(aps.flatMap(ap => apDevs[ap.id].map(n => n.id)));
-    const unconnected  = nodes.filter(n => n.type === 'device' && !connectedIds.has(n.id));
+    const orphanClients = clients.filter(c => {
+      const pid = parentOf[c.id];
+      return !pid || !nodeMap[pid] || (nodeMap[pid].type !== 'ap' && nodeMap[pid].type !== 'switch');
+    });
 
     let x = 60;
 
-    // Place AP groups
-    for (const ap of aps) {
-      const devs = apDevs[ap.id];
-      const groupW = Math.max(devs.length, 1) * DEV_W;
+    // Place infra groups
+    for (const inf of infra) {
+      const group = infraClients[inf.id] || [];
+      const groupW = Math.max(group.length * D_GAP, H_GAP);
 
-      devs.forEach((d, i) => {
-        d.x = x + i * DEV_W;
-        d.y = DEV_Y;
-      });
+      if (_showClients) {
+        group.forEach((d, i) => {
+          d.x = x + i * D_GAP;
+          d.y = DEV_Y;
+          d.visible = true;
+        });
+      } else {
+        group.forEach(d => { d.visible = false; });
+      }
 
-      ap.x = devs.length ? x + (groupW - DEV_W) / 2 : x;
-      ap.y = AP_Y;
-      x   += groupW + AP_GAP;
+      inf.x = x + (groupW - D_GAP) / 2;
+      inf.y = INFRA_Y;
+      inf.clientCount = group.length;
+      x += groupW + 30;
     }
 
-    // Unconnected devices (spread at same tier as devices, after AP groups)
-    unconnected.forEach((d, i) => {
-      d.x = x + i * DEV_W;
-      d.y = UNCON_Y;
-    });
-    if (unconnected.length) x += unconnected.length * DEV_W + AP_GAP;
+    // Orphan clients
+    if (_showClients && orphanClients.length) {
+      orphanClients.forEach((d, i) => { d.x = x + i*D_GAP; d.y = DEV_Y; d.visible = true; });
+      x += orphanClients.length * D_GAP + 30;
+    } else {
+      orphanClients.forEach(d => { d.visible = false; });
+    }
 
-    // Gateways centred above everything
-    const totalW = x - 60;
+    // Fallback: no infra nodes
+    if (!infra.length) {
+      clients.forEach((d, i) => { d.x = 60 + i*D_GAP; d.y = INFRA_Y; d.visible = true; });
+      x = 60 + clients.length * D_GAP;
+    }
+
+    // Centre gateways
+    const totalW = Math.max(x - 60, H_GAP);
     gateways.forEach((gw, i) => {
-      gw.x = 60 + totalW / 2 + (i - (gateways.length - 1) / 2) * 100;
-      gw.y = aps.length ? GW_Y : (unconnected.length ? GW_Y : GW_Y);
+      gw.x = 60 + totalW/2 + (i - (gateways.length-1)/2) * 120;
+      gw.y = GW_Y;
     });
 
-    // No APs at all? skip AP tier, place devices at AP_Y instead
-    if (!aps.length) {
-      for (const d of unconnected) d.y = AP_Y;
-    }
-
-    // Bounding box
-    const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
-    return {
-      minX: Math.min(...xs) - 40,
-      minY: Math.min(...ys) - 40,
-      maxX: Math.max(...xs) + 40,
-      maxY: Math.max(...ys) + 60,
-    };
+    // Bounding box over visible nodes
+    const visible = nodes.filter(n => n.visible !== false);
+    if (!visible.length) return {minX:0, minY:0, maxX:400, maxY:300};
+    const xs = visible.map(n=>n.x), ys = visible.map(n=>n.y);
+    return {minX:Math.min(...xs)-40, minY:Math.min(...ys)-40,
+            maxX:Math.max(...xs)+40, maxY:Math.max(...ys)+60};
   }
 
   // ── Draw ───────────────────────────────────────────────────────────────────
-  let _nodeEls = {};  // id → DOM group for highlight
+  let _nodeEls = {};
 
   function draw(nodes, edges) {
     canvas.innerHTML = '';
     _nodeEls = {};
 
-    // Defs
     const defs = svgEl('defs', {}, canvas);
-    // Gradient for edges
-    svgEl('marker', {
-      id:'arr', markerWidth:6, markerHeight:6,
-      refX:5, refY:3, orient:'auto',
-    }, defs).innerHTML = `<path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,.18)"/>`;
+    svgEl('marker', {id:'arr', markerWidth:6, markerHeight:6, refX:5, refY:3, orient:'auto'}, defs)
+      .innerHTML = `<path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,.15)"/>`;
 
     gRoot  = svgEl('g', {}, canvas);
     gEdges = svgEl('g', {}, gRoot);
@@ -282,28 +289,22 @@
 
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-    // Tier labels (background, low-opacity)
-    const hasAps = nodes.some(n => n.type === 'ap' || n.type === 'switch');
-    if (hasAps) {
-      const xs = nodes.map(n => n.x);
-      const minX = Math.min(...xs) - 30, maxX = Math.max(...xs) + 30;
+    // Tier labels
+    const hasInfra = nodes.some(n => n.type==='ap'||n.type==='switch');
+    if (hasInfra) {
+      const visXs = nodes.filter(n=>n.visible!==false).map(n=>n.x);
+      const minX = Math.min(...visXs)-20, maxX = Math.max(...visXs)+20;
       [
-        {y: GW_Y - 35,  label: 'Gateway'},
-        {y: AP_Y - 35,  label: 'APs / Switches'},
-        {y: DEV_Y - 35, label: 'Devices'},
+        {y: GW_Y-35,    label: 'Gateway'},
+        {y: INFRA_Y-35, label: 'Infrastructure'},
+        ...((_showClients && nodes.some(n=>n.type==='device'&&n.visible!==false))
+            ? [{y: DEV_Y-35, label: 'Clients'}] : []),
       ].forEach(({y, label}) => {
-        svgTxt(label, {
-          x: minX, y,
-          fill: 'rgba(255,255,255,.12)', 'font-size': 11,
-          'font-family': 'system-ui,sans-serif', 'font-weight': 600,
-          'text-transform': 'uppercase', 'letter-spacing': '.08em',
-          'user-select': 'none',
-        }, gEdges);
-        svgEl('line', {
-          x1: minX + label.length * 6.8 + 8, y1: y - 4,
-          x2: maxX, y2: y - 4,
-          stroke: 'rgba(255,255,255,.06)', 'stroke-width': 1,
-        }, gEdges);
+        svgTxt(label, {x: minX, y, fill:'rgba(255,255,255,.1)', 'font-size':11,
+          'font-family':'system-ui,sans-serif', 'font-weight':600,
+          'text-transform':'uppercase', 'letter-spacing':'.08em', 'user-select':'none'}, gEdges);
+        svgEl('line', {x1: minX+label.length*6.8+8, y1:y-4, x2:maxX, y2:y-4,
+          stroke:'rgba(255,255,255,.05)', 'stroke-width':1}, gEdges);
       });
     }
 
@@ -311,129 +312,143 @@
     for (const e of edges) {
       const a = nodeMap[e.from], b = nodeMap[e.to];
       if (!a || !b) continue;
+      if (a.visible===false || b.visible===false) continue;
       const cpY = (a.y + b.y) / 2;
+      const isInfra = e.infra;
       svgEl('path', {
         d: `M${a.x},${a.y} C${a.x},${cpY} ${b.x},${cpY} ${b.x},${b.y}`,
         fill: 'none',
-        stroke: 'rgba(255,255,255,.1)',
-        'stroke-width': 1.5,
+        stroke: isInfra ? 'rgba(3,169,244,.35)' : 'rgba(255,255,255,.08)',
+        'stroke-width': isInfra ? 2 : 1.2,
+        'stroke-dasharray': isInfra ? 'none' : 'none',
       }, gEdges);
     }
 
     // Nodes
     for (const n of nodes) {
-      const g = svgEl('g', {
-        transform: `translate(${n.x},${n.y})`,
-        style: n.ip ? 'cursor:pointer' : '',
-      }, gNodes);
+      if (n.visible === false) continue;
+
+      const g = svgEl('g', {transform:`translate(${n.x},${n.y})`,
+                             style: n.ip ? 'cursor:pointer' : ''}, gNodes);
       _nodeEls[n.id] = g;
 
       if (n.type === 'gateway') {
-        svgEl('polygon', {
-          points: '0,-20 16,0 0,20 -16,0',
-          fill: '#ff9800', stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
-        }, g);
+        svgEl('polygon', {points:'0,-22 18,0 0,22 -18,0',
+          fill:'#ff9800', stroke:'#fff', 'stroke-width':1.5, opacity:.92}, g);
+
       } else if (n.type === 'ap' || n.type === 'switch') {
-        const devCount = edges.filter(e => e.from === n.id).length;
-        const fill = n.type === 'switch' ? '#7c4dff' : '#03a9f4';
-        svgEl('rect', {
-          x:-18, y:-11, width:36, height:22, rx:5,
-          fill, stroke: '#fff', 'stroke-width': 1.5, opacity: .9,
-        }, g);
-        if (devCount > 0) {
-          const badge = svgEl('g', {transform: 'translate(14,-12)'}, g);
-          svgEl('circle', {r: 9, fill: '#1c1c1e', stroke: fill, 'stroke-width': 1.5}, badge);
-          svgTxt(String(devCount), {
-            'text-anchor': 'middle', dy: '0.35em',
-            fill, 'font-size': 9, 'font-weight': '700',
-            'font-family': 'system-ui,sans-serif', 'user-select': 'none',
-          }, badge);
+        const fill = n.type==='switch' ? '#7c4dff' : '#03a9f4';
+        svgEl('rect', {x:-20, y:-12, width:40, height:24, rx:6,
+          fill, stroke:'#fff', 'stroke-width':1.5, opacity:.92}, g);
+
+        // Client count badge
+        const cnt = n.clientCount || 0;
+        if (cnt > 0) {
+          const badge = svgEl('g', {transform:'translate(16,-14)'}, g);
+          svgEl('circle', {r:10, fill:'#1c1c1e', stroke:fill, 'stroke-width':1.5}, badge);
+          svgTxt(String(cnt), {'text-anchor':'middle', dy:'0.35em',
+            fill, 'font-size':9, 'font-weight':'700',
+            'font-family':'system-ui,sans-serif', 'user-select':'none'}, badge);
         }
+
       } else {
         const col = devColor(n);
-        svgEl('circle', {r: 10, fill: col, stroke: '#fff', 'stroke-width': 1.5, opacity: .9}, g);
+        svgEl('circle', {r:9, fill:col, stroke:'#fff', 'stroke-width':1.2, opacity:.9}, g);
       }
 
       // Label
-      const rawLabel = (n.label || n.id).replace(/^(ap|meraki):/, '');
-      const label = rawLabel.length > 16 ? rawLabel.slice(0, 15) + '…' : rawLabel;
-      svgTxt(label, {
-        'text-anchor': 'middle',
-        dy: n.type === 'gateway' ? 34 : (n.type === 'ap' || n.type === 'switch') ? 28 : 26,
-        fill: '#bbb', 'font-size': 10,
-        'font-family': 'system-ui,sans-serif',
-        'pointer-events': 'none', 'user-select': 'none',
-      }, g);
+      const rawLabel = (n.label||n.id).replace(/^(meraki|ap|snmp):/, '');
+      const label = rawLabel.length > 18 ? rawLabel.slice(0,17)+'…' : rawLabel;
+      const dyOff = n.type==='gateway' ? 36 : (n.type==='ap'||n.type==='switch') ? 30 : 24;
+      svgTxt(label, {'text-anchor':'middle', dy:dyOff, fill:'#bbb', 'font-size':10,
+        'font-family':'system-ui,sans-serif',
+        'pointer-events':'none', 'user-select':'none'}, g);
 
-      // Events
       g.addEventListener('mouseenter', ev => showTip(n, ev));
       g.addEventListener('mousemove',  ev => moveTip(ev));
       g.addEventListener('mouseleave', hideTip);
-      if (n.ip) g.addEventListener('click', ev => {
-        // only navigate if we didn't just pan
-        if (!panning) window.location = `/device/${n.ip}`;
-      });
+      if (n.ip) g.addEventListener('click', () => { if (!panning) window.location=`/device/${n.ip}`; });
     }
   }
 
-  // ── Search highlight ───────────────────────────────────────────────────────
+  // ── Toggle clients ─────────────────────────────────────────────────────────
+  function toggleClients() {
+    _showClients = !_showClients;
+    document.getElementById('btn-clients').classList.toggle('active', _showClients);
+    redraw();
+  }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
   function applySearch() {
     const q = search.value.trim().toLowerCase();
     let matches = 0;
     for (const n of _nodes) {
-      const hay = [(n.label || ''), (n.ip || ''), (n.vendor || ''), (n.mac || '')].join(' ').toLowerCase();
+      const hay = [(n.label||''), (n.ip||''), (n.vendor||''), (n.mac||'')].join(' ').toLowerCase();
       const hit = !q || hay.includes(q);
       const el = _nodeEls[n.id];
       if (!el) continue;
-      el.style.opacity = hit ? '' : '0.15';
+      el.style.opacity = hit ? '' : '0.12';
       if (hit && q) matches++;
     }
-    if (q) stat.textContent = `${matches} match${matches !== 1 ? 'es' : ''}`;
-    else stat.textContent = `${_nodes.filter(n => n.type === 'device').length} devices`;
+    stat.textContent = q ? `${matches} match${matches!==1?'es':''}` : _statText();
+  }
+
+  function _statText() {
+    const clients = _nodes.filter(n=>n.type==='device').length;
+    const infra   = _nodes.filter(n=>n.type==='ap'||n.type==='switch').length;
+    return `${clients} clients · ${infra} infra`;
   }
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
   function showTip(n, ev) {
-    const label = (n.label || n.id).replace(/^(ap|meraki):/, '');
+    const label = (n.label||n.id).replace(/^(meraki|ap|snmp):/, '');
     let html = `<strong>${label}</strong>`;
     if (n.ip)     html += `<div class="tr">IP <span>${n.ip}</span></div>`;
     if (n.mac)    html += `<div class="tr">MAC <span>${n.mac}</span></div>`;
-    if (n.vendor) html += `<div class="tr">Vendor <span>${n.vendor}</span></div>`;
+    if (n.vendor) html += `<div class="tr">Model <span>${n.vendor}</span></div>`;
+    if (n.infra)  html += `<span class="badge inf">infrastructure</span> `;
     if (n.status) {
-      const cls = n.status === 'up' ? 'up' : n.status === 'down' ? 'down' : 'unk';
+      const cls = n.status==='up'?'up':n.status==='down'?'down':n.status==='online'?'up':'unk';
       html += `<span class="badge ${cls}">${n.status}</span>`;
     }
-    if (n.type === 'ap' || n.type === 'switch') {
-      const cnt = _edges.filter(e => e.from === n.id).length;
-      html += `<div class="tr">${cnt} device${cnt !== 1 ? 's' : ''} connected</div>`;
+    if (n.type==='ap'||n.type==='switch') {
+      const cnt = n.clientCount || 0;
+      html += `<div class="tr">${cnt} client${cnt!==1?'s':''} connected</div>`;
     }
     tip.innerHTML = html;
     tip.style.display = 'block';
     moveTip(ev);
   }
   function moveTip(ev) {
-    const tx = ev.clientX + 14, ty = ev.clientY + 10;
+    const tx = ev.clientX+14, ty = ev.clientY+10;
     const r = tip.getBoundingClientRect();
-    tip.style.left = Math.min(tx, window.innerWidth  - r.width  - 8) + 'px';
-    tip.style.top  = Math.min(ty, window.innerHeight - r.height - 8) + 'px';
+    tip.style.left = Math.min(tx, window.innerWidth -r.width -8)+'px';
+    tip.style.top  = Math.min(ty, window.innerHeight-r.height-8)+'px';
   }
-  function hideTip() { tip.style.display = 'none'; }
+  function hideTip() { tip.style.display='none'; }
 
-  // ── Init ───────────────────────────────────────────────────────────────────
-  async function init() {
-    const data  = await (await fetch('/api/topology')).json();
-    _nodes = data.nodes || [];
-    _edges = data.edges || [];
+  // ── Data & redraw ──────────────────────────────────────────────────────────
+  let _nodes=[], _edges=[], _bounds=null;
+
+  function redraw() {
     _bounds = computeLayout(_nodes, _edges);
-
-    // Set SVG size to bounding box (large enough to draw; viewport clips it)
     canvas.setAttribute('width',  _bounds.maxX + 60);
     canvas.setAttribute('height', _bounds.maxY + 60);
-
     draw(_nodes, _edges);
     fitView();
     applySearch();
-    stat.textContent = `${_nodes.filter(n => n.type === 'device').length} devices`;
+    stat.textContent = _statText();
+  }
+
+  async function init() {
+    const data = await (await fetch('/api/topology')).json();
+    _nodes = data.nodes || [];
+    _edges = data.edges || [];
+
+    const srcEl = document.getElementById('source-label');
+    srcEl.textContent = data.meraki_topo ? 'Source: Meraki link-layer API' : 'Source: heuristic';
+
+    redraw();
   }
 
   init();

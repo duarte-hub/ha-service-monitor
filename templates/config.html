@@ -31,6 +31,7 @@
     .tab[data-tab="network"].active      { color:var(--orange); border-color:var(--orange); }
     .tab[data-tab="sync"].active         { color:var(--purple); border-color:var(--purple); }
     .tab[data-tab="services"].active     { color:#90a4ae;       border-color:#90a4ae;       }
+    .tab[data-tab="vuln"].active         { color:#e53935;       border-color:#e53935;       }
 
     /* Panes */
     .pane { display:none; padding:28px 32px; max-width:860px; }
@@ -104,6 +105,7 @@
   <div class="tab"        data-tab="network"       onclick="showTab('network')"><span class="dot"></span>Network</div>
   <div class="tab"        data-tab="sync"          onclick="showTab('sync')"><span class="dot"></span>Sync</div>
   <div class="tab"        data-tab="services"      onclick="showTab('services')"><span class="dot"></span>Services</div>
+  <div class="tab"        data-tab="vuln"          onclick="showTab('vuln')"><span class="dot"></span>Vulnerability</div>
 </div>
 
 <!-- ── Connections ─────────────────────────────────────────────────────────── -->
@@ -352,6 +354,107 @@
   </div>
 </div>
 
+<!-- ── Vulnerability ────────────────────────────────────────────────────────── -->
+<div class="pane" id="vuln">
+  <div class="sub">
+    <div class="sub-label">Auto-sweep</div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Enable background auto-scan</strong>
+        <span>Automatically scan all hosts on the configured interval</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_auto_scan_enabled"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Scan on new device discovery</strong>
+        <span>Immediately run a vuln scan when a new host appears</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_scan_on_new_device"><span class="slider"></span></label>
+    </div>
+    <div class="grid3" style="margin-top:14px">
+      <div class="field" style="margin:0"><label>Sweep interval (hours)</label>
+        <input type="number" id="vuln_auto_scan_interval" min="1" max="168" placeholder="24"></div>
+      <div class="field" style="margin:0"><label>Delay between hosts (s)</label>
+        <input type="number" id="vuln_scan_delay" min="0" max="300" placeholder="15"></div>
+      <div class="field" style="margin:0"><label>Max concurrent scans</label>
+        <input type="number" id="vuln_concurrency" min="1" max="10" placeholder="2"></div>
+    </div>
+    <div class="field" style="margin-top:14px;margin-bottom:0">
+      <label>Exclude IPs (comma-separated)</label>
+      <input type="text" id="vuln_exclude_ips" placeholder="192.168.1.1, 192.168.1.254">
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">nmap phase</div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Enable nmap vuln scripts</strong>
+        <span>Run <code>nmap --script &lt;scripts&gt;</code> as first scan phase</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_nmap_enabled"><span class="slider"></span></label>
+    </div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Timing (T0–T5)</label>
+        <select id="vuln_nmap_timing">
+          <option value="T1">T1 — Sneaky</option><option value="T2">T2 — Polite</option>
+          <option value="T3">T3 — Normal</option><option value="T4">T4 — Aggressive</option>
+          <option value="T5">T5 — Insane</option>
+        </select></div>
+      <div class="field" style="margin:0"><label>Port range (empty=default)</label>
+        <input type="text" id="vuln_nmap_ports" placeholder="1-1024 or 80,443"></div>
+      <div class="field" style="margin:0"><label>Scripts / categories</label>
+        <input type="text" id="vuln_nmap_scripts" placeholder="vuln"></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">Nuclei phase</div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Enable Nuclei</strong>
+        <span>Run template-based checks after nmap</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_nuclei_enabled"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Interactsh (OOB)</strong>
+        <span>Out-of-band detection for blind vulns — needs internet</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_nuclei_interactsh"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-desc"><strong>Headless browser</strong>
+        <span>Enable browser-based checks — significantly slower</span></div>
+      <label class="switch"><input type="checkbox" id="vuln_nuclei_headless"><span class="slider"></span></label>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Template tags (comma-separated)</label>
+        <input type="text" id="vuln_nuclei_tags" placeholder="cves,exposed-panels,default-credentials,misconfiguration"></div>
+      <div class="field" style="margin:0"><label>Exclude tags</label>
+        <input type="text" id="vuln_nuclei_exclude_tags" placeholder="intrusive,dos"></div>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Severity filter (comma-separated)</label>
+      <input type="text" id="vuln_nuclei_severity" placeholder="critical,high,medium,low,info"></div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Rate limit (req/s)</label>
+        <input type="number" id="vuln_nuclei_rate_limit" min="1" max="500" placeholder="50"></div>
+      <div class="field" style="margin:0"><label>Request timeout (s)</label>
+        <input type="number" id="vuln_nuclei_timeout" min="1" max="120" placeholder="10"></div>
+      <div class="field" style="margin:0"><label>Template concurrency</label>
+        <input type="number" id="vuln_nuclei_concurrency" min="1" max="100" placeholder="25"></div>
+    </div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Bulk size</label>
+        <input type="number" id="vuln_nuclei_bulk_size" min="1" max="100" placeholder="25"></div>
+      <div class="field" style="margin:0"><label>Retries</label>
+        <input type="number" id="vuln_nuclei_retries" min="0" max="10" placeholder="1"></div>
+      <div class="field" style="margin:0"><label>Max host errors</label>
+        <input type="number" id="vuln_nuclei_max_host_errors" min="1" max="300" placeholder="30"></div>
+    </div>
+    <div class="field" style="margin-top:12px;margin-bottom:0"><label>Custom templates path</label>
+      <input type="text" id="vuln_nuclei_custom_templates" placeholder="/data/my-templates/"></div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="saveVuln()">Save</button>
+    <a href="/vulnerabilities" style="font-size:.8rem;color:var(--muted);margin-left:8px">← Scan results</a>
+    <span class="status-msg" id="vuln-status"></span>
+  </div>
+</div>
+
 <script>
   function showTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
@@ -404,6 +507,72 @@
       set('mqtt_probe_host', d.mqtt_probe_host || '');
       set('mqtt_probe_port', d.mqtt_probe_port || '1883');
     } catch (_) {}
+    loadVuln();
+  }
+
+  async function loadVuln() {
+    try {
+      const d = await (await fetch('/api/vulnerabilities/config')).json();
+      chk('vuln_auto_scan_enabled',  d.vuln_auto_scan_enabled);
+      chk('vuln_scan_on_new_device', d.vuln_scan_on_new_device);
+      set('vuln_auto_scan_interval', d.vuln_auto_scan_interval || '24');
+      set('vuln_scan_delay',         d.vuln_scan_delay         || '15');
+      set('vuln_concurrency',        d.vuln_concurrency        || '2');
+      set('vuln_exclude_ips',        d.vuln_exclude_ips        || '');
+      chk('vuln_nmap_enabled',       d.vuln_nmap_enabled);
+      const nt = document.getElementById('vuln_nmap_timing');
+      if (nt) nt.value = d.vuln_nmap_timing || 'T4';
+      set('vuln_nmap_ports',         d.vuln_nmap_ports   || '');
+      set('vuln_nmap_scripts',       d.vuln_nmap_scripts || 'vuln');
+      chk('vuln_nuclei_enabled',     d.vuln_nuclei_enabled);
+      chk('vuln_nuclei_interactsh',  d.vuln_nuclei_interactsh);
+      chk('vuln_nuclei_headless',    d.vuln_nuclei_headless);
+      set('vuln_nuclei_tags',             d.vuln_nuclei_tags             || 'cves,exposed-panels,default-credentials,misconfiguration');
+      set('vuln_nuclei_exclude_tags',     d.vuln_nuclei_exclude_tags     || '');
+      set('vuln_nuclei_severity',         d.vuln_nuclei_severity         || 'critical,high,medium,low,info');
+      set('vuln_nuclei_rate_limit',       d.vuln_nuclei_rate_limit       || '50');
+      set('vuln_nuclei_timeout',          d.vuln_nuclei_timeout          || '10');
+      set('vuln_nuclei_concurrency',      d.vuln_nuclei_concurrency      || '25');
+      set('vuln_nuclei_bulk_size',        d.vuln_nuclei_bulk_size        || '25');
+      set('vuln_nuclei_retries',          d.vuln_nuclei_retries          || '1');
+      set('vuln_nuclei_max_host_errors',  d.vuln_nuclei_max_host_errors  || '30');
+      set('vuln_nuclei_custom_templates', d.vuln_nuclei_custom_templates || '');
+    } catch (_) {}
+  }
+
+  function _rb(id) { return document.getElementById(id)?.checked ? 'true' : 'false'; }
+
+  async function saveVuln() {
+    const payload = {
+      vuln_auto_scan_enabled:  _rb('vuln_auto_scan_enabled'),
+      vuln_scan_on_new_device: _rb('vuln_scan_on_new_device'),
+      vuln_auto_scan_interval: val('vuln_auto_scan_interval'),
+      vuln_scan_delay:         val('vuln_scan_delay'),
+      vuln_concurrency:        val('vuln_concurrency'),
+      vuln_exclude_ips:        val('vuln_exclude_ips'),
+      vuln_nmap_enabled:       _rb('vuln_nmap_enabled'),
+      vuln_nmap_timing:        val('vuln_nmap_timing'),
+      vuln_nmap_ports:         val('vuln_nmap_ports'),
+      vuln_nmap_scripts:       val('vuln_nmap_scripts'),
+      vuln_nuclei_enabled:         _rb('vuln_nuclei_enabled'),
+      vuln_nuclei_interactsh:      _rb('vuln_nuclei_interactsh'),
+      vuln_nuclei_headless:        _rb('vuln_nuclei_headless'),
+      vuln_nuclei_tags:            val('vuln_nuclei_tags'),
+      vuln_nuclei_exclude_tags:    val('vuln_nuclei_exclude_tags'),
+      vuln_nuclei_severity:        val('vuln_nuclei_severity'),
+      vuln_nuclei_rate_limit:      val('vuln_nuclei_rate_limit'),
+      vuln_nuclei_timeout:         val('vuln_nuclei_timeout'),
+      vuln_nuclei_concurrency:     val('vuln_nuclei_concurrency'),
+      vuln_nuclei_bulk_size:       val('vuln_nuclei_bulk_size'),
+      vuln_nuclei_retries:         val('vuln_nuclei_retries'),
+      vuln_nuclei_max_host_errors: val('vuln_nuclei_max_host_errors'),
+      vuln_nuclei_custom_templates:val('vuln_nuclei_custom_templates'),
+    };
+    try {
+      const r = await fetch('/api/vulnerabilities/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      const d = await r.json();
+      flash('vuln-status', d.status === 'ok' ? 'Saved' : 'Error', d.status === 'ok' ? 'ok' : 'err');
+    } catch(e) { flash('vuln-status', 'Error: ' + e.message, 'err'); }
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
