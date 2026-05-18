@@ -1718,7 +1718,7 @@ def _ping_monitored() -> None:
         label = dev.get("name") or dev.get("hostname") or ip
         mode  = dev.get("alert_mode") or "default"
         log.debug("monitored %s (%s): %s", label, ip, "up" if up else "down")
-        if prev != "down" and not up:
+        if prev == "up" and not up:
             maybe_alert(f"device_{ip}", f"{label} unreachable", f"{ip} is not responding to ping", mode=mode)
         elif prev == "down" and up:
             log.info("Device %s (%s) is back online", label, ip)
@@ -1734,7 +1734,7 @@ def _ping_monitored() -> None:
                     _devices[ip]["port_status"] = new_ps
             for p_str, port_up in new_ps.items():
                 prev_up = prev_ps.get(p_str)
-                if prev_up is not False and not port_up:
+                if prev_up is True and not port_up:
                     maybe_alert(f"port_{ip}_{p_str}", f"{label} port {p_str} closed", f"{ip}:{p_str} is not responding", mode=mode)
                 elif prev_up is False and port_up:
                     log.info("Port %s:%s back online", ip, p_str)
