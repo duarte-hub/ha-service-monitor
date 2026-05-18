@@ -813,10 +813,8 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
             entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
 
     elif is_ap_source:
-        # AP fallback: dot1dBasePortIfIndex not exposed by this AP firmware.
-        # Walk the FDB directly, group by bridge-port number.
-        # On an AP the uplink port (to upstream switch) has the FEWEST MACs;
-        # all other ports are client-side (wireless associations).
+        # AP path 1: try Bridge FDB walk — group by bridge-port number.
+        # On an AP the uplink port has the fewest MACs; all others are wireless clients.
         bport_macs: dict = {}
         base_fdb = "1.3.6.1.2.1.17.4.3.1.2"
         base_len = len(base_fdb.split("."))
@@ -832,34 +830,124 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
                 continue
             bport_macs.setdefault(bport, []).append(mac)
 
-        if not bport_macs:
-            log.debug("Bridge scan %s (%s): no FDB data from AP, skipping", switch_ip, sw_name)
-            return
+        if bport_macs:
+            min_count = min(len(ms) for ms in bport_macs.values())
+            uplink_ports = {bp for bp, ms in bport_macs.items() if len(ms) == min_count}
+            if len(uplink_ports) == len(bport_macs):
+                uplink_ports = set()
+            for bport, macs in bport_macs.items():
+                if bport in uplink_ports:
+                    continue
+                for mac in macs:
+                    new_entries[mac] = {
+                        "switch_ip":    switch_ip,
+                        "switch_name":  sw_name,
+                        "if_name":      f"radio{bport}",
+                        "if_alias":     "",
+                        "if_idx":       bport,
+                        "is_wireless":  True,
+                        "port_mac_count": len(macs),
+                        "in_err": None, "out_err": None,
+                        "in_disc": None, "out_disc": None,
+                    }
+            log.info("Bridge scan %s (%s): AP FDB mode, %d client ports, %d MACs",
+                     switch_ip, sw_name, len(bport_macs) - len(uplink_ports), len(new_entries))
+        else:
+            # AP path 2: FDB empty. Try Aruba Instant aiClientTable (enterprise MIB).
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1.{mac6} → MAC (Hex-STRING)
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3.{mac6} → IP (IpAddress)
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5.{mac6} → hostname (STRING)
+            AI_MAC_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1"
+            AI_IP_COL  = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3"
+            AI_HOST_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5"
+            ai_base_len = len(AI_MAC_COL.split("."))
 
-        # The uplink port has the fewest MACs. Skip it; keep everything else as wireless clients.
-        min_count = min(len(ms) for ms in bport_macs.values())
-        uplink_ports = {bp for bp, ms in bport_macs.items() if len(ms) == min_count}
-        # If every port has the same count (single-port AP?), don't exclude anything
-        if len(uplink_ports) == len(bport_macs):
-            uplink_ports = set()
+            def _mac_from_ai_suffix(parts: list) -> str:
+                suffix = parts[ai_base_len:]
+                if len(suffix) != 6:
+                    return ""
+                try:
+                    first = int(suffix[0])
+                    if first & 0x01:  # multicast
+                        return ""
+                    return ":".join(f"{int(b):02x}" for b in suffix)
+                except ValueError:
+                    return ""
 
-        for bport, macs in bport_macs.items():
-            if bport in uplink_ports:
-                continue
-            for mac in macs:
+            # Collect MACs from column 1
+            for oid_str, _val in _snmpwalk(switch_ip, community, AI_MAC_COL, timeout=20, port=snmp_port):
+                mac = _mac_from_ai_suffix(oid_str.lstrip(".").split("."))
+                if not mac:
+                    continue
                 new_entries[mac] = {
-                    "switch_ip":    switch_ip,
-                    "switch_name":  sw_name,
-                    "if_name":      f"radio{bport}",
-                    "if_alias":     "",
-                    "if_idx":       bport,
-                    "is_wireless":  True,
-                    "port_mac_count": len(macs),
+                    "switch_ip":      switch_ip,
+                    "switch_name":    sw_name,
+                    "if_name":        "wifi",
+                    "if_alias":       "",
+                    "if_idx":         0,
+                    "is_wireless":    True,
+                    "port_mac_count": 1,
                     "in_err": None, "out_err": None,
                     "in_disc": None, "out_disc": None,
                 }
-        log.info("Bridge scan %s (%s): AP fallback mode, %d client ports, %d MACs",
-                 switch_ip, sw_name, len(bport_macs) - len(uplink_ports), len(new_entries))
+
+            # Enrich with IPs from column 3
+            for oid_str, val_str in _snmpwalk(switch_ip, community, AI_IP_COL, timeout=20, port=snmp_port):
+                mac = _mac_from_ai_suffix(oid_str.lstrip(".").split("."))
+                if mac and mac in new_entries:
+                    new_entries[mac]["if_alias"] = _sv(val_str)
+
+            # Enrich with hostnames from column 5
+            for oid_str, val_str in _snmpwalk(switch_ip, community, AI_HOST_COL, timeout=20, port=snmp_port):
+                mac = _mac_from_ai_suffix(oid_str.lstrip(".").split("."))
+                hostname = _sv(val_str).strip()
+                if mac and hostname and mac in new_entries:
+                    new_entries[mac]["if_alias"] = (
+                        f"{hostname} ({new_entries[mac]['if_alias']})"
+                        if new_entries[mac]["if_alias"] else hostname
+                    )
+
+            if new_entries:
+                log.info("Bridge scan %s (%s): Aruba aiClientTable, %d wireless clients",
+                         switch_ip, sw_name, len(new_entries))
+            else:
+                # AP path 3: ARP table fallback (non-Aruba APs)
+                # OID: 1.3.6.1.2.1.4.22.1.2.{ifIdx}.{a}.{b}.{c}.{d} → MAC
+                arp_base = "1.3.6.1.2.1.4.22.1.2"
+                arp_base_len = len(arp_base.split("."))
+                infra_ips = {s["ip"] for s in SNMP_SWITCHES}
+                infra_ips.add(switch_ip)
+                for oid_str, val_str in _snmpwalk(switch_ip, community, arp_base, timeout=20, port=snmp_port):
+                    parts = oid_str.lstrip(".").split(".")
+                    suffix = parts[arp_base_len:]
+                    if len(suffix) != 5:
+                        continue
+                    try:
+                        client_ip = ".".join(suffix[1:5])
+                        mac = _parse_snmp_mac(val_str)
+                    except Exception:
+                        continue
+                    if not mac or client_ip in infra_ips:
+                        continue
+                    if int(mac.split(":")[0], 16) & 0x01:
+                        continue
+                    new_entries[mac] = {
+                        "switch_ip":      switch_ip,
+                        "switch_name":    sw_name,
+                        "if_name":        "wifi",
+                        "if_alias":       client_ip,
+                        "if_idx":         0,
+                        "is_wireless":    True,
+                        "port_mac_count": 1,
+                        "in_err": None, "out_err": None,
+                        "in_disc": None, "out_disc": None,
+                    }
+                if not new_entries:
+                    log.debug("Bridge scan %s (%s): no client data from AP, skipping",
+                              switch_ip, sw_name)
+                    return
+                log.info("Bridge scan %s (%s): ARP table fallback, %d wireless clients",
+                         switch_ip, sw_name, len(new_entries))
     else:
         log.debug("Bridge scan %s (%s): no Bridge MIB, skipping", switch_ip, sw_name)
         return
