@@ -535,8 +535,9 @@
       if (swRow) swRow.style.display = '';
       if (spRow) spRow.style.display = '';
       const swIpEl = document.getElementById('d-sw-ip');
+      const swLabel = sp.switch_name || sp.switch_ip;
       if (swIpEl) swIpEl.innerHTML =
-        `<a href="/device/${sp.switch_ip}" style="color:var(--primary)">${sp.switch_ip}</a>`;
+        `<a href="/device/${sp.switch_ip}" style="color:var(--primary)">${swLabel}</a>`;
       const errs  = (sp.in_err  || 0) + (sp.out_err  || 0);
       const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
       const errBadge = errs  ? ` <span style="font-size:.68rem;background:rgba(229,57,53,.18);color:#ef9a9a;border-radius:3px;padding:1px 5px;font-weight:700">⚠ ${errs} errors</span>` : '';

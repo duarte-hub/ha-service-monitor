@@ -274,8 +274,25 @@
     <div class="field" style="max-width:280px">
       <label>SNMP community string</label>
       <input type="text" id="snmp_community" placeholder="public">
-      <div class="hint">Used for SNMP tag detection on monitored devices. ONVIF and RTSP are always probed.</div>
+      <div class="hint">Default community used for SNMP tag detection. ONVIF and RTSP are always probed.</div>
     </div>
+  </div>
+  <div class="sub">
+    <div class="sub-label">SNMP Switches</div>
+    <div class="hint" style="margin-bottom:10px">Named switches for Bridge MIB scans. Each switch gets its own name shown in the device table.</div>
+    <table id="snmp-sw-table" style="width:100%;border-collapse:collapse;font-size:.85rem">
+      <thead>
+        <tr style="color:var(--muted);text-align:left">
+          <th style="padding:4px 8px">Name</th>
+          <th style="padding:4px 8px">IP</th>
+          <th style="padding:4px 8px;width:70px">Port</th>
+          <th style="padding:4px 8px">Community</th>
+          <th style="padding:4px 8px;width:40px"></th>
+        </tr>
+      </thead>
+      <tbody id="snmp-sw-body"></tbody>
+    </table>
+    <button class="btn btn-secondary" style="margin-top:8px;font-size:.8rem" onclick="addSwitch()">+ Add switch</button>
   </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveScan()">Save</button>
@@ -490,6 +507,8 @@
       set('scan_ports',    d.scan_ports    || '22,80,443,8080,8123,1883,8883');
       set('snmp_community', d.snmp_community || 'public');
       set('poll_interval', d.poll_interval || '30');
+      try { _snmpSwitches = JSON.parse(d.snmp_switches || '[]'); } catch(e) { _snmpSwitches = []; }
+      renderSwitches();
 
       set('peer_url', d.peer_url || '');
       const roleEl = document.getElementById('alert_role');
@@ -650,8 +669,35 @@
   }
 
   // ── Network ────────────────────────────────────────────────────────────────
+  let _snmpSwitches = [];
+
+  function renderSwitches() {
+    const tbody = document.getElementById('snmp-sw-body');
+    if (!tbody) return;
+    tbody.innerHTML = _snmpSwitches.map((sw, i) => `
+      <tr>
+        <td style="padding:3px 4px"><input type="text" value="${esc(sw.name||'')}" placeholder="Aruba-Core" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].name=this.value"></td>
+        <td style="padding:3px 4px"><input type="text" value="${esc(sw.ip||'')}" placeholder="192.168.1.1" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].ip=this.value"></td>
+        <td style="padding:3px 4px"><input type="number" value="${sw.port||161}" min="1" max="65535" style="width:64px;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].port=parseInt(this.value)||161"></td>
+        <td style="padding:3px 4px"><input type="text" value="${esc(sw.community||'')}" placeholder="public" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].community=this.value"></td>
+        <td style="padding:3px 4px;text-align:center"><button onclick="removeSwitch(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem" title="Remove">✕</button></td>
+      </tr>`).join('');
+  }
+
+  function addSwitch() {
+    _snmpSwitches.push({name:'', ip:'', port:161, community:''});
+    renderSwitches();
+  }
+
+  function removeSwitch(i) {
+    _snmpSwitches.splice(i, 1);
+    renderSwitches();
+  }
+
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
   async function saveScan() {
-    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community')});
+    await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community'), snmp_switches: JSON.stringify(_snmpSwitches)});
     flash('scan-status', 'Saved', 'ok');
   }
 

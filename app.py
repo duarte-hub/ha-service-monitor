@@ -660,12 +660,14 @@ def _si(val_str: str) -> int:
     except (ValueError, TypeError): return 0
 
 def _run_snmp_if_diag(ip: str, community: str) -> None:
+    sw_cfg = next((s for s in SNMP_SWITCHES if s.get("ip") == ip), None)
+    snmp_port = int(sw_cfg["port"]) if sw_cfg and sw_cfg.get("port") else 161
     _SNMP_IF_RUNNING.add(ip)
     try:
         ifaces: dict = {}  # idx → {field: value}
 
         def _collect(base_oid: str, col_map: dict) -> None:
-            for oid_str, val_str in _snmpwalk(ip, community, base_oid, timeout=25):
+            for oid_str, val_str in _snmpwalk(ip, community, base_oid, timeout=25, port=snmp_port):
                 parts = oid_str.lstrip(".").split(".")
                 if len(parts) < 2:
                     continue
@@ -725,14 +727,18 @@ def _run_snmp_if_diag(ip: str, community: str) -> None:
 
 
 # ── Bridge MIB: MAC → switch port mapping ─────────────────────────────────────
-_mac_to_port: dict = {}   # "aa:bb:cc:dd:ee:ff" → {switch_ip, if_name, if_alias, if_idx, in_err, out_err, in_disc, out_disc}
+_mac_to_port: dict = {}   # "aa:bb:cc:dd:ee:ff" → {switch_ip, switch_name, if_name, if_alias, if_idx, port_mac_count, in_err, out_err, in_disc, out_disc}
 _mac_port_lock = threading.Lock()
 
 def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     """Walk dot1dTpFdbTable to map learned MACs to switch interfaces."""
+    sw_cfg = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
+    snmp_port = int(sw_cfg["port"]) if sw_cfg and sw_cfg.get("port") else 161
+    sw_name = sw_cfg["name"] if sw_cfg and sw_cfg.get("name") else switch_ip
+
     # Bridge port → ifIndex
     bport_to_ifidx: dict = {}
-    for oid_str, val_str in _snmpwalk(switch_ip, community, "1.3.6.1.2.1.17.1.4.1.2", timeout=15):
+    for oid_str, val_str in _snmpwalk(switch_ip, community, "1.3.6.1.2.1.17.1.4.1.2", timeout=15, port=snmp_port):
         parts = oid_str.lstrip(".").split(".")
         try:
             bport_to_ifidx[int(parts[-1])] = int(_sv(val_str))
@@ -746,10 +752,12 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     ifidx_map = {i["idx"]: i for i in iface_list}
 
     # dot1dTpFdbPort: MAC (encoded in OID suffix) → bridge port
+    # Also count MACs per ifidx to identify uplinks (many MACs) vs access ports (few MACs)
     new_entries: dict = {}
+    port_mac_count: dict = {}  # ifidx → count of MACs seen on that port
     base_fdb  = "1.3.6.1.2.1.17.4.3.1.2"
     base_len  = len(base_fdb.split("."))
-    for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20):
+    for oid_str, val_str in _snmpwalk(switch_ip, community, base_fdb, timeout=20, port=snmp_port):
         parts = oid_str.lstrip(".").split(".")
         suffix = parts[base_len:]
         if len(suffix) != 6:
@@ -765,24 +773,37 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
         iface = ifidx_map.get(ifidx)
         if iface is None:
             continue
+        port_mac_count[ifidx] = port_mac_count.get(ifidx, 0) + 1
         new_entries[mac] = {
-            "switch_ip":  switch_ip,
-            "if_name":    iface.get("name", f"if{ifidx}"),
-            "if_alias":   iface.get("alias", ""),
-            "if_idx":     ifidx,
-            "in_err":     iface.get("in_err"),
-            "out_err":    iface.get("out_err"),
-            "in_disc":    iface.get("in_disc"),
-            "out_disc":   iface.get("out_disc"),
+            "switch_ip":    switch_ip,
+            "switch_name":  sw_name,
+            "if_name":      iface.get("name", f"if{ifidx}"),
+            "if_alias":     iface.get("alias", ""),
+            "if_idx":       ifidx,
+            "in_err":       iface.get("in_err"),
+            "out_err":      iface.get("out_err"),
+            "in_disc":      iface.get("in_disc"),
+            "out_disc":     iface.get("out_disc"),
         }
 
+    # Stamp each entry with the count of MACs on its port (used for specificity ranking)
+    for entry in new_entries.values():
+        entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
+
     with _mac_port_lock:
-        # Remove stale entries from this switch, then add fresh ones
+        # Remove stale entries from this switch
         for k in [k for k, v in _mac_to_port.items() if v["switch_ip"] == switch_ip]:
             del _mac_to_port[k]
-        _mac_to_port.update(new_entries)
+        # Merge: for MACs already claimed by another switch, prefer the entry whose port
+        # has fewer MACs (= more direct / access-port connection; uplinks learn many MACs).
+        for mac, entry in new_entries.items():
+            existing = _mac_to_port.get(mac)
+            if existing and existing["switch_ip"] != switch_ip:
+                if entry["port_mac_count"] >= existing.get("port_mac_count", 1):
+                    continue  # existing from another switch is equally or more specific
+            _mac_to_port[mac] = entry
 
-    log.info("Bridge scan %s: %d MACs mapped", switch_ip, len(new_entries))
+    log.info("Bridge scan %s (%s): %d MACs mapped", switch_ip, sw_name, len(new_entries))
 
 
 def _do_scan(network: str) -> None:
@@ -1966,6 +1987,7 @@ _CONFIG_FIELDS = {
     # Network scan
     "scan_ports":             {"label": "Port scan list (comma-separated)", "default": "22,80,443,8080,8123,1883,8883"},
     "snmp_community":         {"label": "SNMP community string",            "default": "public"},
+    "snmp_switches":          {"label": "SNMP switches (JSON list)",        "default": "[]"},
     # Polling intervals
     "poll_interval":          {"label": "Device ping interval (s)",         "default": str(POLL_INTERVAL)},
     "ha_poll_interval":       {"label": "HA add-on poll interval (s)",      "default": str(HA_POLL_INTERVAL)},
@@ -2027,6 +2049,7 @@ PEER_URL:             str  = ""
 ALERT_ROLE:           str  = "standalone"  # standalone | primary | secondary
 AUTO_SYNC_PEER:       bool = False
 SNMP_COMMUNITY:       str  = "public"
+SNMP_SWITCHES:        list = []   # [{"name": str, "ip": str, "port": int, "community": str}]
 
 _peer_reachable:      bool = True   # updated by _peer_health_loop
 _peer_fail_streak:    int  = 0
@@ -2036,7 +2059,7 @@ def _apply_config(data: dict) -> None:
     global HA_URL, HA_TOKEN
     global NOTIFY_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
     global EMAIL_FROM, EMAIL_FROM_NAME, EMAIL_TO, ALERT_COOLDOWN, push_alerts_enabled, push_critical, email_alerts_enabled
-    global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY
+    global ALERT_TITLE, notify_recovery, new_device_alerts, MERAKI_API_KEY, MERAKI_NETWORK_ID, SCAN_PORTS, PEER_URL, ALERT_ROLE, AUTO_SYNC_PEER, SNMP_COMMUNITY, SNMP_SWITCHES
     global POLL_INTERVAL, HA_POLL_INTERVAL, MERAKI_POLL_INTERVAL
     if "ha_url"               in data: HA_URL               = data["ha_url"]       or HA_URL
     if "ha_token"             in data: HA_TOKEN             = data["ha_token"]     or HA_TOKEN
@@ -2081,6 +2104,13 @@ def _apply_config(data: dict) -> None:
     if "alert_role"             in data: ALERT_ROLE             = data["alert_role"]               or "standalone"
     if "auto_sync_peer"         in data: AUTO_SYNC_PEER         = str(data["auto_sync_peer"]).lower() in ("true", "1", "yes")
     if "snmp_community"         in data: SNMP_COMMUNITY         = data["snmp_community"] or "public"
+    if "snmp_switches"          in data:
+        try:
+            parsed = json.loads(data["snmp_switches"] or "[]")
+            if isinstance(parsed, list):
+                SNMP_SWITCHES = parsed
+        except Exception:
+            pass
 
     # Vulnerability scanning
     global VULN_AUTO_SCAN_ENABLED, VULN_AUTO_SCAN_INTERVAL, VULN_SCAN_DELAY, VULN_CONCURRENCY
@@ -3595,7 +3625,7 @@ def api_topology():
             sw_ip = port_info["switch_ip"]
             if sw_ip not in node_ids:
                 sw_dev = dev_by_ip.get(sw_ip, {})
-                sw_label = sw_dev.get("name") or sw_dev.get("hostname") or sw_ip
+                sw_label = sw_dev.get("name") or sw_dev.get("hostname") or port_info.get("switch_name") or sw_ip
                 _add_node({"id": sw_ip, "label": sw_label,
                            "type": _snmp_node_type(sw_ip),
                            "status": "online", "ip": sw_ip, "vendor": "", "mac": ""})

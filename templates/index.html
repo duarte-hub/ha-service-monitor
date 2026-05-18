@@ -512,13 +512,14 @@
     const discs = (sp.in_disc || 0) + (sp.out_disc || 0);
     const cls   = errs ? 'has-err' : discs ? 'has-disc' : '';
     const icon  = errs  ? '⚠ '  : '';
+    const swLabel = sp.switch_name || sp.switch_ip;
     const tip   = [
-      `Switch: ${sp.switch_ip}`,
+      `Switch: ${swLabel}`,
       sp.if_alias ? `Alias: ${sp.if_alias}` : '',
       errs  ? `Errors: ${errs}`  : '',
       discs ? `Discards: ${discs}` : '',
     ].filter(Boolean).join(' | ').replace(/"/g, '&quot;');
-    return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${sp.if_name}</span>`;
+    return `<span class="sw-port-chip ${cls}" title="${tip}">${icon}${swLabel}:${sp.if_name}</span>`;
   }
 
   function goDevice(ip) { window.location.href = '/device/' + ip; }
