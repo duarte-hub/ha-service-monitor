@@ -509,7 +509,9 @@
   const _wifiPat = /^(ath|wlan|wifi|bss|vap|wl|ra|mon|dot11|ssid|mbss|ap\d)/i;
 
   function _swPortCell(d) {
-    const sp = d.switch_port;
+    const _sp = d.switch_port;
+    // Suppress trunk/uplink port entries (many MACs → device is not directly connected here)
+    const sp = (_sp && (_sp.is_wireless || (_sp.port_mac_count || 1) <= 5)) ? _sp : null;
     const spWireless = sp && (sp.is_wireless || _wifiPat.test(sp.if_name || ''));
 
     // Priority 1: SNMP wireless (AP direct association via Bridge MIB)

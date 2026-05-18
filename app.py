@@ -812,9 +812,16 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
             "out_disc":     iface.get("out_disc"),
         }
 
-    # Stamp each entry with the count of MACs on its port (used for specificity ranking)
+    # Stamp each entry with the count of MACs on its port
     for entry in new_entries.values():
         entry["port_mac_count"] = port_mac_count.get(entry["if_idx"], 1)
+
+    # For switch sources, drop trunk/uplink ports (high MAC count = not a direct connection).
+    # AP sources skip this filter — every MAC they learn is a direct wireless association.
+    _TRUNK_THRESHOLD = 5
+    if not is_ap_source:
+        new_entries = {mac: e for mac, e in new_entries.items()
+                       if e["port_mac_count"] <= _TRUNK_THRESHOLD}
 
     _wireless_kws = ("ath", "wlan", "wifi", "bss", "vap", "wl", "ra", "mon", "dot11", "ssid", "mbss")
 

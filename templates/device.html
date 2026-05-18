@@ -527,8 +527,9 @@
     _showRow('row-conn', 'd-meraki-conn', d.meraki_connection);
     _showRow('row-ssid', 'd-meraki-ssid', d.meraki_ssid);
 
-    // Switch port (from Bridge MIB scan)
-    const sp = d.switch_port;
+    // Switch port (from Bridge MIB scan) — suppress trunk/uplink ports (high MAC count)
+    const _spRaw = d.switch_port;
+    const sp = (_spRaw && (_spRaw.is_wireless || (_spRaw.port_mac_count || 1) <= 5)) ? _spRaw : null;
     const swRow  = document.getElementById('row-sw');
     const spRow  = document.getElementById('row-sw-port');
     if (sp) {
