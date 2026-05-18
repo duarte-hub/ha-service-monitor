@@ -756,7 +756,10 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     """Walk dot1dTpFdbTable to map learned MACs to switch interfaces."""
     sw_cfg = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
     snmp_port = int(sw_cfg["port"]) if sw_cfg and sw_cfg.get("port") else 161
-    sw_name = sw_cfg["name"] if sw_cfg and sw_cfg.get("name") else switch_ip
+    sw_name   = sw_cfg["name"] if sw_cfg and sw_cfg.get("name") else switch_ip
+    # If the source is explicitly typed as "ap", every MAC it learns is a direct
+    # wireless association regardless of the bridge interface name (br0, eth0, etc.)
+    is_ap_source = sw_cfg.get("type", "switch").lower() == "ap" if sw_cfg else False
 
     # Bridge port → ifIndex
     bport_to_ifidx: dict = {}
@@ -802,6 +805,7 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
             "if_name":      iface.get("name", f"if{ifidx}"),
             "if_alias":     iface.get("alias", ""),
             "if_idx":       ifidx,
+            "is_wireless":  is_ap_source,
             "in_err":       iface.get("in_err"),
             "out_err":      iface.get("out_err"),
             "in_disc":      iface.get("in_disc"),
@@ -826,8 +830,8 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
             if existing and existing["switch_ip"] != switch_ip:
                 ex_if  = (existing.get("if_name") or "").lower()
                 new_if = (entry.get("if_name") or "").lower()
-                ex_wireless  = any(kw in ex_if  for kw in _wireless_kws)
-                new_wireless = any(kw in new_if for kw in _wireless_kws)
+                ex_wireless  = existing.get("is_wireless") or any(kw in ex_if  for kw in _wireless_kws)
+                new_wireless = entry.get("is_wireless")   or any(kw in new_if for kw in _wireless_kws)
                 if ex_wireless and not new_wireless:
                     continue  # existing wireless AP entry beats new wired switch entry
                 if not new_wireless and entry["port_mac_count"] >= existing.get("port_mac_count", 1):

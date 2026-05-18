@@ -510,7 +510,7 @@
 
   function _swPortCell(d) {
     const sp = d.switch_port;
-    const spWireless = sp && _wifiPat.test(sp.if_name || '');
+    const spWireless = sp && (sp.is_wireless || _wifiPat.test(sp.if_name || ''));
 
     // Priority 1: SNMP wireless (AP direct association via Bridge MIB)
     if (spWireless) {

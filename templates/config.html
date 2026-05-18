@@ -287,6 +287,7 @@
           <th style="padding:4px 8px">IP</th>
           <th style="padding:4px 8px;width:70px">Port</th>
           <th style="padding:4px 8px">Community</th>
+          <th style="padding:4px 8px;width:72px">Type</th>
           <th style="padding:4px 8px;width:40px"></th>
         </tr>
       </thead>
@@ -680,18 +681,25 @@
   function renderSwitches() {
     const tbody = document.getElementById('snmp-sw-body');
     if (!tbody) return;
+    const _inp = (val, ph, cb) => `<input type="text" value="${esc(val)}" placeholder="${ph}" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="${cb}">`;
     tbody.innerHTML = _snmpSwitches.map((sw, i) => `
       <tr>
-        <td style="padding:3px 4px"><input type="text" value="${esc(sw.name||'')}" placeholder="Aruba-Core" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].name=this.value"></td>
-        <td style="padding:3px 4px"><input type="text" value="${esc(sw.ip||'')}" placeholder="192.168.1.1" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].ip=this.value"></td>
+        <td style="padding:3px 4px">${_inp(sw.name||'','Aruba-Core',`_snmpSwitches[${i}].name=this.value`)}</td>
+        <td style="padding:3px 4px">${_inp(sw.ip||'','192.168.1.1',`_snmpSwitches[${i}].ip=this.value`)}</td>
         <td style="padding:3px 4px"><input type="number" value="${sw.port||161}" min="1" max="65535" style="width:64px;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].port=parseInt(this.value)||161"></td>
-        <td style="padding:3px 4px"><input type="text" value="${esc(sw.community||'')}" placeholder="public" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].community=this.value"></td>
+        <td style="padding:3px 4px">${_inp(sw.community||'','public',`_snmpSwitches[${i}].community=this.value`)}</td>
+        <td style="padding:3px 4px">
+          <select style="font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 4px;color:inherit" onchange="_snmpSwitches[${i}].type=this.value">
+            <option value="switch" ${(sw.type||'switch')==='switch'?'selected':''}>Switch</option>
+            <option value="ap"     ${sw.type==='ap'?'selected':''}>AP</option>
+          </select>
+        </td>
         <td style="padding:3px 4px;text-align:center"><button onclick="removeSwitch(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem" title="Remove">✕</button></td>
       </tr>`).join('');
   }
 
   function addSwitch() {
-    _snmpSwitches.push({name:'', ip:'', port:161, community:''});
+    _snmpSwitches.push({name:'', ip:'', port:161, community:'', type:'switch'});
     renderSwitches();
   }
 
