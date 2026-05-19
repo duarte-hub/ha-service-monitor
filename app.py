@@ -588,17 +588,19 @@ def _run_vuln_scan(ip: str) -> None:
                         cmd.append("-headless")
                     if VULN_NUCLEI_CUSTOM_TEMPLATES:
                         cmd += ["-t", VULN_NUCLEI_CUSTOM_TEMPLATES]
-                    _vlog("info", "[%s] nuclei phase starting (tags: %s, severity: %s)",
-                          ip, VULN_NUCLEI_TAGS, VULN_NUCLEI_SEVERITY)
+                    _vlog("info", "[%s] nuclei phase starting (tags: %s, severity: %s) cmd: %s",
+                          ip, VULN_NUCLEI_TAGS, VULN_NUCLEI_SEVERITY, " ".join(cmd))
                     r = subprocess.run(cmd, capture_output=True, text=True,
                                        timeout=1800)
                     nuclei_findings = _parse_nuclei_output(r.stdout) if r.stdout else []
                     findings.extend(nuclei_findings)
-                    _vlog("info", "[%s] nuclei phase done: %d finding(s)", ip, len(nuclei_findings))
-                    if r.stderr:
-                        for line in r.stderr.strip().splitlines():
-                            if line.strip():
-                                _vlog("info", "[%s] nuclei: %s", ip, line)
+                    _vlog("info", "[%s] nuclei phase done: %d finding(s) (exit=%d stdout=%d stderr=%d)",
+                          ip, len(nuclei_findings), r.returncode, len(r.stdout or ""), len(r.stderr or ""))
+                    if r.stdout and not nuclei_findings:
+                        _vlog("info", "[%s] nuclei raw stdout (first 500): %s", ip, r.stdout[:500])
+                    for line in (r.stderr or "").strip().splitlines():
+                        if line.strip():
+                            _vlog("info", "[%s] nuclei: %s", ip, line)
                 except FileNotFoundError:
                     _vlog("warning", "[%s] nuclei not installed; skipping nuclei phase", ip)
                 except subprocess.TimeoutExpired:
