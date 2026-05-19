@@ -382,6 +382,21 @@ def _run_nmap_all(ips: list) -> None:
 _vuln_results:  dict = {}   # ip → {ts, status, findings: [...]}
 _vuln_scanning: set  = set()
 _vuln_lock = threading.Lock()
+_VULN_RESULTS_PATH = os.environ.get("VULN_RESULTS_PATH", "/data/vuln_results.json")
+
+def _save_vuln_results() -> None:
+    try:
+        with open(_VULN_RESULTS_PATH, "w") as fh:
+            json.dump(_vuln_results, fh)
+    except Exception as e:
+        log.warning("Failed to save vuln results: %s", e)
+
+def _load_vuln_results() -> dict:
+    try:
+        with open(_VULN_RESULTS_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
 
 # Rolling log buffer — last 1000 lines, seq-numbered for incremental polling
 _vuln_log: collections.deque = collections.deque(maxlen=1000)
@@ -605,6 +620,7 @@ def _run_vuln_scan(ip: str) -> None:
                 "status":   "done",
                 "findings": deduped,
             }
+            _save_vuln_results()
             _vlog("info", "[%s] scan complete: %d unique finding(s) (critical=%d high=%d medium=%d low=%d)",
                   ip,
                   len(deduped),
@@ -615,6 +631,7 @@ def _run_vuln_scan(ip: str) -> None:
         except Exception as e:
             _vlog("error", "[%s] scan failed: %s", ip, e)
             _vuln_results[ip] = {"ts": time.time(), "status": "error", "findings": []}
+            _save_vuln_results()
         finally:
             with _vuln_lock:
                 _vuln_scanning.discard(ip)
@@ -4329,6 +4346,10 @@ if __name__ == "__main__":
 
     # Load persisted bridge MIB data so switch ports are visible before first scan
     _load_mac_to_port()
+
+    # Load persisted vuln scan results so findings survive restarts
+    global _vuln_results
+    _vuln_results = _load_vuln_results()
 
     # Start background pollers
     threading.Thread(target=_ha_poller_loop,          daemon=True, name="ha-poller").start()
