@@ -4348,8 +4348,7 @@ if __name__ == "__main__":
     _load_mac_to_port()
 
     # Load persisted vuln scan results so findings survive restarts
-    global _vuln_results
-    _vuln_results = _load_vuln_results()
+    _vuln_results.update(_load_vuln_results())
 
     # Start background pollers
     threading.Thread(target=_ha_poller_loop,          daemon=True, name="ha-poller").start()
