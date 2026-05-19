@@ -647,7 +647,7 @@ _SNMP_IF_RUNNING: set  = set()
 
 # IF-MIB column numbers → field names
 _IF_COL: dict = {
-    "2": "descr", "5": "speed", "7": "admin", "8": "oper",
+    "2": "descr", "5": "speed", "6": "phys_addr", "7": "admin", "8": "oper",
     "10": "in_oct", "13": "in_disc", "14": "in_err",
     "16": "out_oct", "19": "out_disc", "20": "out_err",
 }
@@ -710,6 +710,7 @@ def _run_snmp_if_diag(ip: str, community: str) -> None:
                 "idx":       idx,
                 "name":      d.get("name") or d.get("descr") or f"if{idx}",
                 "alias":     d.get("alias", ""),
+                "mac":       _parse_snmp_mac(d["phys_addr"]) if d.get("phys_addr") else "",
                 "oper":      _IF_OPER.get(d.get("oper", ""), d.get("oper", "?")),
                 "admin":     _IF_OPER.get(d.get("admin", ""), d.get("admin", "?")),
                 "speed_mbps": speed,
@@ -863,13 +864,24 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
                      switch_ip, sw_name, len(bport_macs) - len(uplink_ports), len(new_entries))
         else:
             # AP path 2: FDB empty. Try Aruba Instant aiClientTable (enterprise MIB).
-            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1.{mac6} → MAC (Hex-STRING)
-            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3.{mac6} → IP (IpAddress)
-            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5.{mac6} → hostname (STRING)
-            AI_MAC_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1"
-            AI_IP_COL  = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3"
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1.{mac6} → client MAC
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.2.{mac6} → BSSID (radio MAC = identifies SSID)
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3.{mac6} → client IP
+            # OID: 1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5.{mac6} → client hostname
+            AI_MAC_COL  = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.1"
+            AI_BSSID_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.2"
+            AI_IP_COL   = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.3"
             AI_HOST_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5"
             ai_base_len = len(AI_MAC_COL.split("."))
+
+            # Build BSSID → SSID map from IF-MIB: each virtual radio iface has MAC=BSSID,
+            # and ifAlias contains the SSID name on Aruba Instant APs.
+            bssid_to_ssid: dict[str, str] = {}
+            for iface in (iface_list or []):
+                bssid = iface.get("mac", "")
+                ssid  = iface.get("alias", "").strip()
+                if bssid and ssid:
+                    bssid_to_ssid[bssid] = ssid
 
             def _mac_from_ai_suffix(parts: list) -> str:
                 suffix = parts[ai_base_len:]
@@ -883,7 +895,7 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
                 except ValueError:
                     return ""
 
-            # Collect MACs from column 1
+            # Collect client MACs from column 1
             for oid_str, _val in _snmpwalk(switch_ip, community, AI_MAC_COL, timeout=20, port=snmp_port):
                 mac = _mac_from_ai_suffix(oid_str.lstrip(".").split("."))
                 if not mac:
@@ -899,6 +911,15 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
                     "in_err": None, "out_err": None,
                     "in_disc": None, "out_disc": None,
                 }
+
+            # Map BSSID (column 2) → SSID name via iface_list; store in if_name
+            for oid_str, val_str in _snmpwalk(switch_ip, community, AI_BSSID_COL, timeout=20, port=snmp_port):
+                mac = _mac_from_ai_suffix(oid_str.lstrip(".").split("."))
+                if not mac or mac not in new_entries:
+                    continue
+                bssid = _parse_snmp_mac(val_str)
+                ssid  = bssid_to_ssid.get(bssid, "")
+                new_entries[mac]["if_name"] = ssid if ssid else "wifi"
 
             # Enrich with IPs from column 3
             for oid_str, val_str in _snmpwalk(switch_ip, community, AI_IP_COL, timeout=20, port=snmp_port):
