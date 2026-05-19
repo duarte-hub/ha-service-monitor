@@ -574,7 +574,7 @@ def _run_vuln_scan(ip: str) -> None:
                         "-bulk-size",   str(VULN_NUCLEI_BULK_SIZE),
                         "-retries",     str(VULN_NUCLEI_RETRIES),
                         "-max-host-error", str(VULN_NUCLEI_MAX_HOST_ERRORS),
-                        "-json", "-no-color",
+                        "-jsonl", "-no-color",
                     ]
                     # VULN_NUCLEI_TAGS is used as a tag filter (-tags), not a directory
                     # filter (-t). Leaving it empty runs all templates (filtered by severity).
