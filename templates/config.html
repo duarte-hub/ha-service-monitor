@@ -323,6 +323,7 @@
   </div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveScan()">Save</button>
+    <button class="btn btn-secondary" onclick="rescanBridges()">Rescan Now</button>
     <span class="status-msg" id="scan-status"></span>
   </div>
 </div>
@@ -746,6 +747,14 @@
   async function saveScan() {
     await post({scan_ports: val('scan_ports'), poll_interval: val('poll_interval'), snmp_community: val('snmp_community'), snmp_switches: JSON.stringify(_snmpSwitches), snmp_bridge_scan_interval: val('snmp_bridge_scan_interval')});
     flash('scan-status', 'Saved', 'ok');
+  }
+  async function rescanBridges() {
+    flash('scan-status', 'Rescanning…', 'ok');
+    try {
+      const r = await fetch('/api/bridge/rescan', {method: 'POST'});
+      const d = await r.json();
+      flash('scan-status', d.message || 'Started', 'ok');
+    } catch(e) { flash('scan-status', 'Error', 'err'); }
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────

@@ -3550,6 +3550,16 @@ def api_snmp_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
+@app.route("/api/bridge/rescan", methods=["POST"])
+def api_bridge_rescan():
+    """Trigger an immediate IF-MIB + bridge scan for all configured SNMP switches/APs."""
+    if not SNMP_SWITCHES:
+        return jsonify({"ok": False, "message": "No SNMP bridge sources configured"}), 400
+    threading.Thread(target=_bridge_scan_all, daemon=True, name="bridge-rescan").start()
+    n = len(SNMP_SWITCHES)
+    return jsonify({"ok": True, "message": f"Rescanning {n} source{'s' if n != 1 else ''}…"})
+
+
 @app.route("/api/meraki_api/networks", methods=["POST"])
 def api_meraki_networks():
     data   = request.json or {}
