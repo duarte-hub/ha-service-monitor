@@ -405,12 +405,13 @@
     if (_editingIp === d.ip) {
       return `<div class="name-cell"><input class="name-input" id="name-input-${d.ip}"
         value="${(d.name||'').replace(/"/g,'&quot;')}"
+        onclick="event.stopPropagation()"
         onblur="saveName('${d.ip}')"
         onkeydown="if(event.key==='Enter')saveName('${d.ip}');if(event.key==='Escape')cancelEdit()"></div>`;
     }
     const label = d.name || d.hostname || '—';
     const style = (!d.name && d.hostname) ? ' style="color:var(--muted)"' : '';
-    return `<div class="name-cell"><span class="name-view" title="Click to rename"${style} onclick="startEdit('${d.ip}')">${label}</span></div>`;
+    return `<div class="name-cell"><span class="name-view" title="Click to rename"${style} onclick="event.stopPropagation();startEdit('${d.ip}')">${label}</span></div>`;
   }
 
   function _portsCell(d) {
@@ -419,15 +420,16 @@
     if (_editingPortsIp === d.ip) {
       return `<input class="name-input" id="ports-input-${d.ip}"
         value="${ports.join(', ')}"
+        onclick="event.stopPropagation()"
         onblur="savePorts('${d.ip}')"
         onkeydown="if(event.key==='Enter')savePorts('${d.ip}');if(event.key==='Escape')cancelPortEdit()"
         style="width:120px" placeholder="80, 443">`;
     }
-    if (!ports.length) return `<span class="port-add" onclick="editPorts('${d.ip}')">+ ports</span>`;
+    if (!ports.length) return `<span class="port-add" onclick="event.stopPropagation();editPorts('${d.ip}')">+ ports</span>`;
     return ports.map(p => {
       const up = status[String(p)];
       const cls = up === true ? 'port-up' : up === false ? 'port-down' : 'port-unknown';
-      return `<span class="port-chip ${cls}" onclick="editPorts('${d.ip}')">${p}</span>`;
+      return `<span class="port-chip ${cls}" onclick="event.stopPropagation();editPorts('${d.ip}')">${p}</span>`;
     }).join('');
   }
 
@@ -581,11 +583,11 @@
     return `<tr data-ip="${d.ip}"${dimStyle}${cls}${nav}>
       <td>${_statusDot(d)}</td>
       <td><span class="ip-pill">${d.ip}</span></td>
-      <td onclick="event.stopPropagation()">${_nameCell(d)}</td>
+      <td>${_nameCell(d)}</td>
       <td class="td-muted">${_lastSeen(d.last_seen)}</td>
       <td>${_latencyCell(d)}</td>
       <td>${_uptimeCell(d)}</td>
-      <td onclick="event.stopPropagation()">${_portsCell(d)}</td>
+      <td>${_portsCell(d)}</td>
       <td>${_swPortCell(d)}</td>
       <td>${_tagsCell(d)}</td>
       <td onclick="event.stopPropagation()">${_monitorCell(d)}</td>
