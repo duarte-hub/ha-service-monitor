@@ -591,7 +591,7 @@ def _run_vuln_scan(ip: str) -> None:
                     _vlog("info", "[%s] nuclei phase starting (tags: %s, severity: %s)",
                           ip, VULN_NUCLEI_TAGS, VULN_NUCLEI_SEVERITY)
                     r = subprocess.run(cmd, capture_output=True, text=True,
-                                       timeout=VULN_NUCLEI_TIMEOUT * 60)
+                                       timeout=1800)
                     nuclei_findings = _parse_nuclei_output(r.stdout) if r.stdout else []
                     findings.extend(nuclei_findings)
                     _vlog("info", "[%s] nuclei phase done: %d finding(s)", ip, len(nuclei_findings))
@@ -638,6 +638,20 @@ def _run_vuln_scan(ip: str) -> None:
         finally:
             with _vuln_lock:
                 _vuln_scanning.discard(ip)
+
+
+def _nuclei_update_templates() -> None:
+    """Update nuclei templates at startup so scans use the latest template set."""
+    try:
+        r = subprocess.run(["nuclei", "-update-templates"], capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            log.info("nuclei templates updated successfully")
+        else:
+            log.warning("nuclei template update exited %d: %s", r.returncode, (r.stderr or "").strip()[:200])
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("nuclei template update failed: %s", e)
 
 
 def _vuln_auto_scan_loop() -> None:
@@ -3669,6 +3683,7 @@ def _peer_health_loop() -> None:
             if _peer_reachable and _peer_fail_streak >= 2:
                 _peer_reachable = False
                 log.warning("Primary peer %s unreachable (%d checks) — secondary taking over alerts", PEER_URL, _peer_fail_streak)
+                threading.Thread(target=poll_once, daemon=True).start()
 
 
 def _primary_peer_check_loop() -> None:
@@ -4365,6 +4380,7 @@ if __name__ == "__main__":
     threading.Thread(target=_mdns_listen_loop,        daemon=True, name="mdns-listener").start()
     threading.Thread(target=_vuln_auto_scan_loop,     daemon=True, name="vuln-auto").start()
     threading.Thread(target=_snmp_bridge_scan_loop,   daemon=True, name="bridge-scan").start()
+    threading.Thread(target=_nuclei_update_templates, daemon=True, name="nuclei-update").start()
 
     # Give the first poll a moment
     time.sleep(2)
