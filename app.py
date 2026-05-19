@@ -430,7 +430,7 @@ VULN_NMAP_SCRIPTS:            str  = "vuln"
 VULN_NMAP_PORTS:              str  = ""     # empty → nmap default
 
 VULN_NUCLEI_ENABLED:          bool = True
-VULN_NUCLEI_TAGS:             str  = "cves,exposed-panels,default-credentials,misconfiguration"
+VULN_NUCLEI_TAGS:             str  = ""
 VULN_NUCLEI_EXCLUDE_TAGS:     str  = ""
 VULN_NUCLEI_SEVERITY:         str  = "critical,high,medium,low,info"
 VULN_NUCLEI_RATE_LIMIT:       int  = 50
@@ -567,7 +567,6 @@ def _run_vuln_scan(ip: str) -> None:
                 try:
                     cmd = [
                         "nuclei", "-u", ip,
-                        "-t",           VULN_NUCLEI_TAGS,
                         "-severity",    VULN_NUCLEI_SEVERITY,
                         "-rate-limit",  str(VULN_NUCLEI_RATE_LIMIT),
                         "-timeout",     str(VULN_NUCLEI_TIMEOUT),
@@ -577,6 +576,10 @@ def _run_vuln_scan(ip: str) -> None:
                         "-max-host-error", str(VULN_NUCLEI_MAX_HOST_ERRORS),
                         "-json", "-silent",
                     ]
+                    # VULN_NUCLEI_TAGS is used as a tag filter (-tags), not a directory
+                    # filter (-t). Leaving it empty runs all templates (filtered by severity).
+                    if VULN_NUCLEI_TAGS:
+                        cmd += ["-tags", VULN_NUCLEI_TAGS]
                     if VULN_NUCLEI_EXCLUDE_TAGS:
                         cmd += ["-etags", VULN_NUCLEI_EXCLUDE_TAGS]
                     if VULN_NUCLEI_INTERACTSH:
@@ -2402,7 +2405,7 @@ _CONFIG_FIELDS = {
     "vuln_nmap_ports":              {"label": "nmap port range (empty=default)",    "default": ""},
     # Vulnerability scanning — Nuclei
     "vuln_nuclei_enabled":          {"label": "Nuclei phase enabled",               "default": "true"},
-    "vuln_nuclei_tags":             {"label": "Nuclei template tags",               "default": "cves,exposed-panels,default-credentials,misconfiguration"},
+    "vuln_nuclei_tags":             {"label": "Nuclei tag filter (empty = all)",    "default": ""},
     "vuln_nuclei_exclude_tags":     {"label": "Nuclei exclude tags",                "default": ""},
     "vuln_nuclei_severity":         {"label": "Nuclei severity filter",             "default": "critical,high,medium,low,info"},
     "vuln_nuclei_rate_limit":       {"label": "Nuclei rate limit (req/s)",          "default": "50"},
@@ -2544,7 +2547,7 @@ def _apply_config(data: dict) -> None:
     if "vuln_nmap_scripts"            in data: VULN_NMAP_SCRIPTS            = data["vuln_nmap_scripts"]            or "vuln"
     if "vuln_nmap_ports"              in data: VULN_NMAP_PORTS              = data["vuln_nmap_ports"]              or ""
     if "vuln_nuclei_enabled"          in data: VULN_NUCLEI_ENABLED          = _b("vuln_nuclei_enabled")
-    if "vuln_nuclei_tags"             in data: VULN_NUCLEI_TAGS             = data["vuln_nuclei_tags"]             or "cves"
+    if "vuln_nuclei_tags"             in data: VULN_NUCLEI_TAGS             = data["vuln_nuclei_tags"]             or ""
     if "vuln_nuclei_exclude_tags"     in data: VULN_NUCLEI_EXCLUDE_TAGS     = data["vuln_nuclei_exclude_tags"]     or ""
     if "vuln_nuclei_severity"         in data: VULN_NUCLEI_SEVERITY         = data["vuln_nuclei_severity"]         or "critical,high,medium,low,info"
     if "vuln_nuclei_rate_limit"       in data: VULN_NUCLEI_RATE_LIMIT       = _i("vuln_nuclei_rate_limit", 50)
