@@ -874,14 +874,30 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
             AI_HOST_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.5"
             ai_base_len = len(AI_MAC_COL.split("."))
 
-            # Build BSSID → SSID map from IF-MIB: each virtual radio iface has MAC=BSSID,
-            # and ifAlias contains the SSID name on Aruba Instant APs.
+            # Build BSSID → SSID map from Aruba aiEssTable.
+            # 1.3.6.1.4.1.14823.2.3.3.1.2.3.1.3.{ap_mac6}.{idx} → SSID name (STRING)
+            # 1.3.6.1.4.1.14823.2.3.3.1.2.3.1.4.{ap_mac6}.{idx} → BSSID (Hex-STRING)
+            # Index is 7 octets: 6 AP MAC + 1 SSID slot index.
+            AI_ESS_NAME  = "1.3.6.1.4.1.14823.2.3.3.1.2.3.1.3"
+            AI_ESS_BSSID = "1.3.6.1.4.1.14823.2.3.3.1.2.3.1.4"
+            ess_base_len = len(AI_ESS_NAME.split("."))
+            idx_to_ssid: dict = {}
+            for oid_str, val_str in _snmpwalk(switch_ip, community, AI_ESS_NAME, timeout=20, port=snmp_port):
+                parts = oid_str.lstrip(".").split(".")
+                suffix = tuple(parts[ess_base_len:])
+                if len(suffix) == 7:
+                    idx_to_ssid[suffix] = _sv(val_str).strip()
             bssid_to_ssid: dict[str, str] = {}
-            for iface in (iface_list or []):
-                bssid = iface.get("mac", "")
-                ssid  = iface.get("alias", "").strip()
-                if bssid and ssid:
-                    bssid_to_ssid[bssid] = ssid
+            ess_bssid_base_len = len(AI_ESS_BSSID.split("."))
+            for oid_str, val_str in _snmpwalk(switch_ip, community, AI_ESS_BSSID, timeout=20, port=snmp_port):
+                parts = oid_str.lstrip(".").split(".")
+                suffix = tuple(parts[ess_bssid_base_len:])
+                if len(suffix) == 7:
+                    bssid = _parse_snmp_mac(val_str)
+                    ssid  = idx_to_ssid.get(suffix, "")
+                    if bssid and ssid:
+                        bssid_to_ssid[bssid] = ssid
+            log.debug("Bridge scan %s: aiEssTable → %d BSSID→SSID mappings", switch_ip, len(bssid_to_ssid))
 
             def _mac_from_ai_suffix(parts: list) -> str:
                 suffix = parts[ai_base_len:]
