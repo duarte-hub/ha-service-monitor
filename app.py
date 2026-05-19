@@ -574,7 +574,7 @@ def _run_vuln_scan(ip: str) -> None:
                         "-bulk-size",   str(VULN_NUCLEI_BULK_SIZE),
                         "-retries",     str(VULN_NUCLEI_RETRIES),
                         "-max-host-error", str(VULN_NUCLEI_MAX_HOST_ERRORS),
-                        "-json", "-silent",
+                        "-json", "-no-color",
                     ]
                     # VULN_NUCLEI_TAGS is used as a tag filter (-tags), not a directory
                     # filter (-t). Leaving it empty runs all templates (filtered by severity).
@@ -643,13 +643,20 @@ def _run_vuln_scan(ip: str) -> None:
 def _nuclei_update_templates() -> None:
     """Update nuclei templates at startup so scans use the latest template set."""
     try:
-        r = subprocess.run(["nuclei", "-update-templates"], capture_output=True, text=True, timeout=120)
-        if r.returncode == 0:
-            log.info("nuclei templates updated successfully")
-        else:
-            log.warning("nuclei template update exited %d: %s", r.returncode, (r.stderr or "").strip()[:200])
+        ver = subprocess.run(["nuclei", "-version"], capture_output=True, text=True, timeout=10)
+        log.info("nuclei binary: %s", (ver.stderr or ver.stdout or "unknown").strip().splitlines()[0])
     except FileNotFoundError:
-        pass
+        log.warning("nuclei not found — vuln nuclei phase will be skipped")
+        return
+    except Exception as e:
+        log.warning("nuclei version check failed: %s", e)
+    try:
+        r = subprocess.run(["nuclei", "-update-templates"], capture_output=True, text=True, timeout=120)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode == 0:
+            log.info("nuclei templates updated: %s", out[:200] if out else "ok")
+        else:
+            log.warning("nuclei template update exited %d: %s", r.returncode, out[:200])
     except Exception as e:
         log.warning("nuclei template update failed: %s", e)
 
