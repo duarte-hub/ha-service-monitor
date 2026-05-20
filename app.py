@@ -2343,11 +2343,15 @@ def _poll_meraki_api_clients() -> int:
                         sig_updated += 1
 
             if not probe_done:
+                # Probe connectionStats with 24h window
                 cs = _meraki_api_get(
                     f"/networks/{net_id}/wireless/clients/{meraki_id}/connectionStats",
-                    key, {"t0": now - 1800, "t1": now},
+                    key, {"timespan": 86400},
                 )
-                log.info("Meraki connectionStats probe id=%s: %s", meraki_id, cs)
+                log.info("Meraki connectionStats (24h) id=%s: %s", meraki_id, cs)
+                # Probe full signalQualityHistory entry
+                if sig and isinstance(sig, list):
+                    log.info("Meraki signalQualityHistory full entry id=%s: %s", meraki_id, sig[-1])
                 probe_done = True
 
         if sig_updated:
