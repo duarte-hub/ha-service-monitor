@@ -181,8 +181,9 @@ function signalCell(c) {
 }
 
 function speedCell(c) {
-  if (c.speed == null) return '<span class="sig-label">—</span>';
-  return `<span style="font-family:monospace;font-size:.8rem">${c.speed} Mbps</span>`;
+  if (c.speed != null)    return `<span style="font-family:monospace;font-size:.8rem">${c.speed} Mbps</span>`;
+  if (c.wifi_cap)         return `<span style="font-size:.78rem;color:var(--muted)">${c.wifi_cap}</span>`;
+  return '<span class="sig-label">—</span>';
 }
 
 function renderCard(g) {
@@ -191,7 +192,7 @@ function renderCard(g) {
   const ipStr     = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
   const cnt       = g.clients.length;
   const hasSignal = g.clients.some(c => c.rssi != null || c.snr != null);
-  const hasSpeed  = g.clients.some(c => c.speed != null);
+  const hasSpeed  = g.clients.some(c => c.speed != null || c.wifi_cap);
 
   let rows = '';
   for (const c of g.clients) {

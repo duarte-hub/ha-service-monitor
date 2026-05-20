@@ -2204,6 +2204,18 @@ def _meraki_dev_type(model: str) -> str:
     if m.startswith("MS"):                    return "switch"
     return "other"
 
+def _fmt_wifi_cap(cap: str) -> str:
+    """Map wirelessCapabilities string to short WiFi generation label."""
+    if not cap:
+        return ""
+    _gen = {"802.11be": "WiFi 7", "802.11ax": "WiFi 6", "802.11ac": "WiFi 5",
+            "802.11n": "WiFi 4", "802.11g": "WiFi 3", "802.11b": "WiFi 1"}
+    for std, label in _gen.items():
+        if std in cap:
+            return label
+    return cap.split(" - ")[0] if " - " in cap else cap
+
+
 def _poll_meraki_api_clients() -> int:
     """Fetch clients from Meraki Dashboard API; enrich _devices with MAC/vendor/hostname."""
     global _meraki_net_devs, _meraki_net_macs, _meraki_topology
@@ -2247,13 +2259,12 @@ def _poll_meraki_api_clients() -> int:
         conn_type  = (c.get("recentDeviceConnection") or "").lower()
         wired      = conn_type == "wired" or (bool(sw_port) and not ssid)
         online     = (c.get("status") or "").lower() == "online"
-        rssi_v     = c.get("rssi")   # null in clients list; fetched separately below
-        snr_v      = c.get("snr")    # null in clients list; fetched separately below
-        # txRate is null in the bulk clients list per Meraki API; fetched separately below
-        speed_v    = c.get("txRate")
-        meraki_id  = c.get("id") or ""
+        rssi_v    = c.get("rssi")   # null in clients list; fetched separately below
+        snr_v     = c.get("snr")    # null in clients list; fetched separately below
+        wifi_cap  = c.get("wirelessCapabilities") or ""
+        meraki_id = c.get("id") or ""
         if not wired and meraki_id and ip:
-            wireless_sig_queue.append((meraki_id, ip, speed_v))
+            wireless_sig_queue.append((meraki_id, ip))
         with _devices_lock:
             if ip not in _devices:
                 _devices[ip] = {
@@ -2264,9 +2275,9 @@ def _poll_meraki_api_clients() -> int:
                     "meraki_ssid": ssid,
                     "meraki_port": sw_port,
                     "meraki_wired": wired,
-                    "meraki_rssi":  rssi_v,
-                    "meraki_snr":   snr_v,
-                    "meraki_speed": speed_v,
+                    "meraki_rssi":    rssi_v,
+                    "meraki_snr":     snr_v,
+                    "meraki_wifi_cap": wifi_cap,
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
@@ -2295,9 +2306,9 @@ def _poll_meraki_api_clients() -> int:
                 if sw_port:
                     _devices[ip]["meraki_port"] = sw_port; changed = True
                 _devices[ip]["meraki_wired"] = wired; changed = True
-                if rssi_v  is not None: _devices[ip]["meraki_rssi"]  = rssi_v;  changed = True
-                if snr_v   is not None: _devices[ip]["meraki_snr"]   = snr_v;   changed = True
-                if speed_v is not None: _devices[ip]["meraki_speed"] = speed_v; changed = True
+                if rssi_v  is not None:  _devices[ip]["meraki_rssi"]     = rssi_v;  changed = True
+                if snr_v   is not None:  _devices[ip]["meraki_snr"]      = snr_v;   changed = True
+                if wifi_cap:             _devices[ip]["meraki_wifi_cap"] = wifi_cap; changed = True
                 ms = "online" if online else "offline"
                 if d.get("meraki_status") != ms:
                     _devices[ip]["meraki_status"] = ms; changed = True
@@ -2315,8 +2326,7 @@ def _poll_meraki_api_clients() -> int:
         now = int(_t.time())
         sig_params = {"resolution": 300, "t0": now - 1800, "t1": now}
         sig_updated = 0
-        first_wireless = True
-        for meraki_id, dev_ip, bulk_speed in wireless_sig_queue:
+        for meraki_id, dev_ip in wireless_sig_queue:
             sig = _meraki_api_get(
                 f"/networks/{net_id}/wireless/signalQualityHistory",
                 key, {**sig_params, "clientId": meraki_id},
@@ -2330,21 +2340,6 @@ def _poll_meraki_api_clients() -> int:
                         if rssi is not None: _devices[dev_ip]["meraki_rssi"] = rssi
                         if snr  is not None: _devices[dev_ip]["meraki_snr"]  = snr
                         sig_updated += 1
-
-            # Also fetch individual client detail to discover txRate if Meraki exposes it.
-            # Log all fields once so we can see what the API actually returns.
-            detail = _meraki_api_get(f"/networks/{net_id}/clients/{meraki_id}", key)
-            if detail and isinstance(detail, dict):
-                if first_wireless:
-                    log.info("Meraki client detail fields: %s | full=%s", list(detail.keys()), detail)
-                    first_wireless = False
-                # Try common field names for TX link rate (Mbps or kbps)
-                tx = (detail.get("txRate") or detail.get("linkSpeed") or
-                      detail.get("dataRate") or detail.get("lastLinkSpeed") or bulk_speed)
-                if tx is not None:
-                    with _devices_lock:
-                        if dev_ip in _devices:
-                            _devices[dev_ip]["meraki_speed"] = int(tx)
 
         if sig_updated:
             with _devices_lock:
@@ -4106,6 +4101,7 @@ def api_switchmap():
             "rssi_est":       port_info.get("rssi_est") is not None,
             "snr":            port_info.get("snr"),
             "speed":          port_info.get("speed"),
+            "wifi_cap":       None,
         })
 
     for d in devs:
@@ -4114,12 +4110,13 @@ def api_switchmap():
         aruba_conn  = d.get("aruba_connection") or ""
         if meraki_conn and not d.get("meraki_wired", False):
             grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
-            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": d.get("meraki_speed")}
+            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": None,
+                   "wifi_cap": _fmt_wifi_cap(d.get("meraki_wifi_cap") or "")}
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
             # Pull SNR/speed from SNMP bridge scan if available (AP may have been scanned)
             msnap = mac_snap.get(mac, {})
-            sig = {"rssi": None, "snr": msnap.get("snr"), "speed": msnap.get("speed")}
+            sig = {"rssi": None, "snr": msnap.get("snr"), "speed": msnap.get("speed"), "wifi_cap": None}
         else:
             continue
         grp["clients"].append({
