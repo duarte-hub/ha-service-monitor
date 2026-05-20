@@ -134,41 +134,27 @@ function dotCls(status) {
   return status === 'up' ? 'up' : status === 'down' ? 'down' : 'unknown';
 }
 
-// RSSI: Meraki returns a positive magnitude (e.g. 65 → -65 dBm). Lower = stronger.
-// SNR:  SNMP returns dB. Higher = stronger.
-function sigCls(rssi, snr) {
-  if (rssi != null) {
-    if (rssi <= 50) return 'sig-excellent';
-    if (rssi <= 65) return 'sig-good';
-    if (rssi <= 75) return 'sig-fair';
-    return 'sig-poor';
-  }
-  if (snr != null) {
-    if (snr >= 40) return 'sig-excellent';
-    if (snr >= 25) return 'sig-good';
-    if (snr >= 15) return 'sig-fair';
-    return 'sig-poor';
-  }
-  return '';
+// RSSI: negative dBm (e.g. -67). Higher (less negative) = stronger.
+// SNR:  positive dB (e.g. 28). Higher = stronger.
+function rssiLevel(rssi) {
+  if (rssi >= -50) return 4;
+  if (rssi >= -65) return 3;
+  if (rssi >= -75) return 2;
+  return 1;
 }
-
-function sigBars(rssi, snr) {
-  // Map to 0-4 bars
-  let level = 0;
-  if (rssi != null) {
-    if (rssi <= 50) level = 4;
-    else if (rssi <= 65) level = 3;
-    else if (rssi <= 75) level = 2;
-    else level = 1;
-  } else if (snr != null) {
-    if (snr >= 40) level = 4;
-    else if (snr >= 25) level = 3;
-    else if (snr >= 15) level = 2;
-    else level = 1;
-  }
+function snrLevel(snr) {
+  if (snr >= 40) return 4;
+  if (snr >= 25) return 3;
+  if (snr >= 15) return 2;
+  return 1;
+}
+function levelCls(lvl) {
+  return ['','sig-poor','sig-fair','sig-good','sig-excellent'][lvl] || '';
+}
+function sigBarsHtml(lvl) {
   const heights = [5, 8, 11, 14];
   return heights.map((h, i) =>
-    `<span style="height:${h}px" class="${i < level ? 'on' : ''}"></span>`
+    `<span style="height:${h}px" class="${i < lvl ? 'on' : ''}"></span>`
   ).join('');
 }
 
@@ -176,22 +162,20 @@ function signalCell(c) {
   const rssi = c.rssi != null ? c.rssi : null;
   const snr  = c.snr  != null ? c.snr  : null;
   if (rssi == null && snr == null) return '<span class="sig-label">—</span>';
-  const cls = sigCls(rssi, snr);
-  const bars = sigBars(rssi, snr);
-  let label, sublabel;
-  if (rssi != null) {
-    label = `-${rssi} dBm`;
-    sublabel = snr != null ? `${snr} dB` : '';
-  } else {
-    label = `${snr} dB`;
-    sublabel = 'SNR';
-  }
+
+  // Use RSSI for bar level if present, else SNR
+  const lvl  = rssi != null ? rssiLevel(rssi) : snrLevel(snr);
+  const cls  = levelCls(lvl);
+  const bars = sigBarsHtml(lvl);
+
+  // Show RSSI and SNR on separate lines when both are available
+  let lines = '';
+  if (rssi != null) lines += `<div class="sig-val">${rssi} dBm</div>`;
+  if (snr  != null) lines += `<div class="sig-label">${snr} dB SNR</div>`;
+
   return `<div class="sig-wrap ${cls}">
     <div class="sig-bar">${bars}</div>
-    <div>
-      <div class="sig-val">${label}</div>
-      ${sublabel ? `<div class="sig-label">${sublabel}</div>` : ''}
-    </div>
+    <div>${lines}</div>
   </div>`;
 }
 

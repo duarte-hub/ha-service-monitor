@@ -2218,6 +2218,7 @@ def _poll_meraki_api_clients() -> int:
     if not clients:
         return 0
     updated = 0
+    wireless_sig_queue: list = []   # (meraki_client_id, device_ip) for wireless clients
     for c in clients:
         ip  = c.get("ip") or ""
         mac = (c.get("mac") or "").lower()
@@ -2232,8 +2233,11 @@ def _poll_meraki_api_clients() -> int:
         conn_type  = (c.get("recentDeviceConnection") or "").lower()
         wired      = conn_type == "wired" or (bool(sw_port) and not ssid)
         online     = (c.get("status") or "").lower() == "online"
-        rssi_v     = c.get("rssi")
-        snr_v      = c.get("snr")
+        rssi_v     = c.get("rssi")   # null in clients list; fetched separately below
+        snr_v      = c.get("snr")    # null in clients list; fetched separately below
+        meraki_id  = c.get("id") or ""
+        if not wired and meraki_id and ip:
+            wireless_sig_queue.append((meraki_id, ip))
         with _devices_lock:
             if ip not in _devices:
                 _devices[ip] = {
@@ -2284,6 +2288,34 @@ def _poll_meraki_api_clients() -> int:
                 if changed:
                     updated += 1
         _save_devices()
+
+    # Fetch per-client signal quality history for all wireless clients.
+    # The /networks/.../clients list always returns rssi/snr as null;
+    # the per-client signalQualityHistory endpoint has the real values.
+    if wireless_sig_queue:
+        import time as _t
+        now = int(_t.time())
+        sig_params = {"resolution": 300, "t0": now - 1800, "t1": now}
+        sig_updated = 0
+        for meraki_id, dev_ip in wireless_sig_queue:
+            sig = _meraki_api_get(
+                f"/networks/{net_id}/wireless/signalQualityHistory",
+                key, {**sig_params, "clientId": meraki_id},
+            )
+            if sig and isinstance(sig, list):
+                latest = sig[-1]
+                rssi = latest.get("rssi")
+                snr  = latest.get("snr")
+                with _devices_lock:
+                    if dev_ip in _devices:
+                        if rssi is not None: _devices[dev_ip]["meraki_rssi"] = rssi
+                        if snr  is not None: _devices[dev_ip]["meraki_snr"]  = snr
+                        sig_updated += 1
+        if sig_updated:
+            with _devices_lock:
+                _save_devices()
+        log.info("Meraki API: %d wireless signal records fetched", sig_updated)
+
     log.info("Meraki API: %d clients, %d updated", len(clients), updated)
     return updated
 
