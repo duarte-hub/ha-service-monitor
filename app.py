@@ -2341,6 +2341,18 @@ def _poll_meraki_api_clients() -> int:
                         if snr  is not None: _devices[dev_ip]["meraki_snr"]  = snr
                         sig_updated += 1
 
+            rate = _meraki_api_get(
+                f"/networks/{net_id}/wireless/dataRateHistory",
+                key, {**sig_params, "clientId": meraki_id},
+            )
+            if rate and isinstance(rate, list):
+                latest_r = rate[-1]
+                dl_kbps = latest_r.get("downloadKbps")
+                if dl_kbps:
+                    with _devices_lock:
+                        if dev_ip in _devices:
+                            _devices[dev_ip]["meraki_speed"] = round(dl_kbps / 1000)
+
         if sig_updated:
             with _devices_lock:
                 _save_devices()
@@ -4110,7 +4122,8 @@ def api_switchmap():
         aruba_conn  = d.get("aruba_connection") or ""
         if meraki_conn and not d.get("meraki_wired", False):
             grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
-            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": None,
+            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"),
+                   "speed": d.get("meraki_speed"),
                    "wifi_cap": _fmt_wifi_cap(d.get("meraki_wifi_cap") or "")}
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
