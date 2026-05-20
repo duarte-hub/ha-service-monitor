@@ -2249,9 +2249,11 @@ def _poll_meraki_api_clients() -> int:
         online     = (c.get("status") or "").lower() == "online"
         rssi_v     = c.get("rssi")   # null in clients list; fetched separately below
         snr_v      = c.get("snr")    # null in clients list; fetched separately below
+        # txRate is null in the bulk clients list per Meraki API; fetched separately below
+        speed_v    = c.get("txRate")
         meraki_id  = c.get("id") or ""
         if not wired and meraki_id and ip:
-            wireless_sig_queue.append((meraki_id, ip))
+            wireless_sig_queue.append((meraki_id, ip, speed_v))
         with _devices_lock:
             if ip not in _devices:
                 _devices[ip] = {
@@ -2262,8 +2264,9 @@ def _poll_meraki_api_clients() -> int:
                     "meraki_ssid": ssid,
                     "meraki_port": sw_port,
                     "meraki_wired": wired,
-                    "meraki_rssi": rssi_v,
-                    "meraki_snr":  snr_v,
+                    "meraki_rssi":  rssi_v,
+                    "meraki_snr":   snr_v,
+                    "meraki_speed": speed_v,
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
@@ -2292,8 +2295,9 @@ def _poll_meraki_api_clients() -> int:
                 if sw_port:
                     _devices[ip]["meraki_port"] = sw_port; changed = True
                 _devices[ip]["meraki_wired"] = wired; changed = True
-                if rssi_v is not None: _devices[ip]["meraki_rssi"] = rssi_v; changed = True
-                if snr_v  is not None: _devices[ip]["meraki_snr"]  = snr_v;  changed = True
+                if rssi_v  is not None: _devices[ip]["meraki_rssi"]  = rssi_v;  changed = True
+                if snr_v   is not None: _devices[ip]["meraki_snr"]   = snr_v;   changed = True
+                if speed_v is not None: _devices[ip]["meraki_speed"] = speed_v; changed = True
                 ms = "online" if online else "offline"
                 if d.get("meraki_status") != ms:
                     _devices[ip]["meraki_status"] = ms; changed = True
@@ -2303,15 +2307,16 @@ def _poll_meraki_api_clients() -> int:
                     updated += 1
         _save_devices()
 
-    # Fetch per-client signal quality history for all wireless clients.
-    # The /networks/.../clients list always returns rssi/snr as null;
-    # the per-client signalQualityHistory endpoint has the real values.
+    # Fetch per-client signal quality history and connection stats for wireless clients.
+    # The /networks/.../clients list always returns rssi/snr/txRate as null;
+    # real values come from dedicated per-client endpoints.
     if wireless_sig_queue:
         import time as _t
         now = int(_t.time())
         sig_params = {"resolution": 300, "t0": now - 1800, "t1": now}
         sig_updated = 0
-        for meraki_id, dev_ip in wireless_sig_queue:
+        first_wireless = True
+        for meraki_id, dev_ip, bulk_speed in wireless_sig_queue:
             sig = _meraki_api_get(
                 f"/networks/{net_id}/wireless/signalQualityHistory",
                 key, {**sig_params, "clientId": meraki_id},
@@ -2325,6 +2330,22 @@ def _poll_meraki_api_clients() -> int:
                         if rssi is not None: _devices[dev_ip]["meraki_rssi"] = rssi
                         if snr  is not None: _devices[dev_ip]["meraki_snr"]  = snr
                         sig_updated += 1
+
+            # Also fetch individual client detail to discover txRate if Meraki exposes it.
+            # Log all fields once so we can see what the API actually returns.
+            detail = _meraki_api_get(f"/networks/{net_id}/clients/{meraki_id}", key)
+            if detail and isinstance(detail, dict):
+                if first_wireless:
+                    log.debug("Meraki client detail fields: %s", list(detail.keys()))
+                    first_wireless = False
+                # Try common field names for TX link rate (Mbps or kbps)
+                tx = (detail.get("txRate") or detail.get("linkSpeed") or
+                      detail.get("dataRate") or detail.get("lastLinkSpeed") or bulk_speed)
+                if tx is not None:
+                    with _devices_lock:
+                        if dev_ip in _devices:
+                            _devices[dev_ip]["meraki_speed"] = int(tx)
+
         if sig_updated:
             with _devices_lock:
                 _save_devices()
@@ -4093,7 +4114,7 @@ def api_switchmap():
         aruba_conn  = d.get("aruba_connection") or ""
         if meraki_conn and not d.get("meraki_wired", False):
             grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
-            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": None}
+            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": d.get("meraki_speed")}
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
             # Pull SNR/speed from SNMP bridge scan if available (AP may have been scanned)
