@@ -1077,6 +1077,33 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     log.info("Bridge scan %s (%s): %d MACs mapped", switch_ip, sw_name, len(new_entries))
     _save_mac_to_port()
 
+    if is_ap_source:
+        snr_map = _aruba_snmp_snr(switch_ip, community, snmp_port)
+        if snr_map:
+            with _mac_port_lock:
+                for mac, snr in snr_map.items():
+                    if mac in _mac_to_port and _mac_to_port[mac]["switch_ip"] == switch_ip:
+                        _mac_to_port[mac]["snr"] = snr
+            _save_mac_to_port()
+            log.debug("Bridge scan %s: %d SNR readings", switch_ip, len(snr_map))
+
+
+def _aruba_snmp_snr(switch_ip: str, community: str, snmp_port: int = 161) -> dict:
+    """Walk Aruba Instant aiClientStatsTable col 7 (SNR dB). Returns {mac: snr_int}."""
+    AI_SNR_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.7"
+    base_len = len(AI_SNR_COL.split("."))
+    result: dict = {}
+    for oid_str, val_str in _snmpwalk(switch_ip, community, AI_SNR_COL, timeout=10, port=snmp_port):
+        parts = oid_str.lstrip(".").split(".")
+        suffix = parts[base_len:]
+        if len(suffix) == 6:
+            try:
+                mac = ":".join(f"{int(b):02x}" for b in suffix)
+                result[mac] = int(_sv(val_str))
+            except ValueError:
+                pass
+    return result
+
 
 def _bridge_scan_all() -> None:
     """Run IF-MIB + Bridge MIB scan for every configured SNMP switch/AP."""
@@ -2205,6 +2232,8 @@ def _poll_meraki_api_clients() -> int:
         conn_type  = (c.get("recentDeviceConnection") or "").lower()
         wired      = conn_type == "wired" or (bool(sw_port) and not ssid)
         online     = (c.get("status") or "").lower() == "online"
+        rssi_v     = c.get("rssi")
+        snr_v      = c.get("snr")
         with _devices_lock:
             if ip not in _devices:
                 _devices[ip] = {
@@ -2215,6 +2244,8 @@ def _poll_meraki_api_clients() -> int:
                     "meraki_ssid": ssid,
                     "meraki_port": sw_port,
                     "meraki_wired": wired,
+                    "meraki_rssi": rssi_v,
+                    "meraki_snr":  snr_v,
                     "learned_from": "Meraki API",
                     "meraki_status": "online" if online else "offline",
                     "meraki_product": "",
@@ -2243,6 +2274,8 @@ def _poll_meraki_api_clients() -> int:
                 if sw_port:
                     _devices[ip]["meraki_port"] = sw_port; changed = True
                 _devices[ip]["meraki_wired"] = wired; changed = True
+                if rssi_v is not None: _devices[ip]["meraki_rssi"] = rssi_v; changed = True
+                if snr_v  is not None: _devices[ip]["meraki_snr"]  = snr_v;  changed = True
                 ms = "online" if online else "offline"
                 if d.get("meraki_status") != ms:
                     _devices[ip]["meraki_status"] = ms; changed = True
@@ -4002,6 +4035,8 @@ def api_switchmap():
             "port_alias":     port_info.get("if_alias") or "",
             "is_wireless":    is_wl,
             "port_mac_count": port_info.get("port_mac_count", 1),
+            "rssi":           None,
+            "snr":            port_info.get("snr"),
         })
 
     for d in devs:
@@ -4010,8 +4045,11 @@ def api_switchmap():
         aruba_conn  = d.get("aruba_connection") or ""
         if meraki_conn and not d.get("meraki_wired", False):
             grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
+            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr")}
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
+            # Pull SNR from SNMP bridge scan if available (AP may have been scanned)
+            sig = {"rssi": None, "snr": mac_snap.get(mac, {}).get("snr")}
         else:
             continue
         grp["clients"].append({
@@ -4024,6 +4062,7 @@ def api_switchmap():
             "port_alias":     "",
             "is_wireless":    True,
             "port_mac_count": 1,
+            **sig,
         })
 
     for grp in groups.values():

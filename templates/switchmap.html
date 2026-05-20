@@ -20,7 +20,7 @@
     .toolbar input:focus { outline:none; border-color:var(--primary); }
     .stat-pill { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:4px 12px; font-size:.8rem; color:var(--muted); }
 
-    .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(440px, 1fr)); gap:16px; padding:0 24px 32px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(500px, 1fr)); gap:16px; padding:0 24px 32px; }
 
     .swcard { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
     .swcard-header { padding:11px 16px; display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--border); background:rgba(255,255,255,.02); }
@@ -50,6 +50,18 @@
     .status-dot.up { background:var(--up); box-shadow:0 0 4px var(--up); }
     .status-dot.down { background:var(--down); }
     .status-dot.unknown { background:var(--muted); }
+
+    /* Signal strength */
+    .sig-bar { display:flex; align-items:flex-end; gap:2px; height:14px; }
+    .sig-bar span { width:4px; border-radius:1px; background:var(--border); }
+    .sig-bar span.on { background:currentColor; }
+    .sig-val { font-size:.75rem; font-family:monospace; white-space:nowrap; }
+    .sig-label { font-size:.7rem; color:var(--muted); }
+    .sig-wrap { display:flex; align-items:center; gap:6px; }
+    .sig-excellent { color:#22c55e; }
+    .sig-good      { color:#86efac; }
+    .sig-fair      { color:#f59e0b; }
+    .sig-poor      { color:#ef4444; }
 
     .empty-msg { padding:20px 16px; color:var(--muted); font-size:.85rem; text-align:center; }
     .no-data { padding:40px 24px; color:var(--muted); font-size:.9rem; }
@@ -122,31 +134,96 @@ function dotCls(status) {
   return status === 'up' ? 'up' : status === 'down' ? 'down' : 'unknown';
 }
 
+// RSSI: Meraki returns a positive magnitude (e.g. 65 → -65 dBm). Lower = stronger.
+// SNR:  SNMP returns dB. Higher = stronger.
+function sigCls(rssi, snr) {
+  if (rssi != null) {
+    if (rssi <= 50) return 'sig-excellent';
+    if (rssi <= 65) return 'sig-good';
+    if (rssi <= 75) return 'sig-fair';
+    return 'sig-poor';
+  }
+  if (snr != null) {
+    if (snr >= 40) return 'sig-excellent';
+    if (snr >= 25) return 'sig-good';
+    if (snr >= 15) return 'sig-fair';
+    return 'sig-poor';
+  }
+  return '';
+}
+
+function sigBars(rssi, snr) {
+  // Map to 0-4 bars
+  let level = 0;
+  if (rssi != null) {
+    if (rssi <= 50) level = 4;
+    else if (rssi <= 65) level = 3;
+    else if (rssi <= 75) level = 2;
+    else level = 1;
+  } else if (snr != null) {
+    if (snr >= 40) level = 4;
+    else if (snr >= 25) level = 3;
+    else if (snr >= 15) level = 2;
+    else level = 1;
+  }
+  const heights = [5, 8, 11, 14];
+  return heights.map((h, i) =>
+    `<span style="height:${h}px" class="${i < level ? 'on' : ''}"></span>`
+  ).join('');
+}
+
+function signalCell(c) {
+  const rssi = c.rssi != null ? c.rssi : null;
+  const snr  = c.snr  != null ? c.snr  : null;
+  if (rssi == null && snr == null) return '<span class="sig-label">—</span>';
+  const cls = sigCls(rssi, snr);
+  const bars = sigBars(rssi, snr);
+  let label, sublabel;
+  if (rssi != null) {
+    label = `-${rssi} dBm`;
+    sublabel = snr != null ? `${snr} dB` : '';
+  } else {
+    label = `${snr} dB`;
+    sublabel = 'SNR';
+  }
+  return `<div class="sig-wrap ${cls}">
+    <div class="sig-bar">${bars}</div>
+    <div>
+      <div class="sig-val">${label}</div>
+      ${sublabel ? `<div class="sig-label">${sublabel}</div>` : ''}
+    </div>
+  </div>`;
+}
+
 function renderCard(g) {
-  const badgeCls = g.type === 'ap' ? 'badge-ap' : 'badge-switch';
+  const badgeCls  = g.type === 'ap' ? 'badge-ap' : 'badge-switch';
   const typeLabel = g.type === 'ap' ? 'AP' : 'Switch';
-  const ipStr = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
-  const cnt = g.clients.length;
+  const ipStr     = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
+  const cnt       = g.clients.length;
+  const hasSignal = g.clients.some(c => c.rssi != null || c.snr != null);
 
   let rows = '';
   for (const c of g.clients) {
-    const dot = `<span class="status-dot ${dotCls(c.status)}"></span>`;
+    const dot      = `<span class="status-dot ${dotCls(c.status)}"></span>`;
     const nameCell = c.ip
       ? `<a href="/device/${c.ip}">${dot}${c.name || c.ip}</a>`
       : `<span>${dot}${c.name || c.mac}</span>`;
-    const ipCell = c.ip ? `<div class="client-ip">${c.ip}</div>` : '';
+    const ipCell   = c.ip ? `<div class="client-ip">${c.ip}</div>` : '';
     const portCell = c.is_wireless
       ? `<span style="color:#90caf9;font-size:.82rem">&#x1F4F6; wifi</span>`
       : `<span class="client-port" title="${c.port}">${c.port}</span>${c.port_alias ? `<div class="port-alias">${c.port_alias}</div>` : ''}`;
+    const sigTd    = hasSignal ? `<td>${signalCell(c)}</td>` : '';
     rows += `<tr>
       <td><div class="client-name">${nameCell}</div>${ipCell}</td>
       <td><div class="client-mac">${c.mac}</div><div class="client-vendor">${c.vendor||''}</div></td>
       <td>${portCell}</td>
+      ${sigTd}
     </tr>`;
   }
 
+  const sigTh = hasSignal ? '<th>Signal</th>' : '';
   const body = rows
-    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th></tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th>${sigTh}</tr></thead><tbody>${rows}</tbody></table>`
     : `<div class="empty-msg">No clients detected</div>`;
 
   return `<div class="swcard">
