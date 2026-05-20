@@ -1780,8 +1780,9 @@ def _seed_device(ip: str, name: str, ports: list[int]) -> None:
             }
             log.info("Seeded device %s (%s) with ports %s", ip, name, ports)
         else:
-            _devices[ip]["ports"] = ports
-            log.info("Updated seed ports for %s: %s", ip, ports)
+            if not _devices[ip].get("ports"):
+                _devices[ip]["ports"] = ports
+                log.info("Updated seed ports for %s: %s", ip, ports)
         _save_devices()
 
 # ---------------------------------------------------------------------------

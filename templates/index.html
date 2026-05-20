@@ -457,7 +457,7 @@
   function _uptimeCell(d) {
     if (!d.monitored) return '<span style="color:var(--muted2);font-size:.7rem">—</span>';
     const u = d.uptime || {};
-    const wins = [{k:'m1',l:'1m'},{k:'h1',l:'1h'},{k:'h24',l:'24h'}];
+    const wins = [{k:'h1',l:'1h'},{k:'h24',l:'24h'}];
     return wins.map(({k, l}) => {
       const pct = u[k];
       if (pct == null) {
