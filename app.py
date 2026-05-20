@@ -3968,13 +3968,19 @@ def api_switchmap():
             groups[gid] = {"id": gid, "name": name, "type": gtype, "ip": ip, "clients": []}
         return groups[gid]
 
-    # MACs with an explicit wireless-AP attribution take priority over SNMP bridge entries.
-    # The switch bridge table also learns Meraki/Aruba wireless client MACs (because the AP
-    # is wired to the switch), so without this exclusion those clients appear under the switch.
+    # Only genuinely wireless clients displace their SNMP bridge entry.
+    # Meraki wired clients (meraki_wired=True) connect through an MX gateway → they belong
+    # on their switch port, not under the gateway as if it were an AP.
+    # Aruba Central only reports wireless clients, so all aruba_connection values are APs.
     wireless_macs: set = set()
     for d in devs:
         mac = (d.get("mac") or "").lower().strip()
-        if mac and (d.get("meraki_connection") or d.get("aruba_connection")):
+        if not mac:
+            continue
+        meraki_conn = d.get("meraki_connection") or ""
+        aruba_conn  = d.get("aruba_connection") or ""
+        is_meraki_wireless = meraki_conn and not d.get("meraki_wired", False)
+        if is_meraki_wireless or aruba_conn:
             wireless_macs.add(mac)
 
     for mac, port_info in mac_snap.items():
@@ -3999,23 +4005,26 @@ def api_switchmap():
         })
 
     for d in devs:
-        mac  = (d.get("mac") or "").lower().strip()
-        for conn_key, prefix in (("meraki_connection", "meraki"), ("aruba_connection", "aruba")):
-            conn = d.get(conn_key) or ""
-            if conn:
-                grp = _get_or_create(f"{prefix}:{conn}", conn, "ap", "")
-                grp["clients"].append({
-                    "mac":            mac,
-                    "ip":             d["ip"],
-                    "name":           d.get("name") or d.get("hostname") or "",
-                    "vendor":         d.get("vendor") or "",
-                    "status":         d.get("status") or "",
-                    "port":           "wifi",
-                    "port_alias":     "",
-                    "is_wireless":    True,
-                    "port_mac_count": 1,
-                })
-                break
+        mac         = (d.get("mac") or "").lower().strip()
+        meraki_conn = d.get("meraki_connection") or ""
+        aruba_conn  = d.get("aruba_connection") or ""
+        if meraki_conn and not d.get("meraki_wired", False):
+            grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
+        elif aruba_conn:
+            grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
+        else:
+            continue
+        grp["clients"].append({
+            "mac":            mac,
+            "ip":             d["ip"],
+            "name":           d.get("name") or d.get("hostname") or "",
+            "vendor":         d.get("vendor") or "",
+            "status":         d.get("status") or "",
+            "port":           "wifi",
+            "port_alias":     "",
+            "is_wireless":    True,
+            "port_mac_count": 1,
+        })
 
     for grp in groups.values():
         grp["clients"].sort(key=lambda c: (c["port"], c["ip"]))
