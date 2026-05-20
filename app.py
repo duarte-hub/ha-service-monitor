@@ -1081,30 +1081,41 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
         snr_map = _aruba_snmp_snr(switch_ip, community, snmp_port)
         if snr_map:
             with _mac_port_lock:
-                for mac, snr in snr_map.items():
+                for mac, data in snr_map.items():
                     if mac in _mac_to_port and _mac_to_port[mac]["switch_ip"] == switch_ip:
-                        _mac_to_port[mac]["snr"] = snr
-                        # Aruba Instant does not expose RSSI via SNMP; derive from SNR
-                        # using the standard 2.4/5 GHz noise floor of −95 dBm.
-                        _mac_to_port[mac]["rssi_est"] = snr - 95
+                        snr   = data.get("snr")
+                        speed = data.get("speed")
+                        if snr is not None:
+                            _mac_to_port[mac]["snr"] = snr
+                            # Aruba Instant does not expose RSSI via SNMP; derive from SNR
+                            # using the standard 2.4/5 GHz noise floor of −95 dBm.
+                            _mac_to_port[mac]["rssi_est"] = snr - 95
+                        if speed is not None:
+                            _mac_to_port[mac]["speed"] = speed
             _save_mac_to_port()
-            log.debug("Bridge scan %s: %d SNR readings", switch_ip, len(snr_map))
+            log.debug("Bridge scan %s: %d SNR/speed readings", switch_ip, len(snr_map))
 
 
 def _aruba_snmp_snr(switch_ip: str, community: str, snmp_port: int = 161) -> dict:
-    """Walk Aruba Instant aiClientStatsTable col 7 (SNR dB). Returns {mac: snr_int}."""
-    AI_SNR_COL = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1.7"
+    """Walk Aruba Instant aiClientStatsTable cols 7 (SNR dB) and 11 (TX rate Mbps).
+    Returns {mac: {"snr": int|None, "speed": int|None}}."""
+    AI_BASE      = "1.3.6.1.4.1.14823.2.3.3.1.2.4.1"
+    AI_SNR_COL   = f"{AI_BASE}.7"
+    AI_SPEED_COL = f"{AI_BASE}.11"
     base_len = len(AI_SNR_COL.split("."))
     result: dict = {}
-    for oid_str, val_str in _snmpwalk(switch_ip, community, AI_SNR_COL, timeout=10, port=snmp_port):
-        parts = oid_str.lstrip(".").split(".")
-        suffix = parts[base_len:]
-        if len(suffix) == 6:
-            try:
-                mac = ":".join(f"{int(b):02x}" for b in suffix)
-                result[mac] = int(_sv(val_str))
-            except ValueError:
-                pass
+    for col_oid, field in ((AI_SNR_COL, "snr"), (AI_SPEED_COL, "speed")):
+        for oid_str, val_str in _snmpwalk(switch_ip, community, col_oid, timeout=10, port=snmp_port):
+            parts = oid_str.lstrip(".").split(".")
+            suffix = parts[base_len:]
+            if len(suffix) == 6:
+                try:
+                    mac = ":".join(f"{int(b):02x}" for b in suffix)
+                    if mac not in result:
+                        result[mac] = {"snr": None, "speed": None}
+                    result[mac][field] = int(_sv(val_str))
+                except ValueError:
+                    pass
     return result
 
 
@@ -4073,6 +4084,7 @@ def api_switchmap():
             "rssi":           port_info.get("rssi_est"),
             "rssi_est":       port_info.get("rssi_est") is not None,
             "snr":            port_info.get("snr"),
+            "speed":          port_info.get("speed"),
         })
 
     for d in devs:
@@ -4081,11 +4093,12 @@ def api_switchmap():
         aruba_conn  = d.get("aruba_connection") or ""
         if meraki_conn and not d.get("meraki_wired", False):
             grp = _get_or_create(f"meraki:{meraki_conn}", meraki_conn, "ap", "")
-            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr")}
+            sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"), "speed": None}
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
-            # Pull SNR from SNMP bridge scan if available (AP may have been scanned)
-            sig = {"rssi": None, "snr": mac_snap.get(mac, {}).get("snr")}
+            # Pull SNR/speed from SNMP bridge scan if available (AP may have been scanned)
+            msnap = mac_snap.get(mac, {})
+            sig = {"rssi": None, "snr": msnap.get("snr"), "speed": msnap.get("speed")}
         else:
             continue
         grp["clients"].append({

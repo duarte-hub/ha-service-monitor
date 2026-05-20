@@ -180,12 +180,18 @@ function signalCell(c) {
   </div>`;
 }
 
+function speedCell(c) {
+  if (c.speed == null) return '<span class="sig-label">—</span>';
+  return `<span style="font-family:monospace;font-size:.8rem">${c.speed} Mbps</span>`;
+}
+
 function renderCard(g) {
   const badgeCls  = g.type === 'ap' ? 'badge-ap' : 'badge-switch';
   const typeLabel = g.type === 'ap' ? 'AP' : 'Switch';
   const ipStr     = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
   const cnt       = g.clients.length;
   const hasSignal = g.clients.some(c => c.rssi != null || c.snr != null);
+  const hasSpeed  = g.clients.some(c => c.speed != null);
 
   let rows = '';
   for (const c of g.clients) {
@@ -198,17 +204,20 @@ function renderCard(g) {
       ? `<span style="color:#90caf9;font-size:.82rem">&#x1F4F6; wifi</span>`
       : `<span class="client-port" title="${c.port}">${c.port}</span>${c.port_alias ? `<div class="port-alias">${c.port_alias}</div>` : ''}`;
     const sigTd    = hasSignal ? `<td>${signalCell(c)}</td>` : '';
+    const spdTd    = hasSpeed  ? `<td>${speedCell(c)}</td>`  : '';
     rows += `<tr>
       <td><div class="client-name">${nameCell}</div>${ipCell}</td>
       <td><div class="client-mac">${c.mac}</div><div class="client-vendor">${c.vendor||''}</div></td>
       <td>${portCell}</td>
       ${sigTd}
+      ${spdTd}
     </tr>`;
   }
 
   const sigTh = hasSignal ? '<th>Signal</th>' : '';
+  const spdTh = hasSpeed  ? '<th>Speed</th>'  : '';
   const body = rows
-    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th>${sigTh}</tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th>${sigTh}${spdTh}</tr></thead><tbody>${rows}</tbody></table>`
     : `<div class="empty-msg">No clients detected</div>`;
 
   return `<div class="swcard">
