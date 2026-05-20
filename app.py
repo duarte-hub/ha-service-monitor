@@ -783,6 +783,7 @@ def _run_snmp_if_diag(ip: str, community: str) -> None:
 _MAC_PORT_PATH = os.environ.get("MAC_PORT_PATH", "/data/mac_to_port.json")
 _mac_to_port: dict = {}   # "aa:bb:cc:dd:ee:ff" → {switch_ip, switch_name, if_name, if_alias, if_idx, port_mac_count, in_err, out_err, in_disc, out_disc}
 _mac_port_lock = threading.Lock()
+_infra_macs:  set  = set()   # interface MACs of switches/APs themselves — excluded from client lists
 
 def _load_mac_to_port() -> None:
     global _mac_to_port
@@ -807,12 +808,20 @@ def _save_mac_to_port() -> None:
 
 def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
     """Walk dot1dTpFdbTable to map learned MACs to switch interfaces."""
+    global _infra_macs
     sw_cfg = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
     snmp_port = int(sw_cfg["port"]) if sw_cfg and sw_cfg.get("port") else 161
     sw_name   = sw_cfg["name"] if sw_cfg and sw_cfg.get("name") else switch_ip
     # If the source is explicitly typed as "ap", every MAC it learns is a direct
     # wireless association regardless of the bridge interface name (br0, eth0, etc.)
     is_ap_source = sw_cfg.get("type", "switch").lower() == "ap" if sw_cfg else False
+
+    # Register every interface MAC of this device as an infrastructure MAC so
+    # downstream switch cards don't show the AP's own BSSIDs as fake clients.
+    for iface in iface_list:
+        mac = (iface.get("mac") or "").lower().strip()
+        if mac and mac != "00:00:00:00:00:00":
+            _infra_macs.add(mac)
 
     # Bridge port → ifIndex
     bport_to_ifidx: dict = {}
@@ -4093,6 +4102,8 @@ def api_switchmap():
     for mac, port_info in mac_snap.items():
         if mac in wireless_macs:
             continue  # handled by meraki/aruba section below
+        if mac in _infra_macs:
+            continue  # AP/switch's own interface MAC (BSSID, management NIC, etc.)
         sw_ip   = port_info.get("switch_ip", "")
         sw_name = port_info.get("switch_name") or sw_ip
         is_wl   = bool(port_info.get("is_wireless"))
