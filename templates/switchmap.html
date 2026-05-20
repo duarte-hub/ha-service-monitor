@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Switch &amp; AP Clients</title>
+  <style>
+    :root { --primary:#1565c0; --bg:#0f1117; --surface:#1a1d27; --border:#2a2d3a; --text:#e2e8f0; --muted:#94a3b8; --up:#22c55e; --down:#ef4444; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; min-height:100vh; }
+
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 12px rgba(0,0,0,.5); }
+    .topbar-left { display:flex; align-items:center; gap:10px; font-size:1rem; font-weight:700; }
+    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; font-weight:500; }
+    .topbar-right a:hover { color:#fff; }
+
+    .toolbar { display:flex; gap:10px; align-items:center; padding:16px 24px; flex-wrap:wrap; }
+    .toolbar input { background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 12px; font-size:.85rem; width:260px; }
+    .toolbar input:focus { outline:none; border-color:var(--primary); }
+    .stat-pill { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:4px 12px; font-size:.8rem; color:var(--muted); }
+
+    .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(440px, 1fr)); gap:16px; padding:0 24px 32px; }
+
+    .swcard { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    .swcard-header { padding:11px 16px; display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--border); background:rgba(255,255,255,.02); }
+    .swcard-name { font-weight:700; font-size:.93rem; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .swcard-ip { font-size:.74rem; color:var(--muted); font-family:monospace; flex-shrink:0; }
+    .swcard-badge { font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:10px; text-transform:uppercase; flex-shrink:0; }
+    .badge-switch { background:rgba(21,101,192,.3); color:#90caf9; }
+    .badge-ap { background:rgba(76,175,80,.2); color:#81c784; }
+    .swcard-count { font-size:.75rem; color:var(--muted); flex-shrink:0; }
+
+    .client-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .client-table th { padding:5px 12px; text-align:left; color:var(--muted); font-weight:500; font-size:.74rem; border-bottom:1px solid var(--border); }
+    .client-table td { padding:7px 12px; border-bottom:1px solid rgba(255,255,255,.035); vertical-align:middle; }
+    .client-table tr:last-child td { border-bottom:none; }
+    .client-table tr:hover td { background:rgba(255,255,255,.03); }
+
+    .client-name a { color:var(--text); text-decoration:none; font-weight:600; }
+    .client-name a:hover { color:#90caf9; }
+    .client-name span { font-weight:600; }
+    .client-ip { color:var(--muted); font-family:monospace; font-size:.77rem; }
+    .client-mac { font-family:monospace; font-size:.75rem; color:var(--muted); }
+    .client-vendor { font-size:.73rem; color:var(--muted); }
+    .client-port { font-family:monospace; font-size:.77rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .port-alias { font-size:.72rem; color:var(--muted); }
+
+    .status-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+    .status-dot.up { background:var(--up); box-shadow:0 0 4px var(--up); }
+    .status-dot.down { background:var(--down); }
+    .status-dot.unknown { background:var(--muted); }
+
+    .empty-msg { padding:20px 16px; color:var(--muted); font-size:.85rem; text-align:center; }
+    .no-data { padding:40px 24px; color:var(--muted); font-size:.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="8" width="20" height="8" rx="2"/>
+      <circle cx="6" cy="12" r="1.2" fill="currentColor"/>
+      <circle cx="10" cy="12" r="1.2" fill="currentColor"/>
+      <circle cx="14" cy="12" r="1.2" fill="currentColor"/>
+      <circle cx="18" cy="12" r="1.2" fill="currentColor"/>
+    </svg>
+    Switch &amp; AP Clients
+  </div>
+  <div class="topbar-right">
+    <a href="/topology">Topology</a>
+    <a href="/vulnerabilities">Vulns</a>
+    <a href="/logs">Logs</a>
+    <a href="/config">Settings</a>
+    <a href="/">&#8592; Dashboard</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Filter by name, IP, MAC, port&#x2026;" oninput="applyFilter()">
+  <span class="stat-pill" id="stat-devices">&#x2014;</span>
+  <span class="stat-pill" id="stat-clients">&#x2014;</span>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+let _data = [];
+
+async function load() {
+  try {
+    const r = await fetch('/api/switchmap');
+    _data = await r.json();
+    applyFilter();
+  } catch(e) {
+    document.getElementById('grid').innerHTML = '<p class="no-data">Failed to load data.</p>';
+  }
+}
+
+function applyFilter() {
+  const q = (document.getElementById('search').value || '').toLowerCase();
+  if (!q) { render(_data); return; }
+  const filtered = [];
+  for (const g of _data) {
+    const matchGroup = g.name.toLowerCase().includes(q) || (g.ip||'').includes(q);
+    const clients = g.clients.filter(c =>
+      (c.name||'').toLowerCase().includes(q) ||
+      (c.ip||'').includes(q) ||
+      (c.mac||'').toLowerCase().includes(q) ||
+      (c.port||'').toLowerCase().includes(q) ||
+      (c.port_alias||'').toLowerCase().includes(q) ||
+      (c.vendor||'').toLowerCase().includes(q)
+    );
+    if (matchGroup || clients.length)
+      filtered.push({...g, clients: clients.length ? clients : (matchGroup ? g.clients : [])});
+  }
+  render(filtered);
+}
+
+function dotCls(status) {
+  return status === 'up' ? 'up' : status === 'down' ? 'down' : 'unknown';
+}
+
+function renderCard(g) {
+  const badgeCls = g.type === 'ap' ? 'badge-ap' : 'badge-switch';
+  const typeLabel = g.type === 'ap' ? 'AP' : 'Switch';
+  const ipStr = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
+  const cnt = g.clients.length;
+
+  let rows = '';
+  for (const c of g.clients) {
+    const dot = `<span class="status-dot ${dotCls(c.status)}"></span>`;
+    const nameCell = c.ip
+      ? `<a href="/device/${c.ip}">${dot}${c.name || c.ip}</a>`
+      : `<span>${dot}${c.name || c.mac}</span>`;
+    const ipCell = c.ip ? `<div class="client-ip">${c.ip}</div>` : '';
+    const portCell = c.is_wireless
+      ? `<span style="color:#90caf9;font-size:.82rem">&#x1F4F6; wifi</span>`
+      : `<span class="client-port" title="${c.port}">${c.port}</span>${c.port_alias ? `<div class="port-alias">${c.port_alias}</div>` : ''}`;
+    rows += `<tr>
+      <td><div class="client-name">${nameCell}</div>${ipCell}</td>
+      <td><div class="client-mac">${c.mac}</div><div class="client-vendor">${c.vendor||''}</div></td>
+      <td>${portCell}</td>
+    </tr>`;
+  }
+
+  const body = rows
+    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<div class="empty-msg">No clients detected</div>`;
+
+  return `<div class="swcard">
+    <div class="swcard-header">
+      <span>${g.type === 'ap' ? '&#x1F4E1;' : '&#x1F50C;'}</span>
+      <span class="swcard-name" title="${g.name}">${g.name}</span>
+      ${ipStr}
+      <span class="swcard-badge ${badgeCls}">${typeLabel}</span>
+      <span class="swcard-count">${cnt} client${cnt===1?'':'s'}</span>
+    </div>
+    ${body}
+  </div>`;
+}
+
+function render(data) {
+  const totalClients = data.reduce((s, g) => s + g.clients.length, 0);
+  document.getElementById('stat-devices').textContent = `${data.length} device${data.length===1?'':'s'}`;
+  document.getElementById('stat-clients').textContent = `${totalClients} client${totalClients===1?'':'s'}`;
+  document.getElementById('grid').innerHTML = data.length
+    ? data.map(renderCard).join('')
+    : '<p class="no-data">No switch or AP data found. Run an SNMP bridge scan first.</p>';
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
