@@ -1084,6 +1084,9 @@ def _run_bridge_scan(switch_ip: str, community: str, iface_list: list) -> None:
                 for mac, snr in snr_map.items():
                     if mac in _mac_to_port and _mac_to_port[mac]["switch_ip"] == switch_ip:
                         _mac_to_port[mac]["snr"] = snr
+                        # Aruba Instant does not expose RSSI via SNMP; derive from SNR
+                        # using the standard 2.4/5 GHz noise floor of −95 dBm.
+                        _mac_to_port[mac]["rssi_est"] = snr - 95
             _save_mac_to_port()
             log.debug("Bridge scan %s: %d SNR readings", switch_ip, len(snr_map))
 
@@ -4067,7 +4070,8 @@ def api_switchmap():
             "port_alias":     port_info.get("if_alias") or "",
             "is_wireless":    is_wl,
             "port_mac_count": port_info.get("port_mac_count", 1),
-            "rssi":           None,
+            "rssi":           port_info.get("rssi_est"),
+            "rssi_est":       port_info.get("rssi_est") is not None,
             "snr":            port_info.get("snr"),
         })
 

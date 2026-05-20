@@ -169,9 +169,10 @@ function signalCell(c) {
   const bars = sigBarsHtml(lvl);
 
   // Show RSSI and SNR on separate lines when both are available
+  const rssiLabel = rssi != null ? (c.rssi_est ? `~${rssi} dBm` : `${rssi} dBm`) : null;
   let lines = '';
-  if (rssi != null) lines += `<div class="sig-val">${rssi} dBm</div>`;
-  if (snr  != null) lines += `<div class="sig-label">${snr} dB SNR</div>`;
+  if (rssiLabel) lines += `<div class="sig-val">${rssiLabel}</div>`;
+  if (snr != null) lines += `<div class="sig-label">${snr} dB SNR</div>`;
 
   return `<div class="sig-wrap ${cls}">
     <div class="sig-bar">${bars}</div>
