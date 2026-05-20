@@ -2336,7 +2336,7 @@ def _poll_meraki_api_clients() -> int:
             detail = _meraki_api_get(f"/networks/{net_id}/clients/{meraki_id}", key)
             if detail and isinstance(detail, dict):
                 if first_wireless:
-                    log.debug("Meraki client detail fields: %s", list(detail.keys()))
+                    log.info("Meraki client detail fields: %s | full=%s", list(detail.keys()), detail)
                     first_wireless = False
                 # Try common field names for TX link rate (Mbps or kbps)
                 tx = (detail.get("txRate") or detail.get("linkSpeed") or
