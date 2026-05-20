@@ -3968,7 +3968,18 @@ def api_switchmap():
             groups[gid] = {"id": gid, "name": name, "type": gtype, "ip": ip, "clients": []}
         return groups[gid]
 
+    # MACs with an explicit wireless-AP attribution take priority over SNMP bridge entries.
+    # The switch bridge table also learns Meraki/Aruba wireless client MACs (because the AP
+    # is wired to the switch), so without this exclusion those clients appear under the switch.
+    wireless_macs: set = set()
+    for d in devs:
+        mac = (d.get("mac") or "").lower().strip()
+        if mac and (d.get("meraki_connection") or d.get("aruba_connection")):
+            wireless_macs.add(mac)
+
     for mac, port_info in mac_snap.items():
+        if mac in wireless_macs:
+            continue  # handled by meraki/aruba section below
         sw_ip   = port_info.get("switch_ip", "")
         sw_name = port_info.get("switch_name") or sw_ip
         is_wl   = bool(port_info.get("is_wireless"))
@@ -3987,11 +3998,8 @@ def api_switchmap():
             "port_mac_count": port_info.get("port_mac_count", 1),
         })
 
-    snmp_macs = set(mac_snap.keys())
     for d in devs:
         mac  = (d.get("mac") or "").lower().strip()
-        if mac in snmp_macs:
-            continue
         for conn_key, prefix in (("meraki_connection", "meraki"), ("aruba_connection", "aruba")):
             conn = d.get(conn_key) or ""
             if conn:
