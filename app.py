@@ -2326,6 +2326,7 @@ def _poll_meraki_api_clients() -> int:
         now = int(_t.time())
         sig_params = {"resolution": 300, "t0": now - 1800, "t1": now}
         sig_updated = 0
+        probe_done = False
         for meraki_id, dev_ip in wireless_sig_queue:
             sig = _meraki_api_get(
                 f"/networks/{net_id}/wireless/signalQualityHistory",
@@ -2340,6 +2341,14 @@ def _poll_meraki_api_clients() -> int:
                         if rssi is not None: _devices[dev_ip]["meraki_rssi"] = rssi
                         if snr  is not None: _devices[dev_ip]["meraki_snr"]  = snr
                         sig_updated += 1
+
+            if not probe_done:
+                cs = _meraki_api_get(
+                    f"/networks/{net_id}/wireless/clients/{meraki_id}/connectionStats",
+                    key, {"t0": now - 1800, "t1": now},
+                )
+                log.info("Meraki connectionStats probe id=%s: %s", meraki_id, cs)
+                probe_done = True
 
         if sig_updated:
             with _devices_lock:
