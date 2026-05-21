@@ -1989,50 +1989,6 @@ def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10, port: int 
         log.debug("snmpwalk %s [%s]: %s", host, oid, e)
         return []
 
-def _snmpset(host: str, community: str, oid: str, type_char: str, value: str, port: int = 161, timeout: int = 10) -> bool:
-    """Run snmpset -v2c. type_char is i/u/s/etc. Returns True on success."""
-    try:
-        target = f"{host}:{port}" if port != 161 else host
-        r = subprocess.run(
-            ["snmpset", "-v2c", "-c", community, target, oid, type_char, value],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        if r.returncode != 0:
-            log.warning("snmpset %s [%s=%s]: %s", host, oid, value, r.stderr.strip() or r.stdout.strip())
-        return r.returncode == 0
-    except FileNotFoundError:
-        log.warning("snmpset not found — install the snmp package")
-        return False
-    except Exception as e:
-        log.warning("snmpset %s [%s]: %s", host, oid, e)
-        return False
-
-
-def _snmp_community_for(switch_ip: str) -> str:
-    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
-    return (sw.get("community") if sw else None) or SNMP_COMMUNITY
-
-
-def _snmp_port_for(switch_ip: str) -> int:
-    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
-    return int(sw["port"]) if sw and sw.get("port") else 161
-
-
-IF_ADMIN_STATUS_OID = "1.3.6.1.2.1.2.2.1.7"  # ifAdminStatus.{ifIndex}: 1=up, 2=down
-
-_port_action_lock = threading.Lock()
-
-
-def _do_bounce(switch_ip: str, if_idx: int, community: str, snmp_port: int) -> None:
-    oid = f"{IF_ADMIN_STATUS_OID}.{if_idx}"
-    log.info("Port bounce %s if%d — setting down", switch_ip, if_idx)
-    _snmpset(switch_ip, community, oid, "i", "2", port=snmp_port)
-    time.sleep(4)
-    log.info("Port bounce %s if%d — setting up", switch_ip, if_idx)
-    _snmpset(switch_ip, community, oid, "i", "1", port=snmp_port)
-    log.info("Port bounce %s if%d — complete", switch_ip, if_idx)
-
-
 def _parse_snmp_mac(val_str: str) -> str:
     """Extract MAC from 'Hex-STRING: AA BB CC DD EE FF' style value."""
     hex_part = val_str.split(": ", 1)[-1] if ": " in val_str else val_str
@@ -2247,127 +2203,6 @@ def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list
         log.warning("Meraki API %s failed: %s", path, e)
     return None
 
-def _meraki_api_post(path: str, api_key: str, body: dict | None = None) -> dict | None:
-    try:
-        resp = requests.post(
-            f"{_MERAKI_API_BASE}{path}",
-            headers={"X-Cisco-Meraki-API-Key": api_key, "Content-Type": "application/json"},
-            json=body or {},
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202, 204):
-            return resp.json() if resp.content else {}
-        log.warning("Meraki POST %s → %d: %s", path, resp.status_code, resp.text[:200])
-    except Exception as e:
-        log.warning("Meraki POST %s failed: %s", path, e)
-    return None
-
-
-def _meraki_api_put(path: str, api_key: str, body: dict | None = None) -> dict | None:
-    try:
-        resp = requests.put(
-            f"{_MERAKI_API_BASE}{path}",
-            headers={"X-Cisco-Meraki-API-Key": api_key, "Content-Type": "application/json"},
-            json=body or {},
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202, 204):
-            return resp.json() if resp.content else {}
-        log.warning("Meraki PUT %s → %d: %s", path, resp.status_code, resp.text[:200])
-    except Exception as e:
-        log.warning("Meraki PUT %s failed: %s", path, e)
-    return None
-
-
-def _meraki_bounce_client(net_id: str, meraki_id: str, key: str) -> None:
-    """Block a Meraki wireless client for 90 s then restore Normal policy.
-
-    Meraki pushes policy changes to APs via cloud (can take 30-90 s), so the
-    block window must be long enough for the AP to receive it AND deauth the
-    client before we restore Normal.
-    """
-    log.info("Meraki kick %s — setting Blocked", meraki_id)
-    r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Blocked"})
-    if r is None:
-        log.warning("Meraki kick %s — block PUT failed, aborting", meraki_id)
-        return
-    log.info("Meraki kick %s — blocked OK, waiting 90 s for AP propagation", meraki_id)
-    time.sleep(90)
-    log.info("Meraki kick %s — restoring Normal", meraki_id)
-    _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Normal"})
-    log.info("Meraki kick %s — complete", meraki_id)
-
-
-def _mac_to_snmp_oid(mac: str) -> str:
-    """Convert 'aa:bb:cc:dd:ee:ff' to '170.187.204.221.238.255' for SNMP OID indexing."""
-    return ".".join(str(int(b, 16)) for b in mac.split(":"))
-
-
-def _aruba_ssh_kick_client(ap_ip: str, mac: str, ssh_user: str, ssh_pass: str) -> bool:
-    """Deauthenticate a wireless client via SSH using Aruba Instant's interactive CLI."""
-    try:
-        import paramiko, socket
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(ap_ip, username=ssh_user, password=ssh_pass, timeout=10,
-                       look_for_keys=False, allow_agent=False)
-
-        # Aruba Instant uses a restricted shell — exec_command closes the channel.
-        # invoke_shell gives us the interactive CLI.
-        shell = client.invoke_shell(width=200, height=50)
-        shell.settimeout(8)
-
-        def _read_until_prompt(timeout=5.0):
-            buf = ""
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                try:
-                    chunk = shell.recv(4096).decode(errors="replace")
-                    buf += chunk
-                    # Aruba prompt ends with '# ' or '> '
-                    if buf.rstrip().endswith(("#", ">", "# ", "> ")):
-                        break
-                except socket.timeout:
-                    break
-            return buf
-
-        _read_until_prompt(4)                           # swallow banner / prompt
-        shell.send(f"stm kick-out-sta {mac}\n")
-        out = _read_until_prompt(5)
-        shell.send("exit\n")
-        client.close()
-
-        log.info("Aruba SSH kick %s @ %s: %r", mac, ap_ip, out.strip())
-        # Aruba prints nothing or "Error" on failure
-        if "error" in out.lower() or "invalid" in out.lower() or "unknown" in out.lower():
-            log.warning("Aruba SSH kick %s: command rejected — %r", mac, out.strip())
-            return False
-        return True
-    except Exception as e:
-        log.warning("Aruba SSH kick %s @ %s failed: %s", mac, ap_ip, e)
-        return False
-
-
-def _aruba_snmp_kick_client(ap_ip: str, mac: str, community: str, snmp_port: int) -> bool:
-    """Fallback: try SNMP SET on aiClientTable (requires RW community)."""
-    mac_oid = _mac_to_snmp_oid(mac)
-    oid = f"1.3.6.1.4.1.14823.2.3.3.1.2.4.1.2.{mac_oid}"
-    return _snmpset(ap_ip, community, oid, "i", "0", port=snmp_port)
-
-
-def _find_ap_ip_by_name(name: str) -> str:
-    sw = next((s for s in SNMP_SWITCHES if s.get("name") == name), None)
-    return sw.get("ip", "") if sw else ""
-
-
-def _find_ap_ssh_creds(ap_ip: str) -> tuple[str, str]:
-    """Return (ssh_user, ssh_pass) for the given AP IP, or ('', '')."""
-    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == ap_ip), None)
-    if sw:
-        return sw.get("ssh_user", ""), sw.get("ssh_pass", "")
-    return "", ""
-
-
 _meraki_net_devs: dict  = {}   # device name → "ap" | "gateway" | "switch" | "other"
 _meraki_net_macs: dict  = {}   # mac (lower) → {name, model, type, serial}
 _meraki_topology: dict  = {}   # raw link-layer topology {nodes, links} or {}
@@ -2446,7 +2281,6 @@ def _poll_meraki_api_clients() -> int:
                     "ip": ip, "mac": mac, "vendor": vendor,
                     "hostname": hostname, "name": "",
                     "dhcp_hostname": dhcp_name,
-                    "meraki_id":         meraki_id,
                     "meraki_connection": connection,
                     "meraki_ssid": ssid,
                     "meraki_port": sw_port,
@@ -2475,8 +2309,6 @@ def _poll_meraki_api_clients() -> int:
                     _devices[ip]["hostname"] = hostname; changed = True
                 if dhcp_name:
                     _devices[ip]["dhcp_hostname"]   = dhcp_name;  changed = True
-                if meraki_id:
-                    _devices[ip]["meraki_id"] = meraki_id;         changed = True
                 if connection:
                     _devices[ip]["meraki_connection"] = connection; changed = True
                 if ssid:
@@ -3878,85 +3710,6 @@ def api_snmp_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
-@app.route("/api/snmp/port/action", methods=["POST"])
-def api_snmp_port_action():
-    """Bounce, disable, or enable a switch/AP port via SNMP SET on ifAdminStatus."""
-    data      = request.json or {}
-    switch_ip = (data.get("switch_ip") or "").strip()
-    if_idx    = data.get("if_idx")
-    action    = (data.get("action") or "").lower()  # bounce | disable | enable
-
-    if not switch_ip or not if_idx or action not in ("bounce", "disable", "enable"):
-        return jsonify({"ok": False, "error": "switch_ip, if_idx, and action (bounce|disable|enable) are required"}), 400
-
-    community  = _snmp_community_for(switch_ip)
-    snmp_port  = _snmp_port_for(switch_ip)
-    oid        = f"{IF_ADMIN_STATUS_OID}.{if_idx}"
-
-    if action == "bounce":
-        threading.Thread(
-            target=_do_bounce, args=(switch_ip, if_idx, community, snmp_port),
-            daemon=True, name=f"port-bounce-{switch_ip}-{if_idx}"
-        ).start()
-        return jsonify({"ok": True, "message": f"Bouncing {switch_ip} if{if_idx}…"})
-
-    value = "2" if action == "disable" else "1"
-    ok    = _snmpset(switch_ip, community, oid, "i", value, port=snmp_port)
-    label = "disabled" if action == "disable" else "enabled"
-    return jsonify({"ok": ok, "message": f"Port {label}" if ok else "SNMP SET failed — check community string has write access"})
-
-
-@app.route("/api/wireless/client/action", methods=["POST"])
-def api_wireless_client_action():
-    """Kick, block, or unblock a wireless client (Meraki API or Aruba SNMP)."""
-    data        = request.json or {}
-    action      = (data.get("action") or "").lower()   # kick | block | unblock
-    client_type = (data.get("client_type") or "").lower()  # meraki | aruba
-    mac         = (data.get("mac") or "").lower().strip()
-
-    if action not in ("kick", "block", "unblock"):
-        return jsonify({"ok": False, "error": "action must be kick, block, or unblock"}), 400
-
-    # ── Meraki ─────────────────────────────────────────────────────────────
-    if client_type == "meraki":
-        meraki_id = (data.get("meraki_id") or "").strip()
-        net_id    = (data.get("net_id") or MERAKI_NETWORK_ID).strip()
-        key       = MERAKI_API_KEY
-        if not key or not net_id or not meraki_id:
-            return jsonify({"ok": False, "error": "Meraki API key, network ID, and client ID required"}), 400
-        if action == "kick":
-            # Meraki has no public deauthenticate endpoint; block then unblock forces reconnect
-            threading.Thread(
-                target=_meraki_bounce_client, args=(net_id, meraki_id, key),
-                daemon=True, name=f"meraki-kick-{meraki_id}"
-            ).start()
-            return jsonify({"ok": True, "message": "Blocked — client will disconnect within ~30–60 s (Meraki cloud push), then auto-unblocked after 90 s"})
-        policy = "Blocked" if action == "block" else "Normal"
-        r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": policy})
-        ok = r is not None
-        label = "blocked" if action == "block" else "unblocked"
-        return jsonify({"ok": ok, "message": f"Client {label}" if ok else "Meraki API call failed"})
-
-    # ── Aruba AP (SNMP) ────────────────────────────────────────────────────
-    if client_type == "aruba":
-        ap_ip = (data.get("ap_ip") or "").strip()
-        if not ap_ip or not mac:
-            return jsonify({"ok": False, "error": "ap_ip and mac required for Aruba"}), 400
-        community = _snmp_community_for(ap_ip)
-        snmp_port = _snmp_port_for(ap_ip)
-        ssh_user, ssh_pass = _find_ap_ssh_creds(ap_ip)
-        if action == "kick":
-            if ssh_user and ssh_pass:
-                ok = _aruba_ssh_kick_client(ap_ip, mac, ssh_user, ssh_pass)
-                return jsonify({"ok": ok, "message": "Client kicked via SSH" if ok else "SSH kick failed — check credentials in Settings"})
-            ok = _aruba_snmp_kick_client(ap_ip, mac, community, snmp_port)
-            return jsonify({"ok": ok, "message": "Client kicked via SNMP" if ok else "Kick failed — add SSH credentials for this AP in Settings"})
-        if action in ("block", "unblock"):
-            return jsonify({"ok": False, "message": "Block/unblock requires Aruba Central API (not yet configured)"})
-
-    return jsonify({"ok": False, "error": "Unknown client_type"}), 400
-
-
 @app.route("/api/bridge/rescan", methods=["POST"])
 def api_bridge_rescan():
     """Trigger an immediate IF-MIB + bridge scan for all configured SNMP switches/APs."""
@@ -4373,8 +4126,6 @@ def api_switchmap():
             "snr":            port_info.get("snr"),
             "speed":          port_info.get("speed"),
             "wifi_cap":       None,
-            "if_idx":         port_info.get("if_idx"),
-            "switch_ip":      sw_ip,
         })
 
     for d in devs:
@@ -4386,22 +4137,10 @@ def api_switchmap():
             sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"),
                    "speed": d.get("meraki_speed"),
                    "wifi_cap": _fmt_wifi_cap(d.get("meraki_wifi_cap") or "")}
-            action_meta = {
-                "client_type": "meraki",
-                "meraki_id":   d.get("meraki_id") or "",
-                "net_id":      MERAKI_NETWORK_ID,
-                "ap_ip":       "",
-            }
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
             msnap = mac_snap.get(mac, {})
             sig = {"rssi": None, "snr": msnap.get("snr"), "speed": msnap.get("speed"), "wifi_cap": None}
-            action_meta = {
-                "client_type": "aruba",
-                "meraki_id":   "",
-                "net_id":      "",
-                "ap_ip":       _find_ap_ip_by_name(aruba_conn),
-            }
         else:
             continue
         grp["clients"].append({
@@ -4415,7 +4154,6 @@ def api_switchmap():
             "is_wireless":    True,
             "port_mac_count": 1,
             **sig,
-            **action_meta,
         })
 
     for grp in groups.values():

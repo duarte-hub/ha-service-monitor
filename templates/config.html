@@ -309,8 +309,6 @@
           <th style="padding:4px 8px;width:70px">Port</th>
           <th style="padding:4px 8px">Community</th>
           <th style="padding:4px 8px;width:72px">Type</th>
-          <th style="padding:4px 8px" title="SSH username for AP kick">SSH User</th>
-          <th style="padding:4px 8px" title="SSH password for AP kick">SSH Pass</th>
           <th style="padding:4px 8px;width:40px"></th>
         </tr>
       </thead>
@@ -730,14 +728,12 @@
             <option value="ap"     ${sw.type==='ap'?'selected':''}>AP</option>
           </select>
         </td>
-        <td style="padding:3px 4px" title="SSH user (AP kick)">${_inp(sw.ssh_user||'','admin',`_snmpSwitches[${i}].ssh_user=this.value`)}</td>
-        <td style="padding:3px 4px" title="SSH password (AP kick)"><input type="password" value="${esc(sw.ssh_pass||'')}" placeholder="SSH pass" style="width:100%;font-size:.82rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:inherit" oninput="_snmpSwitches[${i}].ssh_pass=this.value"></td>
         <td style="padding:3px 4px;text-align:center"><button onclick="removeSwitch(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem" title="Remove">✕</button></td>
       </tr>`).join('');
   }
 
   function addSwitch() {
-    _snmpSwitches.push({name:'', ip:'', port:161, community:'', type:'switch', ssh_user:'', ssh_pass:''});
+    _snmpSwitches.push({name:'', ip:'', port:161, community:'', type:'switch'});
     renderSwitches();
   }
 
