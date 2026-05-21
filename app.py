@@ -2423,7 +2423,7 @@ def _poll_meraki_ipam() -> None:
     if not key or not net_id:
         return
 
-    vlans = _meraki_api_get(f"/networks/{net_id}/vlans", key)
+    vlans = _meraki_api_get(f"/networks/{net_id}/appliance/vlans", key)
     subnets: list = []
     fixed:   dict = {}   # ip → {mac, name, vlan_id, vlan_name}
 
@@ -2453,7 +2453,7 @@ def _poll_meraki_ipam() -> None:
                         "vlan_name": v.get("name", ""),
                     }
     else:
-        # Network without VLANs — try single LAN endpoint
+        # VLANs disabled — fall back to single LAN
         single = _meraki_api_get(f"/networks/{net_id}/appliance/singleLan", key)
         if isinstance(single, dict) and single.get("subnet"):
             fixed_raw = single.get("fixedIpAssignments") or {}
@@ -2476,6 +2476,8 @@ def _poll_meraki_ipam() -> None:
                         "vlan_id":   1,
                         "vlan_name": "LAN",
                     }
+        elif single is None:
+            log.warning("IPAM: could not fetch VLAN or single-LAN config for network %s", net_id)
 
     with _meraki_ipam_lock:
         _meraki_ipam_cache = {"subnets": subnets, "fixed": fixed, "ts": time.time()}
