@@ -3874,6 +3874,8 @@ def api_ipam():
         cache = dict(_meraki_ipam_cache)
     with _devices_lock:
         devs = list(_devices.values())
+    with _mac_port_lock:
+        mac_snap = dict(_mac_to_port)
 
     subnets  = cache.get("subnets", [])
     fixed    = cache.get("fixed", {})   # ip → {mac, name, vlan_id, vlan_name}
@@ -3936,6 +3938,43 @@ def api_ipam():
         else:
             eff_status = "unknown"
 
+        # Determine connection type and label
+        mac_lower    = (d.get("mac") or "").lower().strip()
+        port_info    = mac_snap.get(mac_lower, {})
+        aruba_conn   = d.get("aruba_connection") or ""
+        meraki_conn  = d.get("meraki_connection") or ""
+        meraki_wired = d.get("meraki_wired")        # None if not a Meraki client
+
+        if aruba_conn:
+            # Aruba Central wireless client
+            conn_label  = aruba_conn
+            conn_ssid   = d.get("aruba_ssid") or ""
+            conn_wired  = False
+            conn_port   = ""
+        elif meraki_conn and meraki_wired is False:
+            # Meraki wireless client
+            conn_label  = meraki_conn
+            conn_ssid   = d.get("meraki_ssid") or ""
+            conn_wired  = False
+            conn_port   = ""
+        elif meraki_conn and meraki_wired:
+            # Meraki wired client (connected to a switch or MX)
+            conn_label  = meraki_conn
+            conn_ssid   = ""
+            conn_wired  = True
+            conn_port   = d.get("meraki_port") or ""
+        elif port_info.get("switch_name"):
+            # SNMP bridge-scan detected switch/AP
+            conn_label  = port_info.get("switch_name") or ""
+            conn_ssid   = ""
+            conn_wired  = not port_info.get("is_wireless", False)
+            conn_port   = port_info.get("if_name") or ""
+        else:
+            conn_label  = ""
+            conn_ssid   = ""
+            conn_wired  = True
+            conn_port   = ""
+
         fixed_info = fixed.get(ip, {})
         ip_records.append({
             "ip":           ip,
@@ -3950,9 +3989,10 @@ def api_ipam():
             "source":       d.get("learned_from") or "",
             "last_seen":    d.get("last_seen"),
             "ping_ms":      d.get("ping_latency_ms"),
-            "ssid":         d.get("meraki_ssid") or d.get("aruba_ssid") or "",
-            "connection":   d.get("meraki_connection") or d.get("aruba_connection") or "",
-            "wired":        d.get("meraki_wired", True),
+            "ssid":         conn_ssid,
+            "connection":   conn_label,
+            "port":         conn_port,
+            "wired":        conn_wired,
             "description":  fixed_info.get("name", ""),
         })
 

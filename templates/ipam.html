@@ -407,15 +407,19 @@ function statusCell(r) {
 }
 
 function connCell(r) {
-  if (!r.connection && !r.ssid) return '<span class="conn-wired">—</span>';
-  if (r.wired === false || r.ssid) {
-    const ssid = r.ssid ? ` <span class="conn-ap">${esc(r.ssid)}</span>` : '';
-    const ap   = r.connection ? ` <span class="conn-ap">via ${esc(r.connection)}</span>` : '';
-    return `<span class="conn-wifi">📶${ssid}${ap}</span>`;
+  if (!r.wired && (r.ssid || r.connection)) {
+    // Wireless — Meraki or Aruba
+    const ssid = r.ssid ? `<span class="conn-ap">${esc(r.ssid)}</span> ` : '';
+    const ap   = r.connection ? `<span class="conn-ap">via ${esc(r.connection)}</span>` : '';
+    return `<span class="conn-wifi">📶 ${ssid}${ap}</span>`;
   }
-  return r.connection
-    ? `<span class="conn-wired conn-ap">${esc(r.connection)}</span>`
-    : '<span class="conn-wired">Wired</span>';
+  if (r.connection || r.port) {
+    // Wired — switch name + port
+    const dev  = r.connection ? esc(r.connection) : '';
+    const port = r.port ? ` <span class="conn-ap">${esc(r.port)}</span>` : '';
+    return `<span class="conn-wired">${dev}${port}</span>`;
+  }
+  return '<span style="color:var(--muted)">—</span>';
 }
 
 function lastSeenCell(ts) {
