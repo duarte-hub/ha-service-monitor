@@ -144,7 +144,10 @@ def _db_init() -> None:
         conn.close()
 
 
-_db_init()
+try:
+    _db_init()
+except Exception as _db_init_err:
+    log.error("SQLite init failed (%s) — persistence will degrade to JSON fallback", _db_init_err)
 
 # ---------------------------------------------------------------------------
 
@@ -246,9 +249,12 @@ def _load_devices() -> dict:
         return {}
 
 def _save_devices_bulk(devs: dict) -> None:
-    rows = [(ip, json.dumps(d)) for ip, d in devs.items()]
-    with _db_conn() as conn:
-        conn.executemany("INSERT OR REPLACE INTO devices (ip, data) VALUES (?, ?)", rows)
+    try:
+        rows = [(ip, json.dumps(d)) for ip, d in devs.items()]
+        with _db_conn() as conn:
+            conn.executemany("INSERT OR REPLACE INTO devices (ip, data) VALUES (?, ?)", rows)
+    except Exception as e:
+        log.warning("DB save devices bulk failed: %s", e)
 
 def _save_devices() -> None:
     try:
