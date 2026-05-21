@@ -2303,10 +2303,28 @@ def _mac_to_snmp_oid(mac: str) -> str:
     return ".".join(str(int(b, 16)) for b in mac.split(":"))
 
 
-def _aruba_kick_client(ap_ip: str, mac: str, community: str, snmp_port: int) -> bool:
-    """Try to deauthenticate a wireless client from an Aruba Instant AP via SNMP SET."""
+def _aruba_ssh_kick_client(ap_ip: str, mac: str, ssh_user: str, ssh_pass: str) -> bool:
+    """Deauthenticate a wireless client via SSH: runs 'stm kick-out-sta <mac>'."""
+    try:
+        import paramiko
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(ap_ip, username=ssh_user, password=ssh_pass, timeout=10, look_for_keys=False, allow_agent=False)
+        _, stdout, stderr = client.exec_command(f"stm kick-out-sta {mac}")
+        stdout.channel.recv_exit_status()
+        out = stdout.read().decode(errors="replace").strip()
+        err = stderr.read().decode(errors="replace").strip()
+        client.close()
+        log.info("Aruba SSH kick %s @ %s: %s %s", mac, ap_ip, out, err)
+        return True
+    except Exception as e:
+        log.warning("Aruba SSH kick %s @ %s failed: %s", mac, ap_ip, e)
+        return False
+
+
+def _aruba_snmp_kick_client(ap_ip: str, mac: str, community: str, snmp_port: int) -> bool:
+    """Fallback: try SNMP SET on aiClientTable (requires RW community)."""
     mac_oid = _mac_to_snmp_oid(mac)
-    # aiClientTable col 2 (aiClientAssociation): setting to 0 requests deauth on Aruba Instant
     oid = f"1.3.6.1.4.1.14823.2.3.3.1.2.4.1.2.{mac_oid}"
     return _snmpset(ap_ip, community, oid, "i", "0", port=snmp_port)
 
@@ -2314,6 +2332,14 @@ def _aruba_kick_client(ap_ip: str, mac: str, community: str, snmp_port: int) -> 
 def _find_ap_ip_by_name(name: str) -> str:
     sw = next((s for s in SNMP_SWITCHES if s.get("name") == name), None)
     return sw.get("ip", "") if sw else ""
+
+
+def _find_ap_ssh_creds(ap_ip: str) -> tuple[str, str]:
+    """Return (ssh_user, ssh_pass) for the given AP IP, or ('', '')."""
+    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == ap_ip), None)
+    if sw:
+        return sw.get("ssh_user", ""), sw.get("ssh_pass", "")
+    return "", ""
 
 
 _meraki_net_devs: dict  = {}   # device name → "ap" | "gateway" | "switch" | "other"
@@ -3892,9 +3918,13 @@ def api_wireless_client_action():
             return jsonify({"ok": False, "error": "ap_ip and mac required for Aruba"}), 400
         community = _snmp_community_for(ap_ip)
         snmp_port = _snmp_port_for(ap_ip)
+        ssh_user, ssh_pass = _find_ap_ssh_creds(ap_ip)
         if action == "kick":
-            ok = _aruba_kick_client(ap_ip, mac, community, snmp_port)
-            return jsonify({"ok": ok, "message": "Deauth sent" if ok else "SNMP SET failed — community may be read-only"})
+            if ssh_user and ssh_pass:
+                ok = _aruba_ssh_kick_client(ap_ip, mac, ssh_user, ssh_pass)
+                return jsonify({"ok": ok, "message": "Client kicked via SSH" if ok else "SSH kick failed — check credentials in Settings"})
+            ok = _aruba_snmp_kick_client(ap_ip, mac, community, snmp_port)
+            return jsonify({"ok": ok, "message": "Client kicked via SNMP" if ok else "Kick failed — add SSH credentials for this AP in Settings"})
         if action in ("block", "unblock"):
             return jsonify({"ok": False, "message": "Block/unblock requires Aruba Central API (not yet configured)"})
 
