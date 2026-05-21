@@ -9,6 +9,7 @@ import re
 import time
 import json
 import uuid
+import sqlite3
 import logging
 import smtplib
 import ipaddress
@@ -115,6 +116,51 @@ def _atomic_write(path: str, data) -> None:
         json.dump(data, fh, indent=2)
     os.replace(tmp, path)
 
+# ---------------------------------------------------------------------------
+# SQLite database
+# ---------------------------------------------------------------------------
+_DB_PATH = os.environ.get("DB_PATH", "/data/farol.db")
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_DB_PATH, check_same_thread=False, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _db_init() -> None:
+    os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+    with _db_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS devices (
+                ip   TEXT PRIMARY KEY,
+                data TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS kv (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS mac_vendors (
+                oui    TEXT PRIMARY KEY,
+                vendor TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS mac_ports (
+                mac  TEXT PRIMARY KEY,
+                data TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS vuln_results (
+                ip   TEXT PRIMARY KEY,
+                data TEXT NOT NULL DEFAULT '{}'
+            );
+        """)
+
+
+_db_init()
+
+# ---------------------------------------------------------------------------
+
 _Z2M_STATUS_PATH = os.environ.get("Z2M_STATUS_PATH", "/data/z2m_last_update_status.json")
 def _load_z2m_status() -> dict:
     try:
@@ -136,16 +182,28 @@ alerts_enabled: bool = True
 
 def _load_alerts_enabled() -> bool:
     try:
+        with _db_conn() as conn:
+            row = conn.execute("SELECT value FROM kv WHERE key='alerts_enabled'").fetchone()
+        if row:
+            return row[0] == "1"
+    except Exception:
+        pass
+    # migrate from JSON
+    try:
         with open(_ALERTS_STATE_PATH) as fh:
-            return json.load(fh).get("enabled", True)
+            val = json.load(fh).get("enabled", True)
+        _persist_alerts_enabled(val)
+        return val
     except Exception:
         return True
 
 def _persist_alerts_enabled(val: bool) -> None:
     try:
-        _atomic_write(_ALERTS_STATE_PATH, {"enabled": val})
-    except Exception:
-        pass
+        with _db_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('alerts_enabled', ?)",
+                         ("1" if val else "0",))
+    except Exception as e:
+        log.warning("Failed to persist alerts_enabled: %s", e)
 
 alerts_enabled = _load_alerts_enabled()
 
@@ -172,19 +230,54 @@ def _is_docker_ip(ip: str) -> bool:
 
 def _load_devices() -> dict:
     try:
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT ip, data FROM devices").fetchall()
+        if rows:
+            devs = {}
+            for row in rows:
+                try:
+                    d = json.loads(row["data"])
+                    if not _is_docker_ip(d["ip"]):
+                        d["port_status"] = {}
+                        devs[d["ip"]] = d
+                except Exception:
+                    pass
+            return devs
+    except Exception as e:
+        log.warning("DB load devices failed: %s", e)
+    # migrate from JSON
+    try:
         with open(_DEVICES_PATH) as fh:
-            devices = {d["ip"]: d for d in json.load(fh) if not _is_docker_ip(d["ip"])}
-        for d in devices.values():
+            devs = {d["ip"]: d for d in json.load(fh) if not _is_docker_ip(d["ip"])}
+        for d in devs.values():
             d["port_status"] = {}
-        return devices
+        if devs:
+            log.info("Migrating %d devices from JSON to SQLite", len(devs))
+            _save_devices_bulk(devs)
+        return devs
     except Exception:
         return {}
 
+def _save_devices_bulk(devs: dict) -> None:
+    rows = [(ip, json.dumps(d)) for ip, d in devs.items()]
+    with _db_conn() as conn:
+        conn.executemany("INSERT OR REPLACE INTO devices (ip, data) VALUES (?, ?)", rows)
+
 def _save_devices() -> None:
     try:
-        _atomic_write(_DEVICES_PATH, sorted(_devices.values(), key=lambda d: [int(x) for x in d["ip"].split(".")]))
+        with _devices_lock:
+            devs = dict(_devices)
+        _save_devices_bulk(devs)
     except Exception as e:
         log.error("Failed to save devices: %s", e)
+
+def _db_upsert_device(d: dict) -> None:
+    try:
+        with _db_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO devices (ip, data) VALUES (?, ?)",
+                         (d["ip"], json.dumps(d)))
+    except Exception as e:
+        log.error("DB upsert device %s: %s", d.get("ip"), e)
 
 _devices = _load_devices()
 _seen_device_ips: set = set(_devices.keys())
@@ -386,12 +479,23 @@ _VULN_RESULTS_PATH = os.environ.get("VULN_RESULTS_PATH", "/data/vuln_results.jso
 
 def _save_vuln_results() -> None:
     try:
-        with open(_VULN_RESULTS_PATH, "w") as fh:
-            json.dump(_vuln_results, fh)
+        rows = [(ip, json.dumps(data)) for ip, data in _vuln_results.items()]
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM vuln_results")
+            if rows:
+                conn.executemany("INSERT INTO vuln_results (ip, data) VALUES (?, ?)", rows)
     except Exception as e:
         log.warning("Failed to save vuln results: %s", e)
 
 def _load_vuln_results() -> dict:
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT ip, data FROM vuln_results").fetchall()
+        if rows:
+            return {r["ip"]: json.loads(r["data"]) for r in rows}
+    except Exception as e:
+        log.warning("DB load vuln_results failed: %s", e)
+    # migrate from JSON
     try:
         with open(_VULN_RESULTS_PATH) as fh:
             return json.load(fh)
@@ -788,11 +892,24 @@ _infra_macs:  set  = set()   # interface MACs of switches/APs themselves — exc
 def _load_mac_to_port() -> None:
     global _mac_to_port
     try:
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT mac, data FROM mac_ports").fetchall()
+        if rows:
+            data = {r["mac"]: json.loads(r["data"]) for r in rows}
+            with _mac_port_lock:
+                _mac_to_port = data
+            log.info("Loaded %d MAC→port entries from DB", len(data))
+            return
+    except Exception as e:
+        log.warning("DB load mac_ports failed: %s", e)
+    # migrate from JSON
+    try:
         with open(_MAC_PORT_PATH) as fh:
             data = json.load(fh)
         with _mac_port_lock:
             _mac_to_port = data
-        log.info("Loaded %d MAC→port entries from disk", len(data))
+        log.info("Migrating %d MAC→port entries from JSON to SQLite", len(data))
+        _save_mac_to_port()
     except FileNotFoundError:
         pass
     except Exception as e:
@@ -802,7 +919,11 @@ def _save_mac_to_port() -> None:
     try:
         with _mac_port_lock:
             snap = dict(_mac_to_port)
-        _atomic_write(_MAC_PORT_PATH, snap)
+        rows = [(mac, json.dumps(info)) for mac, info in snap.items()]
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM mac_ports")
+            if rows:
+                conn.executemany("INSERT INTO mac_ports (mac, data) VALUES (?, ?)", rows)
     except Exception as e:
         log.warning("Failed to save mac_to_port: %s", e)
 
@@ -1897,14 +2018,30 @@ _mac_vendor_cache: dict[str, str] = {}
 
 def _load_snmp_devices() -> list:
     try:
+        with _db_conn() as conn:
+            row = conn.execute("SELECT value FROM kv WHERE key='snmp_devices'").fetchone()
+        if row:
+            return json.loads(row["value"])
+    except Exception as e:
+        log.warning("DB load snmp_devices failed: %s", e)
+    # migrate from JSON
+    try:
         with open(_SNMP_DEVICES_PATH) as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        if data:
+            log.info("Migrating %d SNMP devices from JSON to SQLite", len(data))
+            with _db_conn() as conn:
+                conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('snmp_devices', ?)",
+                             (json.dumps(data),))
+        return data
     except Exception:
         return []
 
 def _save_snmp_devices() -> None:
     try:
-        _atomic_write(_SNMP_DEVICES_PATH, _snmp_devices)
+        with _db_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('snmp_devices', ?)",
+                         (json.dumps(_snmp_devices),))
     except Exception as e:
         log.error("Failed to save SNMP devices: %s", e)
 
@@ -1918,16 +2055,30 @@ _mac_vendor_last_call: float = 0.0
 def _load_mac_vendor_cache() -> None:
     global _mac_vendor_cache
     try:
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT oui, vendor FROM mac_vendors").fetchall()
+        if rows:
+            _mac_vendor_cache = {r["oui"]: r["vendor"] for r in rows}
+            return
+    except Exception as e:
+        log.warning("DB load mac_vendors failed: %s", e)
+    # migrate from JSON
+    try:
         with open(_MAC_VENDOR_CACHE_PATH) as fh:
             _mac_vendor_cache = json.load(fh)
+        if _mac_vendor_cache:
+            log.info("Migrating %d MAC vendors from JSON to SQLite", len(_mac_vendor_cache))
+            _save_mac_vendor_cache()
     except Exception:
         _mac_vendor_cache = {}
 
 def _save_mac_vendor_cache() -> None:
     try:
-        _atomic_write(_MAC_VENDOR_CACHE_PATH, _mac_vendor_cache)
-    except Exception:
-        pass
+        rows = list(_mac_vendor_cache.items())
+        with _db_conn() as conn:
+            conn.executemany("INSERT OR REPLACE INTO mac_vendors (oui, vendor) VALUES (?, ?)", rows)
+    except Exception as e:
+        log.warning("Failed to save mac_vendor_cache: %s", e)
 
 _load_mac_vendor_cache()
 
@@ -2675,14 +2826,28 @@ _CONFIG_FIELDS = {
 
 def _load_config() -> dict:
     try:
+        with _db_conn() as conn:
+            row = conn.execute("SELECT value FROM kv WHERE key='config'").fetchone()
+        if row:
+            return json.loads(row["value"])
+    except Exception as e:
+        log.warning("DB load config failed: %s", e)
+    # migrate from JSON
+    try:
         with open(_CONFIG_PATH) as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        if data:
+            log.info("Migrating config from JSON to SQLite")
+            _save_config(data)
+        return data
     except Exception:
         return {}
 
 def _save_config(data: dict) -> None:
     try:
-        _atomic_write(_CONFIG_PATH, data)
+        with _db_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('config', ?)",
+                         (json.dumps(data),))
     except Exception as e:
         log.error("Failed to save config: %s", e)
 
