@@ -2280,10 +2280,19 @@ def _meraki_api_put(path: str, api_key: str, body: dict | None = None) -> dict |
 
 
 def _meraki_bounce_client(net_id: str, meraki_id: str, key: str) -> None:
-    """Block a Meraki wireless client for 4 s then restore Normal policy (forces reconnect)."""
-    log.info("Meraki kick %s — blocking", meraki_id)
-    _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Blocked"})
-    time.sleep(4)
+    """Block a Meraki wireless client for 90 s then restore Normal policy.
+
+    Meraki pushes policy changes to APs via cloud (can take 30-90 s), so the
+    block window must be long enough for the AP to receive it AND deauth the
+    client before we restore Normal.
+    """
+    log.info("Meraki kick %s — setting Blocked", meraki_id)
+    r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Blocked"})
+    if r is None:
+        log.warning("Meraki kick %s — block PUT failed, aborting", meraki_id)
+        return
+    log.info("Meraki kick %s — blocked OK, waiting 90 s for AP propagation", meraki_id)
+    time.sleep(90)
     log.info("Meraki kick %s — restoring Normal", meraki_id)
     _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Normal"})
     log.info("Meraki kick %s — complete", meraki_id)
@@ -3869,7 +3878,7 @@ def api_wireless_client_action():
                 target=_meraki_bounce_client, args=(net_id, meraki_id, key),
                 daemon=True, name=f"meraki-kick-{meraki_id}"
             ).start()
-            return jsonify({"ok": True, "message": "Blocking client for 4 s then restoring — it will reconnect"})
+            return jsonify({"ok": True, "message": "Blocked — client will disconnect within ~30–60 s (Meraki cloud push), then auto-unblocked after 90 s"})
         policy = "Blocked" if action == "block" else "Normal"
         r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": policy})
         ok = r is not None

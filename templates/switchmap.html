@@ -189,7 +189,7 @@ function showToast(msg, ok) {
   el.textContent = msg;
   el.className = `port-toast show ${ok ? 'ok' : 'err'}`;
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { el.classList.remove('show'); }, 4000);
+  _toastTimer = setTimeout(() => { el.classList.remove('show'); }, 8000);
 }
 
 async function portAction(btn, switchIp, ifIdx, action) {
@@ -230,7 +230,15 @@ async function wirelessAction(btn, clientType, mac, merakiId, netId, apIp, actio
     const d = await r.json();
     showToast(d.message || (d.ok ? 'Done' : 'Failed'), d.ok);
     if (action === 'kick') {
-      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 4000);
+      if (!d.ok) { btn.textContent = orig; btn.disabled = false; return; }
+      // Countdown while Meraki pushes block config to AP (~90 s)
+      let secs = 90;
+      btn.textContent = `⟳ ${secs}s`;
+      const iv = setInterval(() => {
+        secs--;
+        if (secs <= 0) { clearInterval(iv); btn.textContent = orig; btn.disabled = false; }
+        else btn.textContent = `⟳ ${secs}s`;
+      }, 1000);
       return;
     }
     if (action === 'block')   { btn.textContent = '▲ Unblock'; btn.className = 'port-btn port-btn-enable'; btn.onclick = () => wirelessAction(btn, clientType, mac, merakiId, netId, apIp, 'unblock'); }
