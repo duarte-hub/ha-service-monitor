@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPAM</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --surface2:#1e2130;
+      --border:  #2a2d3e;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --accent:  #6366f1;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --yellow:  #f59e0b;
+      --blue:    #3b82f6;
+      --purple:  #a855f7;
+      --orange:  #f97316;
+    }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:.9rem; min-height:100vh; }
+
+    /* Topbar */
+    .topbar { display:flex; align-items:center; justify-content:space-between; padding:10px 20px; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:50; }
+    .topbar-left { display:flex; align-items:center; gap:10px; font-weight:600; font-size:.95rem; }
+    .topbar-right { display:flex; gap:16px; }
+    .topbar-right a { color:var(--muted); text-decoration:none; font-size:.82rem; }
+    .topbar-right a:hover { color:var(--text); }
+
+    /* Main layout */
+    .page { max-width:1600px; margin:0 auto; padding:20px; }
+
+    /* Summary stat pills */
+    .stat-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px; align-items:center; }
+    .stat-pill { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:5px 14px; font-size:.8rem; display:flex; align-items:center; gap:6px; white-space:nowrap; }
+    .stat-pill .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .dot-green  { background:var(--green); }
+    .dot-red    { background:var(--red); }
+    .dot-purple { background:var(--purple); }
+    .dot-blue   { background:var(--blue); }
+    .dot-gray   { background:var(--muted); }
+    .stat-val { font-weight:700; }
+
+    /* Subnet cards */
+    .subnet-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; margin-bottom:24px; }
+    .scard { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; }
+    .scard-header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; gap:8px; }
+    .scard-name { font-weight:600; font-size:.88rem; }
+    .scard-cidr { font-size:.75rem; color:var(--muted); font-family:monospace; }
+    .util-bar-wrap { height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; margin-bottom:8px; display:flex; }
+    .util-seg { height:100%; transition:width .3s; }
+    .seg-online   { background:var(--green); }
+    .seg-offline  { background:var(--red); }
+    .seg-reserved { background:var(--purple); }
+    .seg-infra    { background:var(--blue); }
+    .seg-unknown  { background:var(--muted); }
+    .scard-stats { display:grid; grid-template-columns:1fr 1fr; gap:3px 14px; font-size:.75rem; }
+    .scard-stat { display:flex; justify-content:space-between; color:var(--muted); }
+    .scard-stat span:last-child { color:var(--text); font-weight:500; font-family:monospace; }
+    .util-pct { font-size:.8rem; font-weight:700; text-align:right; margin-bottom:4px; }
+    .scard-dhcp { margin-top:8px; font-size:.72rem; color:var(--muted); border-top:1px solid var(--border); padding-top:8px; }
+
+    /* Toolbar */
+    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px; }
+    .toolbar input[type=text] { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:7px 12px; color:var(--text); font-size:.85rem; width:260px; outline:none; }
+    .toolbar input[type=text]:focus { border-color:var(--accent); }
+    .toolbar select { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:7px 10px; color:var(--text); font-size:.82rem; outline:none; cursor:pointer; }
+    .toolbar select:focus { border-color:var(--accent); }
+    .btn { border:none; border-radius:6px; padding:7px 14px; font-size:.82rem; font-weight:600; cursor:pointer; transition:opacity .15s; white-space:nowrap; }
+    .btn:hover { opacity:.85; }
+    .btn:disabled { opacity:.45; cursor:default; }
+    .btn-primary   { background:var(--accent); color:#fff; }
+    .btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+    .spacer { flex:1; }
+    .ts-label { font-size:.75rem; color:var(--muted); }
+
+    /* IP Table */
+    .table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:10px; }
+    table { width:100%; border-collapse:collapse; font-size:.83rem; }
+    thead th { background:var(--surface); padding:9px 12px; text-align:left; font-weight:600; font-size:.76rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; }
+    thead th:hover { color:var(--text); }
+    thead th .sort-arrow { margin-left:4px; opacity:.4; }
+    thead th.sorted .sort-arrow { opacity:1; color:var(--accent); }
+    tbody tr { border-bottom:1px solid var(--border); }
+    tbody tr:last-child { border-bottom:none; }
+    tbody tr:hover { background:rgba(255,255,255,.025); }
+    tbody td { padding:9px 12px; vertical-align:middle; }
+    .ip-cell { font-family:monospace; font-size:.85rem; font-weight:600; white-space:nowrap; }
+    .ip-link { color:var(--text); text-decoration:none; }
+    .ip-link:hover { color:var(--accent); text-decoration:underline; }
+    .host-cell { max-width:160px; }
+    .host-name { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .host-desc { font-size:.72rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mac-cell { font-family:monospace; font-size:.78rem; color:var(--muted); white-space:nowrap; }
+    .vendor-cell { font-size:.78rem; color:var(--muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .vlan-chip { background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:2px 7px; font-size:.72rem; white-space:nowrap; }
+
+    /* Status */
+    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; flex-shrink:0; }
+    .s-online  { background:var(--green); box-shadow:0 0 4px var(--green); }
+    .s-offline { background:var(--red); }
+    .s-unknown { background:var(--muted); }
+    .status-cell { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+    .ping-ms { font-size:.72rem; color:var(--muted); margin-left:2px; }
+
+    /* Type badges */
+    .badge { display:inline-block; border-radius:4px; padding:2px 8px; font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+    .badge-gateway        { background:rgba(59,130,246,.15); color:#60a5fa; border:1px solid rgba(59,130,246,.25); }
+    .badge-reserved       { background:rgba(168,85,247,.15); color:#c084fc; border:1px solid rgba(168,85,247,.25); }
+    .badge-infrastructure { background:rgba(249,115,22,.15); color:#fb923c; border:1px solid rgba(249,115,22,.25); }
+    .badge-dhcp           { background:rgba(34,197,94,.12);  color:#4ade80; border:1px solid rgba(34,197,94,.2); }
+    .badge-unknown        { background:rgba(100,116,139,.15); color:var(--muted); border:1px solid var(--border); }
+
+    /* Connection */
+    .conn-cell { font-size:.78rem; }
+    .conn-wired { color:var(--muted); }
+    .conn-wifi  { color:var(--yellow); }
+    .conn-ap    { font-size:.7rem; color:var(--muted); }
+
+    /* Empty / loading */
+    .empty-row td { text-align:center; padding:40px; color:var(--muted); }
+    .no-meraki { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:40px; text-align:center; color:var(--muted); margin-bottom:24px; }
+    .no-meraki h3 { color:var(--text); margin-bottom:8px; }
+
+    /* Reserved ranges list */
+    .rr-list { margin-top:6px; display:flex; flex-direction:column; gap:2px; }
+    .rr-item { font-size:.7rem; font-family:monospace; color:var(--muted); }
+
+    @media (max-width:768px) {
+      .page { padding:12px; }
+      .toolbar input[type=text] { width:100%; }
+      td.hide-sm, th.hide-sm { display:none; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <path d="M3 9h18M3 15h18M9 3v18"/>
+    </svg>
+    IPAM
+  </div>
+  <div class="topbar-right">
+    <a href="/switchmap">Switch Map</a>
+    <a href="/topology">Topology</a>
+    <a href="/vulnerabilities">Vulns</a>
+    <a href="/logs">Logs</a>
+    <a href="/config">Settings</a>
+    <a href="/">&#8592; Dashboard</a>
+  </div>
+</div>
+
+<div class="page">
+  <div id="no-meraki-banner" class="no-meraki" style="display:none">
+    <h3>Meraki API not configured</h3>
+    <p>Add a Meraki API key and Network ID in <a href="/config" style="color:var(--accent)">Settings</a> to see subnet details and DHCP reservations.</p>
+    <p style="margin-top:8px;font-size:.8rem">IP addresses discovered via SNMP, mDNS, and ping will still appear in the table below.</p>
+  </div>
+
+  <!-- Stat pills -->
+  <div class="stat-row" id="stat-row">
+    <div class="stat-pill"><span class="dot dot-gray"></span><span class="stat-val" id="s-total">—</span> total IPs</div>
+    <div class="stat-pill"><span class="dot dot-green"></span><span class="stat-val" id="s-online">—</span> online</div>
+    <div class="stat-pill"><span class="dot dot-red"></span><span class="stat-val" id="s-offline">—</span> offline</div>
+    <div class="stat-pill"><span class="dot dot-gray"></span><span class="stat-val" id="s-unknown">—</span> unknown</div>
+    <div class="stat-pill"><span class="dot dot-purple"></span><span class="stat-val" id="s-reserved">—</span> reserved</div>
+    <div class="stat-pill"><span class="dot dot-blue"></span><span class="stat-val" id="s-available">—</span> available</div>
+  </div>
+
+  <!-- Subnet cards -->
+  <div class="subnet-grid" id="subnet-grid"></div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Filter IP, hostname, MAC, vendor…" oninput="applyFilter()">
+    <select id="filter-vlan" onchange="applyFilter()"><option value="">All VLANs</option></select>
+    <select id="filter-type" onchange="applyFilter()">
+      <option value="">All types</option>
+      <option value="gateway">Gateway</option>
+      <option value="reserved">Reserved</option>
+      <option value="infrastructure">Infrastructure</option>
+      <option value="dhcp">DHCP</option>
+    </select>
+    <select id="filter-status" onchange="applyFilter()">
+      <option value="">All status</option>
+      <option value="online">Online</option>
+      <option value="offline">Offline</option>
+      <option value="unknown">Unknown</option>
+    </select>
+    <div class="spacer"></div>
+    <span class="ts-label" id="ts-label"></span>
+    <button class="btn btn-secondary" onclick="refresh()" id="btn-refresh">↻ Refresh</button>
+    <button class="btn btn-secondary" onclick="exportCsv()">⬇ CSV</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table id="ip-table">
+      <thead>
+        <tr>
+          <th onclick="sortBy('ip')" data-col="ip">IP <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('hostname')" data-col="hostname">Hostname <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('mac')" data-col="mac" class="hide-sm">MAC <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('vendor')" data-col="vendor" class="hide-sm">Vendor <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('type')" data-col="type">Type <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('status')" data-col="status">Status <span class="sort-arrow">↕</span></th>
+          <th onclick="sortBy('vlan')" data-col="vlan" class="hide-sm">VLAN <span class="sort-arrow">↕</span></th>
+          <th data-col="connection" class="hide-sm">Connection</th>
+          <th onclick="sortBy('last_seen')" data-col="last_seen" class="hide-sm">Last Seen <span class="sort-arrow">↕</span></th>
+          <th data-col="source" class="hide-sm">Source</th>
+        </tr>
+      </thead>
+      <tbody id="ip-tbody">
+        <tr class="empty-row"><td colspan="10">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:8px;font-size:.75rem;color:var(--muted)" id="row-count"></div>
+</div>
+
+<script>
+let _allIps   = [];
+let _filtered = [];
+let _sortCol  = 'ip';
+let _sortAsc  = true;
+
+async function load() {
+  try {
+    const r = await fetch('/api/ipam');
+    const d = await r.json();
+    _allIps = d.ips || [];
+    renderSubnets(d.subnets || []);
+    updateStats(d.ips || [], d.subnets || []);
+    populateVlanFilter(d.ips || []);
+    if (d.ts) {
+      const dt = new Date(d.ts * 1000);
+      document.getElementById('ts-label').textContent = 'Updated ' + dt.toLocaleTimeString();
+    }
+    if (!d.subnets || d.subnets.length === 0) {
+      document.getElementById('no-meraki-banner').style.display = '';
+    }
+    applyFilter();
+  } catch(e) {
+    document.getElementById('ip-tbody').innerHTML = '<tr class="empty-row"><td colspan="10">Failed to load data.</td></tr>';
+  }
+}
+
+async function refresh() {
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled = true; btn.textContent = '↻ Refreshing…';
+  try { await fetch('/api/ipam/refresh', {method:'POST'}); } catch(e) {}
+  await new Promise(r => setTimeout(r, 3000));
+  await load();
+  btn.disabled = false; btn.textContent = '↻ Refresh';
+}
+
+function populateVlanFilter(ips) {
+  const vlans = [...new Set(ips.map(r => r.vlan).filter(Boolean))].sort();
+  const sel = document.getElementById('filter-vlan');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All VLANs</option>' +
+    vlans.map(v => `<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(v)}</option>`).join('');
+}
+
+function updateStats(ips, subnets) {
+  const total    = ips.length;
+  const online   = ips.filter(r => r.status === 'online').length;
+  const offline  = ips.filter(r => r.status === 'offline').length;
+  const unknown  = ips.filter(r => r.status === 'unknown').length;
+  const reserved = ips.filter(r => r.type === 'reserved').length;
+  const avail    = subnets.reduce((a, s) => a + (s.available || 0), 0);
+  document.getElementById('s-total').textContent    = total;
+  document.getElementById('s-online').textContent   = online;
+  document.getElementById('s-offline').textContent  = offline;
+  document.getElementById('s-unknown').textContent  = unknown;
+  document.getElementById('s-reserved').textContent = reserved;
+  document.getElementById('s-available').textContent = avail || '—';
+}
+
+function renderSubnets(subnets) {
+  const grid = document.getElementById('subnet-grid');
+  if (!subnets.length) { grid.innerHTML = ''; return; }
+
+  grid.innerHTML = subnets.map(s => {
+    const total   = s.total || 1;
+    const online  = s.online || 0;
+    const offline = s.offline || 0;
+    const res     = s.reserved || 0;
+    const infra   = s.infra || 0;
+    const unk     = s.unknown_count || 0;
+    const avail   = s.available || 0;
+
+    const pct = (n) => Math.min(100, (n / total * 100)).toFixed(1);
+    const dhcpMode = (s.dhcp_mode || '').toLowerCase();
+    const dhcpBadge = dhcpMode.includes('run') ? 'DHCP server'
+                    : dhcpMode.includes('relay') ? 'DHCP relay'
+                    : dhcpMode.includes('not') ? 'No DHCP' : '';
+
+    const rrHtml = (s.reserved_ranges || []).length
+      ? `<div class="rr-list">${(s.reserved_ranges||[]).map(rr =>
+          `<div class="rr-item">⊘ ${rr.start}–${rr.end}${rr.comment ? ' (' + rr.comment + ')' : ''}</div>`
+        ).join('')}</div>`
+      : '';
+
+    return `<div class="scard">
+      <div class="scard-header">
+        <span class="scard-name">${esc(s.name)}</span>
+        <span class="scard-cidr">${esc(s.subnet)}</span>
+      </div>
+      <div class="util-pct" style="color:${s.util_pct>80?'var(--red)':s.util_pct>60?'var(--yellow)':'var(--green)'}">
+        ${s.util_pct}% used
+      </div>
+      <div class="util-bar-wrap">
+        <div class="util-seg seg-online"   style="width:${pct(online)}%"  title="${online} online"></div>
+        <div class="util-seg seg-offline"  style="width:${pct(offline)}%" title="${offline} offline"></div>
+        <div class="util-seg seg-reserved" style="width:${pct(res)}%"     title="${res} reserved"></div>
+        <div class="util-seg seg-infra"    style="width:${pct(infra)}%"   title="${infra} infra"></div>
+        <div class="util-seg seg-unknown"  style="width:${pct(unk)}%"     title="${unk} unknown"></div>
+      </div>
+      <div class="scard-stats">
+        <div class="scard-stat"><span>Total usable</span><span>${total}</span></div>
+        <div class="scard-stat"><span>Online</span><span style="color:var(--green)">${online}</span></div>
+        <div class="scard-stat"><span>Offline</span><span style="color:var(--red)">${offline}</span></div>
+        <div class="scard-stat"><span>Reserved</span><span style="color:var(--purple)">${res}</span></div>
+        <div class="scard-stat"><span>Infrastructure</span><span style="color:var(--blue)">${infra}</span></div>
+        <div class="scard-stat"><span>Available</span><span style="color:var(--green)">${avail}</span></div>
+        ${s.gateway ? `<div class="scard-stat"><span>Gateway</span><span>${esc(s.gateway)}</span></div>` : ''}
+        ${s.excluded ? `<div class="scard-stat"><span>Excl. ranges</span><span>${s.excluded} IPs</span></div>` : ''}
+      </div>
+      ${dhcpBadge || rrHtml ? `<div class="scard-dhcp">
+        ${dhcpBadge ? `<span>${dhcpBadge}</span>` : ''}
+        ${rrHtml}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function applyFilter() {
+  const q    = (document.getElementById('search').value || '').toLowerCase();
+  const vlan = document.getElementById('filter-vlan').value;
+  const type = document.getElementById('filter-type').value;
+  const stat = document.getElementById('filter-status').value;
+
+  _filtered = _allIps.filter(r => {
+    if (vlan && r.vlan !== vlan) return false;
+    if (type && r.type !== type) return false;
+    if (stat && r.status !== stat) return false;
+    if (q) {
+      const hay = [r.ip, r.hostname, r.name, r.mac, r.vendor, r.vlan,
+                   r.connection, r.ssid, r.source, r.description].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  sortAndRender();
+}
+
+function sortBy(col) {
+  if (_sortCol === col) { _sortAsc = !_sortAsc; }
+  else { _sortCol = col; _sortAsc = true; }
+  document.querySelectorAll('thead th').forEach(th => th.classList.remove('sorted'));
+  const th = document.querySelector(`thead th[data-col="${col}"]`);
+  if (th) th.classList.add('sorted');
+  sortAndRender();
+}
+
+function sortAndRender() {
+  const col = _sortCol;
+  const asc = _sortAsc;
+  _filtered = [..._filtered].sort((a, b) => {
+    let av = a[col] ?? '', bv = b[col] ?? '';
+    if (col === 'ip') {
+      const toNum = ip => ip.split('.').reduce((acc, x) => acc * 256 + parseInt(x || 0), 0);
+      av = toNum(av); bv = toNum(bv);
+      return asc ? av - bv : bv - av;
+    }
+    if (typeof av === 'number' && typeof bv === 'number') return asc ? av - bv : bv - av;
+    av = String(av).toLowerCase(); bv = String(bv).toLowerCase();
+    return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  renderTable();
+}
+
+function typeBadge(type) {
+  const map = {
+    gateway:        ['badge-gateway',        'Gateway'],
+    reserved:       ['badge-reserved',       'Reserved'],
+    infrastructure: ['badge-infrastructure', 'Infra'],
+    dhcp:           ['badge-dhcp',           'DHCP'],
+  };
+  const [cls, lbl] = map[type] || ['badge-unknown', type || 'Unknown'];
+  return `<span class="badge ${cls}">${lbl}</span>`;
+}
+
+function statusCell(r) {
+  const cls  = r.status === 'online' ? 's-online' : r.status === 'offline' ? 's-offline' : 's-unknown';
+  const lbl  = r.status.charAt(0).toUpperCase() + r.status.slice(1);
+  const ping = r.ping_ms != null ? `<span class="ping-ms">${r.ping_ms}ms</span>` : '';
+  return `<div class="status-cell"><span class="status-dot ${cls}"></span>${lbl}${ping}</div>`;
+}
+
+function connCell(r) {
+  if (!r.connection && !r.ssid) return '<span class="conn-wired">—</span>';
+  if (r.wired === false || r.ssid) {
+    const ssid = r.ssid ? ` <span class="conn-ap">${esc(r.ssid)}</span>` : '';
+    const ap   = r.connection ? ` <span class="conn-ap">via ${esc(r.connection)}</span>` : '';
+    return `<span class="conn-wifi">📶${ssid}${ap}</span>`;
+  }
+  return r.connection
+    ? `<span class="conn-wired conn-ap">${esc(r.connection)}</span>`
+    : '<span class="conn-wired">Wired</span>';
+}
+
+function lastSeenCell(ts) {
+  if (!ts) return '<span style="color:var(--muted)">—</span>';
+  const d = new Date(ts * 1000);
+  const now = Date.now();
+  const diff = Math.floor((now - d.getTime()) / 1000);
+  let rel = '';
+  if (diff < 60)       rel = `${diff}s ago`;
+  else if (diff < 3600) rel = `${Math.floor(diff/60)}m ago`;
+  else if (diff < 86400) rel = `${Math.floor(diff/3600)}h ago`;
+  else                  rel = `${Math.floor(diff/86400)}d ago`;
+  return `<span title="${d.toLocaleString()}">${rel}</span>`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('ip-tbody');
+  if (!_filtered.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No IPs match the current filters.</td></tr>';
+    document.getElementById('row-count').textContent = '';
+    return;
+  }
+
+  tbody.innerHTML = _filtered.map(r => {
+    const ipCell = r.ip
+      ? (r.ip ? `<a class="ip-link" href="/device/${r.ip}">${r.ip}</a>` : r.ip)
+      : '—';
+    const hostname = r.hostname || r.name || '';
+    const desc     = r.description && r.description !== hostname ? r.description : '';
+    const hostHtml = hostname
+      ? `<div class="host-name">${esc(hostname)}</div>${desc ? `<div class="host-desc">${esc(desc)}</div>` : ''}`
+      : `<div class="host-name" style="color:var(--muted)">—</div>`;
+    return `<tr>
+      <td class="ip-cell">${ipCell}</td>
+      <td class="host-cell">${hostHtml}</td>
+      <td class="mac-cell hide-sm">${r.mac || '—'}</td>
+      <td class="vendor-cell hide-sm" title="${esc(r.vendor||'')}">${esc(r.vendor||'—')}</td>
+      <td>${typeBadge(r.type)}</td>
+      <td>${statusCell(r)}</td>
+      <td class="hide-sm">${r.vlan ? `<span class="vlan-chip">${esc(r.vlan)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="conn-cell hide-sm">${connCell(r)}</td>
+      <td class="hide-sm">${lastSeenCell(r.last_seen)}</td>
+      <td class="hide-sm" style="font-size:.72rem;color:var(--muted)">${esc(r.source||'—')}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('row-count').textContent =
+    `Showing ${_filtered.length} of ${_allIps.length} IPs`;
+}
+
+function exportCsv() {
+  const cols = ['ip','hostname','name','mac','vendor','type','status','vlan','connection','ssid','source','last_seen','ping_ms','description'];
+  const header = cols.join(',');
+  const rows = _filtered.map(r =>
+    cols.map(c => {
+      let v = r[c] ?? '';
+      if (c === 'last_seen' && v) v = new Date(v * 1000).toISOString();
+      return `"${String(v).replace(/"/g,'""')}"`;
+    }).join(',')
+  );
+  const csv = [header, ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'ipam-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Mark initial sort column
+document.querySelector('thead th[data-col="ip"]').classList.add('sorted');
+load();
+</script>
+</body>
+</html>

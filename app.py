@@ -2248,6 +2248,8 @@ def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list
 _meraki_net_devs: dict  = {}   # device name → "ap" | "gateway" | "switch" | "other"
 _meraki_net_macs: dict  = {}   # mac (lower) → {name, model, type, serial}
 _meraki_topology: dict  = {}   # raw link-layer topology {nodes, links} or {}
+_meraki_ipam_cache: dict = {"subnets": [], "fixed": {}, "ts": 0}
+_meraki_ipam_lock = threading.Lock()
 
 def _meraki_dev_type(model: str) -> str:
     m = (model or "").upper()
@@ -2413,11 +2415,79 @@ def _poll_meraki_api_clients() -> int:
     log.info("Meraki API: %d clients, %d updated", len(clients), updated)
     return updated
 
+def _poll_meraki_ipam() -> None:
+    """Fetch VLAN/subnet config, fixed IP assignments, and reserved ranges from Meraki."""
+    global _meraki_ipam_cache
+    key    = MERAKI_API_KEY
+    net_id = MERAKI_NETWORK_ID
+    if not key or not net_id:
+        return
+
+    vlans = _meraki_api_get(f"/networks/{net_id}/vlans", key)
+    subnets: list = []
+    fixed:   dict = {}   # ip → {mac, name, vlan_id, vlan_name}
+
+    if isinstance(vlans, list) and vlans:
+        for v in vlans:
+            subnet_cidr = v.get("subnet", "")
+            if not subnet_cidr:
+                continue
+            fixed_raw = v.get("fixedIpAssignments") or {}
+            reserved  = v.get("reservedIpRanges") or []
+            subnets.append({
+                "id":              v.get("id"),
+                "name":            v.get("name", ""),
+                "subnet":          subnet_cidr,
+                "gateway":         v.get("applianceIp", ""),
+                "dhcp_mode":       v.get("dhcpHandling", ""),
+                "dhcp_lease_time": v.get("dhcpLeaseTime", ""),
+                "reserved_ranges": reserved,
+            })
+            for mac, info in fixed_raw.items():
+                ip = info.get("ip", "")
+                if ip:
+                    fixed[ip] = {
+                        "mac":       mac.lower(),
+                        "name":      info.get("name", ""),
+                        "vlan_id":   v.get("id"),
+                        "vlan_name": v.get("name", ""),
+                    }
+    else:
+        # Network without VLANs — try single LAN endpoint
+        single = _meraki_api_get(f"/networks/{net_id}/appliance/singleLan", key)
+        if isinstance(single, dict) and single.get("subnet"):
+            fixed_raw = single.get("fixedIpAssignments") or {}
+            reserved  = single.get("reservedIpRanges") or []
+            subnets.append({
+                "id":              1,
+                "name":            "LAN",
+                "subnet":          single.get("subnet", ""),
+                "gateway":         single.get("applianceIp", ""),
+                "dhcp_mode":       single.get("dhcpHandling", ""),
+                "dhcp_lease_time": "",
+                "reserved_ranges": reserved,
+            })
+            for mac, info in fixed_raw.items():
+                ip = info.get("ip", "")
+                if ip:
+                    fixed[ip] = {
+                        "mac":       mac.lower(),
+                        "name":      info.get("name", ""),
+                        "vlan_id":   1,
+                        "vlan_name": "LAN",
+                    }
+
+    with _meraki_ipam_lock:
+        _meraki_ipam_cache = {"subnets": subnets, "fixed": fixed, "ts": time.time()}
+    log.info("IPAM: %d subnets, %d fixed assignments", len(subnets), len(fixed))
+
+
 def _meraki_api_poller_loop() -> None:
     while True:
         try:
             if MERAKI_API_KEY and MERAKI_NETWORK_ID:
                 _poll_meraki_api_clients()
+                _poll_meraki_ipam()
         except Exception as e:
             log.exception("Meraki API poll error: %s", e)
         time.sleep(MERAKI_POLL_INTERVAL)
@@ -3788,6 +3858,182 @@ def api_bridge_rescan():
     threading.Thread(target=_bridge_scan_all, daemon=True, name="bridge-rescan").start()
     n = len(SNMP_SWITCHES)
     return jsonify({"ok": True, "message": f"Rescanning {n} source{'s' if n != 1 else ''}…"})
+
+
+@app.route("/ipam")
+def ipam_page():
+    return render_template("ipam.html")
+
+
+@app.route("/api/ipam")
+def api_ipam():
+    import ipaddress as _ip
+    with _meraki_ipam_lock:
+        cache = dict(_meraki_ipam_cache)
+    with _devices_lock:
+        devs = list(_devices.values())
+
+    subnets  = cache.get("subnets", [])
+    fixed    = cache.get("fixed", {})   # ip → {mac, name, vlan_id, vlan_name}
+    ipam_ts  = cache.get("ts", 0)
+
+    # Build a quick lookup: IP → subnet dict
+    _subnet_cache: dict = {}
+    _parsed_nets: list = []
+    for s in subnets:
+        try:
+            _parsed_nets.append((_ip.ip_network(s["subnet"], strict=False), s))
+        except Exception:
+            pass
+
+    def _ip_subnet(ip_str: str) -> dict:
+        if ip_str in _subnet_cache:
+            return _subnet_cache[ip_str]
+        try:
+            addr = _ip.ip_address(ip_str)
+            for net, s in _parsed_nets:
+                if addr in net:
+                    _subnet_cache[ip_str] = s
+                    return s
+        except Exception:
+            pass
+        _subnet_cache[ip_str] = {}
+        return {}
+
+    # Infrastructure IPs (Meraki devices: MX, MR, MS)
+    infra_ips: set = {minfo["ip"] for minfo in _meraki_net_macs.values() if minfo.get("ip")}
+
+    seen_ips: set = set()
+    ip_records: list = []
+
+    for d in devs:
+        ip = d.get("ip", "")
+        if not ip:
+            continue
+        seen_ips.add(ip)
+        vlan_info = _ip_subnet(ip)
+        is_fixed  = ip in fixed
+        is_gw     = bool(vlan_info) and ip == vlan_info.get("gateway")
+        is_infra  = ip in infra_ips
+
+        if is_gw:
+            ip_type = "gateway"
+        elif is_fixed:
+            ip_type = "reserved"
+        elif is_infra:
+            ip_type = "infrastructure"
+        else:
+            ip_type = "dhcp"
+
+        ms = d.get("meraki_status") or ""
+        ps = d.get("status") or ""
+        if ms == "online" or ps == "up":
+            eff_status = "online"
+        elif ms == "offline" or ps == "down":
+            eff_status = "offline"
+        else:
+            eff_status = "unknown"
+
+        fixed_info = fixed.get(ip, {})
+        ip_records.append({
+            "ip":           ip,
+            "hostname":     d.get("dhcp_hostname") or d.get("hostname") or "",
+            "name":         d.get("name") or "",
+            "mac":          d.get("mac") or "",
+            "vendor":       d.get("vendor") or "",
+            "status":       eff_status,
+            "type":         ip_type,
+            "vlan":         vlan_info.get("name", ""),
+            "vlan_id":      vlan_info.get("id"),
+            "source":       d.get("learned_from") or "",
+            "last_seen":    d.get("last_seen"),
+            "ping_ms":      d.get("ping_latency_ms"),
+            "ssid":         d.get("meraki_ssid") or d.get("aruba_ssid") or "",
+            "connection":   d.get("meraki_connection") or d.get("aruba_connection") or "",
+            "wired":        d.get("meraki_wired", True),
+            "description":  fixed_info.get("name", ""),
+        })
+
+    # Add fixed reservations not yet seen in _devices
+    for ip, info in fixed.items():
+        if ip in seen_ips:
+            continue
+        vlan_info = _ip_subnet(ip)
+        ip_records.append({
+            "ip":           ip,
+            "hostname":     info.get("name", ""),
+            "name":         info.get("name", ""),
+            "mac":          info.get("mac", ""),
+            "vendor":       _mac_vendor(info.get("mac", "")),
+            "status":       "unknown",
+            "type":         "reserved",
+            "vlan":         info.get("vlan_name", ""),
+            "vlan_id":      info.get("vlan_id"),
+            "source":       "Meraki DHCP reservation",
+            "last_seen":    None,
+            "ping_ms":      None,
+            "ssid":         "",
+            "connection":   "",
+            "wired":        True,
+            "description":  info.get("name", ""),
+        })
+
+    def _sort_key(r):
+        try:
+            return tuple(int(x) for x in r["ip"].split("."))
+        except Exception:
+            return (999, 999, 999, 999)
+    ip_records.sort(key=_sort_key)
+
+    # Subnet utilization stats
+    subnet_stats: list = []
+    for s in subnets:
+        try:
+            net          = _ip.ip_network(s["subnet"], strict=False)
+            total_usable = max(0, net.num_addresses - 2)
+            ips_here     = [r for r in ip_records
+                            if r.get("vlan_id") == s["id"] or _ip_subnet(r["ip"]).get("id") == s["id"]]
+            n_online   = sum(1 for r in ips_here if r["status"] == "online")
+            n_offline  = sum(1 for r in ips_here if r["status"] == "offline")
+            n_unknown  = sum(1 for r in ips_here if r["status"] == "unknown")
+            n_reserved = sum(1 for r in ips_here if r["type"] == "reserved")
+            n_gateway  = sum(1 for r in ips_here if r["type"] == "gateway")
+            n_infra    = sum(1 for r in ips_here if r["type"] == "infrastructure")
+            n_known    = len(ips_here)
+            excluded   = 0
+            for rr in s.get("reserved_ranges", []):
+                try:
+                    excluded += int(_ip.ip_address(rr["end"])) - int(_ip.ip_address(rr["start"])) + 1
+                except Exception:
+                    pass
+            available = max(0, total_usable - n_known - excluded)
+            util_pct  = round(n_known / total_usable * 100, 1) if total_usable > 0 else 0
+            subnet_stats.append({
+                **s,
+                "total":         total_usable,
+                "known":         n_known,
+                "online":        n_online,
+                "offline":       n_offline,
+                "unknown_count": n_unknown,
+                "reserved":      n_reserved,
+                "gateway_count": n_gateway,
+                "infra":         n_infra,
+                "excluded":      excluded,
+                "available":     available,
+                "util_pct":      util_pct,
+            })
+        except Exception as e:
+            log.debug("IPAM subnet stat error %s: %s", s.get("subnet"), e)
+
+    return jsonify({"ts": ipam_ts, "subnets": subnet_stats, "ips": ip_records})
+
+
+@app.route("/api/ipam/refresh", methods=["POST"])
+def api_ipam_refresh():
+    if not MERAKI_API_KEY or not MERAKI_NETWORK_ID:
+        return jsonify({"ok": False, "error": "Meraki API key and network ID required"}), 400
+    threading.Thread(target=_poll_meraki_ipam, daemon=True, name="ipam-refresh").start()
+    return jsonify({"ok": True, "message": "IPAM refresh started"})
 
 
 @app.route("/api/meraki_api/networks", methods=["POST"])
