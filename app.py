@@ -125,8 +125,6 @@ _DB_PATH = os.environ.get("DB_PATH", "/data/farol.db")
 def _db_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(_DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
