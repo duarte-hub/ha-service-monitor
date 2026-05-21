@@ -67,6 +67,20 @@
 
     .empty-msg { padding:20px 16px; color:var(--muted); font-size:.85rem; text-align:center; }
     .no-data { padding:40px 24px; color:var(--muted); font-size:.9rem; }
+
+    .port-actions { display:flex; gap:4px; }
+    .port-btn { border:none; border-radius:5px; padding:3px 8px; font-size:.72rem; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity .15s; }
+    .port-btn:disabled { opacity:.45; cursor:default; }
+    .port-btn-bounce  { background:rgba(245,158,11,.15); color:#f59e0b; }
+    .port-btn-bounce:hover:not(:disabled)  { background:rgba(245,158,11,.3); }
+    .port-btn-disable { background:rgba(239,68,68,.12); color:#ef4444; }
+    .port-btn-disable:hover:not(:disabled) { background:rgba(239,68,68,.25); }
+    .port-btn-enable  { background:rgba(34,197,94,.12); color:#22c55e; }
+    .port-btn-enable:hover:not(:disabled)  { background:rgba(34,197,94,.25); }
+    .port-toast { position:fixed; bottom:24px; right:24px; background:#1e2130; border:1px solid var(--border); border-radius:8px; padding:10px 16px; font-size:.82rem; z-index:100; opacity:0; transition:opacity .2s; pointer-events:none; max-width:320px; }
+    .port-toast.show { opacity:1; }
+    .port-toast.ok   { border-color:#22c55e; color:#22c55e; }
+    .port-toast.err  { border-color:#ef4444; color:#ef4444; }
   </style>
 </head>
 <body>
@@ -98,6 +112,7 @@
 </div>
 
 <div class="grid" id="grid"></div>
+<div class="port-toast" id="port-toast"></div>
 
 <script>
 let _data = [];
@@ -168,6 +183,51 @@ function speedCell(c) {
   return '<span class="sig-label">—</span>';
 }
 
+let _toastTimer = null;
+function showToast(msg, ok) {
+  const el = document.getElementById('port-toast');
+  el.textContent = msg;
+  el.className = `port-toast show ${ok ? 'ok' : 'err'}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.classList.remove('show'); }, 4000);
+}
+
+async function portAction(btn, switchIp, ifIdx, action) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = action === 'bounce' ? '⟳ …' : action === 'disable' ? '⊘ …' : '▲ …';
+  try {
+    const r = await fetch('/api/snmp/port/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({switch_ip: switchIp, if_idx: ifIdx, action})
+    });
+    const d = await r.json();
+    showToast(d.message || (d.ok ? 'Done' : 'Failed'), d.ok);
+    if (action === 'bounce') {
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 6000);
+      return;
+    }
+    // Flip disable↔enable label
+    if (action === 'disable') { btn.textContent = '▲ Enable'; btn.className = 'port-btn port-btn-enable'; btn.onclick = e => portAction(btn, switchIp, ifIdx, 'enable'); }
+    else                      { btn.textContent = '⊘ Disable'; btn.className = 'port-btn port-btn-disable'; btn.onclick = e => portAction(btn, switchIp, ifIdx, 'disable'); }
+    btn.disabled = false;
+  } catch(e) {
+    showToast('Request failed', false);
+    btn.textContent = orig; btn.disabled = false;
+  }
+}
+
+function portActionsHtml(c) {
+  if (!c.if_idx || c.is_wireless) return '';
+  return `<div class="port-actions">
+    <button class="port-btn port-btn-bounce"
+      onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'bounce')">⟳ Bounce</button>
+    <button class="port-btn port-btn-disable"
+      onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'disable')">⊘ Disable</button>
+  </div>`;
+}
+
 const AP_ICON = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>`;
 const SW_ICON = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="20" height="8" rx="2"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="10" cy="12" r="1.2" fill="currentColor"/><circle cx="14" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></svg>`;
 
@@ -183,8 +243,9 @@ function renderSection(type, groups) {
     return d !== 0 ? d : (a.port || a.ip || '').localeCompare(b.port || b.ip || '');
   });
 
-  const hasSignal = allClients.some(c => c.rssi != null || c.snr != null);
-  const hasSpeed  = allClients.some(c => c.speed != null || c.wifi_cap);
+  const hasSignal  = allClients.some(c => c.rssi != null || c.snr != null);
+  const hasSpeed   = allClients.some(c => c.speed != null || c.wifi_cap);
+  const hasActions = allClients.some(c => c.if_idx && !c.is_wireless);
 
   let rows = '';
   for (const c of allClients) {
@@ -202,18 +263,20 @@ function renderSection(type, groups) {
     const sigTd  = hasSignal ? `<td>${signalCell(c)}</td>` : '';
     const spdTd  = hasSpeed  ? `<td>${speedCell(c)}</td>`  : '';
     const portTd = !isAP     ? `<td>${portCell}</td>`      : '';
+    const actTd  = hasActions ? `<td>${portActionsHtml(c)}</td>` : '';
 
     rows += `<tr>
       <td><div class="client-name">${nameCell}</div>${ipCell}</td>
       <td><div class="client-mac">${c.mac}</div><div class="client-vendor">${c.vendor||''}</div></td>
       <td>${devCell}</td>
-      ${portTd}${sigTd}${spdTd}
+      ${portTd}${sigTd}${spdTd}${actTd}
     </tr>`;
   }
 
-  const sigTh  = hasSignal ? '<th>Signal</th>' : '';
-  const spdTh  = hasSpeed  ? '<th>Speed</th>'  : '';
-  const portTh = !isAP     ? '<th>Port</th>'   : '';
+  const sigTh  = hasSignal  ? '<th>Signal</th>' : '';
+  const spdTh  = hasSpeed   ? '<th>Speed</th>'  : '';
+  const portTh = !isAP      ? '<th>Port</th>'   : '';
+  const actTh  = hasActions ? '<th></th>'        : '';
   const devHdr = isAP ? 'AP' : 'Switch';
   const cnt    = allClients.length;
   const devCnt = groups.length;
@@ -223,7 +286,7 @@ function renderSection(type, groups) {
   const badgeLbl = `${devCnt} ${isAP ? 'AP' : 'switch'}${devCnt===1?'':'s'}`;
 
   const body = rows
-    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>${devHdr}</th>${portTh}${sigTh}${spdTh}</tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>${devHdr}</th>${portTh}${sigTh}${spdTh}${actTh}</tr></thead><tbody>${rows}</tbody></table>`
     : `<div class="empty-msg">No clients detected</div>`;
 
   return `<div class="swcard">

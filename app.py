@@ -1989,6 +1989,50 @@ def _snmpwalk(host: str, community: str, oid: str, timeout: int = 10, port: int 
         log.debug("snmpwalk %s [%s]: %s", host, oid, e)
         return []
 
+def _snmpset(host: str, community: str, oid: str, type_char: str, value: str, port: int = 161, timeout: int = 10) -> bool:
+    """Run snmpset -v2c. type_char is i/u/s/etc. Returns True on success."""
+    try:
+        target = f"{host}:{port}" if port != 161 else host
+        r = subprocess.run(
+            ["snmpset", "-v2c", "-c", community, target, oid, type_char, value],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if r.returncode != 0:
+            log.warning("snmpset %s [%s=%s]: %s", host, oid, value, r.stderr.strip() or r.stdout.strip())
+        return r.returncode == 0
+    except FileNotFoundError:
+        log.warning("snmpset not found — install the snmp package")
+        return False
+    except Exception as e:
+        log.warning("snmpset %s [%s]: %s", host, oid, e)
+        return False
+
+
+def _snmp_community_for(switch_ip: str) -> str:
+    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
+    return (sw.get("community") if sw else None) or SNMP_COMMUNITY
+
+
+def _snmp_port_for(switch_ip: str) -> int:
+    sw = next((s for s in SNMP_SWITCHES if s.get("ip") == switch_ip), None)
+    return int(sw["port"]) if sw and sw.get("port") else 161
+
+
+IF_ADMIN_STATUS_OID = "1.3.6.1.2.1.2.2.1.7"  # ifAdminStatus.{ifIndex}: 1=up, 2=down
+
+_port_action_lock = threading.Lock()
+
+
+def _do_bounce(switch_ip: str, if_idx: int, community: str, snmp_port: int) -> None:
+    oid = f"{IF_ADMIN_STATUS_OID}.{if_idx}"
+    log.info("Port bounce %s if%d — setting down", switch_ip, if_idx)
+    _snmpset(switch_ip, community, oid, "i", "2", port=snmp_port)
+    time.sleep(4)
+    log.info("Port bounce %s if%d — setting up", switch_ip, if_idx)
+    _snmpset(switch_ip, community, oid, "i", "1", port=snmp_port)
+    log.info("Port bounce %s if%d — complete", switch_ip, if_idx)
+
+
 def _parse_snmp_mac(val_str: str) -> str:
     """Extract MAC from 'Hex-STRING: AA BB CC DD EE FF' style value."""
     hex_part = val_str.split(": ", 1)[-1] if ": " in val_str else val_str
@@ -3710,6 +3754,34 @@ def api_snmp_poll():
     return jsonify({"ok": True, "message": "Poll started"})
 
 
+@app.route("/api/snmp/port/action", methods=["POST"])
+def api_snmp_port_action():
+    """Bounce, disable, or enable a switch/AP port via SNMP SET on ifAdminStatus."""
+    data      = request.json or {}
+    switch_ip = (data.get("switch_ip") or "").strip()
+    if_idx    = data.get("if_idx")
+    action    = (data.get("action") or "").lower()  # bounce | disable | enable
+
+    if not switch_ip or not if_idx or action not in ("bounce", "disable", "enable"):
+        return jsonify({"ok": False, "error": "switch_ip, if_idx, and action (bounce|disable|enable) are required"}), 400
+
+    community  = _snmp_community_for(switch_ip)
+    snmp_port  = _snmp_port_for(switch_ip)
+    oid        = f"{IF_ADMIN_STATUS_OID}.{if_idx}"
+
+    if action == "bounce":
+        threading.Thread(
+            target=_do_bounce, args=(switch_ip, if_idx, community, snmp_port),
+            daemon=True, name=f"port-bounce-{switch_ip}-{if_idx}"
+        ).start()
+        return jsonify({"ok": True, "message": f"Bouncing {switch_ip} if{if_idx}…"})
+
+    value = "2" if action == "disable" else "1"
+    ok    = _snmpset(switch_ip, community, oid, "i", value, port=snmp_port)
+    label = "disabled" if action == "disable" else "enabled"
+    return jsonify({"ok": ok, "message": f"Port {label}" if ok else "SNMP SET failed — check community string has write access"})
+
+
 @app.route("/api/bridge/rescan", methods=["POST"])
 def api_bridge_rescan():
     """Trigger an immediate IF-MIB + bridge scan for all configured SNMP switches/APs."""
@@ -4126,6 +4198,8 @@ def api_switchmap():
             "snr":            port_info.get("snr"),
             "speed":          port_info.get("speed"),
             "wifi_cap":       None,
+            "if_idx":         port_info.get("if_idx"),
+            "switch_ip":      sw_ip,
         })
 
     for d in devs:
