@@ -204,7 +204,7 @@ SCAN_PORTS    = os.environ.get("SCAN_PORTS", "22,80,443,8080,8123,1883,8883")
 
 _DEVICES_PATH = os.environ.get("DEVICES_PATH", "/data/devices.json")
 _devices: dict[str, dict] = {}
-_devices_lock = threading.Lock()
+_devices_lock = threading.RLock()
 _scan_status: dict = {"state": "idle", "message": ""}
 
 _DOCKER_NETS = [ipaddress.IPv4Network("172.16.0.0/12"), ipaddress.IPv4Network("127.0.0.0/8")]
