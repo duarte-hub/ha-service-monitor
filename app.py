@@ -2279,6 +2279,16 @@ def _meraki_api_put(path: str, api_key: str, body: dict | None = None) -> dict |
     return None
 
 
+def _meraki_bounce_client(net_id: str, meraki_id: str, key: str) -> None:
+    """Block a Meraki wireless client for 4 s then restore Normal policy (forces reconnect)."""
+    log.info("Meraki kick %s — blocking", meraki_id)
+    _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Blocked"})
+    time.sleep(4)
+    log.info("Meraki kick %s — restoring Normal", meraki_id)
+    _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": "Normal"})
+    log.info("Meraki kick %s — complete", meraki_id)
+
+
 def _mac_to_snmp_oid(mac: str) -> str:
     """Convert 'aa:bb:cc:dd:ee:ff' to '170.187.204.221.238.255' for SNMP OID indexing."""
     return ".".join(str(int(b, 16)) for b in mac.split(":"))
@@ -3854,9 +3864,12 @@ def api_wireless_client_action():
         if not key or not net_id or not meraki_id:
             return jsonify({"ok": False, "error": "Meraki API key, network ID, and client ID required"}), 400
         if action == "kick":
-            r = _meraki_api_post(f"/networks/{net_id}/clients/{meraki_id}/deauthenticate", key)
-            ok = r is not None
-            return jsonify({"ok": ok, "message": "Client deauthenticated — it will reconnect" if ok else "Meraki API call failed"})
+            # Meraki has no public deauthenticate endpoint; block then unblock forces reconnect
+            threading.Thread(
+                target=_meraki_bounce_client, args=(net_id, meraki_id, key),
+                daemon=True, name=f"meraki-kick-{meraki_id}"
+            ).start()
+            return jsonify({"ok": True, "message": "Blocking client for 4 s then restoring — it will reconnect"})
         policy = "Blocked" if action == "block" else "Normal"
         r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": policy})
         ok = r is not None
