@@ -4101,6 +4101,10 @@ def api_ipam():
         meraki_conn  = d.get("meraki_connection") or ""
         meraki_wired = d.get("meraki_wired")        # None if not a Meraki client
 
+        snmp_switch = port_info.get("switch_name") or ""
+        snmp_port   = port_info.get("if_name") or ""
+        snmp_wired  = not port_info.get("is_wireless", False)
+
         if aruba_conn:
             # Aruba Central wireless client
             conn_label  = aruba_conn
@@ -4114,17 +4118,17 @@ def api_ipam():
             conn_wired  = False
             conn_port   = ""
         elif meraki_conn and meraki_wired:
-            # Meraki wired client (connected to a switch or MX)
-            conn_label  = meraki_conn
+            # Meraki wired client — SNMP gives more precise switch+port; use it when available
+            conn_label  = snmp_switch or meraki_conn
             conn_ssid   = ""
             conn_wired  = True
-            conn_port   = d.get("meraki_port") or ""
-        elif port_info.get("switch_name"):
+            conn_port   = snmp_port or d.get("meraki_port") or ""
+        elif snmp_switch:
             # SNMP bridge-scan detected switch/AP
-            conn_label  = port_info.get("switch_name") or ""
+            conn_label  = snmp_switch
             conn_ssid   = ""
-            conn_wired  = not port_info.get("is_wireless", False)
-            conn_port   = port_info.get("if_name") or ""
+            conn_wired  = snmp_wired
+            conn_port   = snmp_port
         else:
             conn_label  = ""
             conn_ssid   = ""
