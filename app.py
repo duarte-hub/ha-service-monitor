@@ -2247,6 +2247,56 @@ def _meraki_api_get(path: str, api_key: str, params: dict | None = None) -> list
         log.warning("Meraki API %s failed: %s", path, e)
     return None
 
+def _meraki_api_post(path: str, api_key: str, body: dict | None = None) -> dict | None:
+    try:
+        resp = requests.post(
+            f"{_MERAKI_API_BASE}{path}",
+            headers={"X-Cisco-Meraki-API-Key": api_key, "Content-Type": "application/json"},
+            json=body or {},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202, 204):
+            return resp.json() if resp.content else {}
+        log.warning("Meraki POST %s → %d: %s", path, resp.status_code, resp.text[:200])
+    except Exception as e:
+        log.warning("Meraki POST %s failed: %s", path, e)
+    return None
+
+
+def _meraki_api_put(path: str, api_key: str, body: dict | None = None) -> dict | None:
+    try:
+        resp = requests.put(
+            f"{_MERAKI_API_BASE}{path}",
+            headers={"X-Cisco-Meraki-API-Key": api_key, "Content-Type": "application/json"},
+            json=body or {},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202, 204):
+            return resp.json() if resp.content else {}
+        log.warning("Meraki PUT %s → %d: %s", path, resp.status_code, resp.text[:200])
+    except Exception as e:
+        log.warning("Meraki PUT %s failed: %s", path, e)
+    return None
+
+
+def _mac_to_snmp_oid(mac: str) -> str:
+    """Convert 'aa:bb:cc:dd:ee:ff' to '170.187.204.221.238.255' for SNMP OID indexing."""
+    return ".".join(str(int(b, 16)) for b in mac.split(":"))
+
+
+def _aruba_kick_client(ap_ip: str, mac: str, community: str, snmp_port: int) -> bool:
+    """Try to deauthenticate a wireless client from an Aruba Instant AP via SNMP SET."""
+    mac_oid = _mac_to_snmp_oid(mac)
+    # aiClientTable col 2 (aiClientAssociation): setting to 0 requests deauth on Aruba Instant
+    oid = f"1.3.6.1.4.1.14823.2.3.3.1.2.4.1.2.{mac_oid}"
+    return _snmpset(ap_ip, community, oid, "i", "0", port=snmp_port)
+
+
+def _find_ap_ip_by_name(name: str) -> str:
+    sw = next((s for s in SNMP_SWITCHES if s.get("name") == name), None)
+    return sw.get("ip", "") if sw else ""
+
+
 _meraki_net_devs: dict  = {}   # device name → "ap" | "gateway" | "switch" | "other"
 _meraki_net_macs: dict  = {}   # mac (lower) → {name, model, type, serial}
 _meraki_topology: dict  = {}   # raw link-layer topology {nodes, links} or {}
@@ -2325,6 +2375,7 @@ def _poll_meraki_api_clients() -> int:
                     "ip": ip, "mac": mac, "vendor": vendor,
                     "hostname": hostname, "name": "",
                     "dhcp_hostname": dhcp_name,
+                    "meraki_id":         meraki_id,
                     "meraki_connection": connection,
                     "meraki_ssid": ssid,
                     "meraki_port": sw_port,
@@ -2353,6 +2404,8 @@ def _poll_meraki_api_clients() -> int:
                     _devices[ip]["hostname"] = hostname; changed = True
                 if dhcp_name:
                     _devices[ip]["dhcp_hostname"]   = dhcp_name;  changed = True
+                if meraki_id:
+                    _devices[ip]["meraki_id"] = meraki_id;         changed = True
                 if connection:
                     _devices[ip]["meraki_connection"] = connection; changed = True
                 if ssid:
@@ -3782,6 +3835,50 @@ def api_snmp_port_action():
     return jsonify({"ok": ok, "message": f"Port {label}" if ok else "SNMP SET failed — check community string has write access"})
 
 
+@app.route("/api/wireless/client/action", methods=["POST"])
+def api_wireless_client_action():
+    """Kick, block, or unblock a wireless client (Meraki API or Aruba SNMP)."""
+    data        = request.json or {}
+    action      = (data.get("action") or "").lower()   # kick | block | unblock
+    client_type = (data.get("client_type") or "").lower()  # meraki | aruba
+    mac         = (data.get("mac") or "").lower().strip()
+
+    if action not in ("kick", "block", "unblock"):
+        return jsonify({"ok": False, "error": "action must be kick, block, or unblock"}), 400
+
+    # ── Meraki ─────────────────────────────────────────────────────────────
+    if client_type == "meraki":
+        meraki_id = (data.get("meraki_id") or "").strip()
+        net_id    = (data.get("net_id") or MERAKI_NETWORK_ID).strip()
+        key       = MERAKI_API_KEY
+        if not key or not net_id or not meraki_id:
+            return jsonify({"ok": False, "error": "Meraki API key, network ID, and client ID required"}), 400
+        if action == "kick":
+            r = _meraki_api_post(f"/networks/{net_id}/clients/{meraki_id}/deauthenticate", key)
+            ok = r is not None
+            return jsonify({"ok": ok, "message": "Client deauthenticated — it will reconnect" if ok else "Meraki API call failed"})
+        policy = "Blocked" if action == "block" else "Normal"
+        r = _meraki_api_put(f"/networks/{net_id}/clients/{meraki_id}/policy", key, {"devicePolicy": policy})
+        ok = r is not None
+        label = "blocked" if action == "block" else "unblocked"
+        return jsonify({"ok": ok, "message": f"Client {label}" if ok else "Meraki API call failed"})
+
+    # ── Aruba AP (SNMP) ────────────────────────────────────────────────────
+    if client_type == "aruba":
+        ap_ip = (data.get("ap_ip") or "").strip()
+        if not ap_ip or not mac:
+            return jsonify({"ok": False, "error": "ap_ip and mac required for Aruba"}), 400
+        community = _snmp_community_for(ap_ip)
+        snmp_port = _snmp_port_for(ap_ip)
+        if action == "kick":
+            ok = _aruba_kick_client(ap_ip, mac, community, snmp_port)
+            return jsonify({"ok": ok, "message": "Deauth sent" if ok else "SNMP SET failed — community may be read-only"})
+        if action in ("block", "unblock"):
+            return jsonify({"ok": False, "message": "Block/unblock requires Aruba Central API (not yet configured)"})
+
+    return jsonify({"ok": False, "error": "Unknown client_type"}), 400
+
+
 @app.route("/api/bridge/rescan", methods=["POST"])
 def api_bridge_rescan():
     """Trigger an immediate IF-MIB + bridge scan for all configured SNMP switches/APs."""
@@ -4211,11 +4308,22 @@ def api_switchmap():
             sig = {"rssi": d.get("meraki_rssi"), "snr": d.get("meraki_snr"),
                    "speed": d.get("meraki_speed"),
                    "wifi_cap": _fmt_wifi_cap(d.get("meraki_wifi_cap") or "")}
+            action_meta = {
+                "client_type": "meraki",
+                "meraki_id":   d.get("meraki_id") or "",
+                "net_id":      MERAKI_NETWORK_ID,
+                "ap_ip":       "",
+            }
         elif aruba_conn:
             grp = _get_or_create(f"aruba:{aruba_conn}", aruba_conn, "ap", "")
-            # Pull SNR/speed from SNMP bridge scan if available (AP may have been scanned)
             msnap = mac_snap.get(mac, {})
             sig = {"rssi": None, "snr": msnap.get("snr"), "speed": msnap.get("speed"), "wifi_cap": None}
+            action_meta = {
+                "client_type": "aruba",
+                "meraki_id":   "",
+                "net_id":      "",
+                "ap_ip":       _find_ap_ip_by_name(aruba_conn),
+            }
         else:
             continue
         grp["clients"].append({
@@ -4229,6 +4337,7 @@ def api_switchmap():
             "is_wireless":    True,
             "port_mac_count": 1,
             **sig,
+            **action_meta,
         })
 
     for grp in groups.values():

@@ -208,9 +208,33 @@ async function portAction(btn, switchIp, ifIdx, action) {
       setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 6000);
       return;
     }
-    // Flip disable↔enable label
-    if (action === 'disable') { btn.textContent = '▲ Enable'; btn.className = 'port-btn port-btn-enable'; btn.onclick = e => portAction(btn, switchIp, ifIdx, 'enable'); }
-    else                      { btn.textContent = '⊘ Disable'; btn.className = 'port-btn port-btn-disable'; btn.onclick = e => portAction(btn, switchIp, ifIdx, 'disable'); }
+    if (action === 'disable') { btn.textContent = '▲ Enable'; btn.className = 'port-btn port-btn-enable'; btn.onclick = () => portAction(btn, switchIp, ifIdx, 'enable'); }
+    else                      { btn.textContent = '⊘ Disable'; btn.className = 'port-btn port-btn-disable'; btn.onclick = () => portAction(btn, switchIp, ifIdx, 'disable'); }
+    btn.disabled = false;
+  } catch(e) {
+    showToast('Request failed', false);
+    btn.textContent = orig; btn.disabled = false;
+  }
+}
+
+async function wirelessAction(btn, clientType, mac, merakiId, netId, apIp, action) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '⟳ …';
+  try {
+    const r = await fetch('/api/wireless/client/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({client_type: clientType, mac, meraki_id: merakiId, net_id: netId, ap_ip: apIp, action})
+    });
+    const d = await r.json();
+    showToast(d.message || (d.ok ? 'Done' : 'Failed'), d.ok);
+    if (action === 'kick') {
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 4000);
+      return;
+    }
+    if (action === 'block')   { btn.textContent = '▲ Unblock'; btn.className = 'port-btn port-btn-enable'; btn.onclick = () => wirelessAction(btn, clientType, mac, merakiId, netId, apIp, 'unblock'); }
+    else                      { btn.textContent = '⊘ Block'; btn.className = 'port-btn port-btn-disable'; btn.onclick = () => wirelessAction(btn, clientType, mac, merakiId, netId, apIp, 'block'); }
     btn.disabled = false;
   } catch(e) {
     showToast('Request failed', false);
@@ -219,13 +243,34 @@ async function portAction(btn, switchIp, ifIdx, action) {
 }
 
 function portActionsHtml(c) {
-  if (!c.if_idx || c.is_wireless) return '';
-  return `<div class="port-actions">
-    <button class="port-btn port-btn-bounce"
-      onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'bounce')">⟳ Bounce</button>
-    <button class="port-btn port-btn-disable"
-      onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'disable')">⊘ Disable</button>
-  </div>`;
+  // Wired SNMP port
+  if (c.if_idx && !c.is_wireless) {
+    return `<div class="port-actions">
+      <button class="port-btn port-btn-bounce"
+        onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'bounce')">⟳ Bounce</button>
+      <button class="port-btn port-btn-disable"
+        onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'disable')">⊘ Disable</button>
+    </div>`;
+  }
+  // Wireless client (Meraki or Aruba AP)
+  if (c.is_wireless && c.client_type) {
+    const ct = c.client_type;
+    const mid = c.meraki_id || '';
+    const nid = c.net_id || '';
+    const aip = c.ap_ip || '';
+    const mac = c.mac;
+    const canBlock = ct === 'meraki';
+    const blockBtn = canBlock
+      ? `<button class="port-btn port-btn-disable"
+          onclick="wirelessAction(this,'${ct}','${mac}','${mid}','${nid}','${aip}','block')">⊘ Block</button>`
+      : '';
+    return `<div class="port-actions">
+      <button class="port-btn port-btn-bounce"
+        onclick="wirelessAction(this,'${ct}','${mac}','${mid}','${nid}','${aip}','kick')">⟳ Kick</button>
+      ${blockBtn}
+    </div>`;
+  }
+  return '';
 }
 
 const AP_ICON = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>`;
@@ -245,7 +290,7 @@ function renderSection(type, groups) {
 
   const hasSignal  = allClients.some(c => c.rssi != null || c.snr != null);
   const hasSpeed   = allClients.some(c => c.speed != null || c.wifi_cap);
-  const hasActions = allClients.some(c => c.if_idx && !c.is_wireless);
+  const hasActions = allClients.some(c => (c.if_idx && !c.is_wireless) || (c.is_wireless && c.client_type));
 
   let rows = '';
   for (const c of allClients) {
