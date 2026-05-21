@@ -132,29 +132,16 @@ def _db_conn() -> sqlite3.Connection:
 
 def _db_init() -> None:
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
-    with _db_conn() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS devices (
-                ip   TEXT PRIMARY KEY,
-                data TEXT NOT NULL DEFAULT '{}'
-            );
-            CREATE TABLE IF NOT EXISTS kv (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS mac_vendors (
-                oui    TEXT PRIMARY KEY,
-                vendor TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS mac_ports (
-                mac  TEXT PRIMARY KEY,
-                data TEXT NOT NULL DEFAULT '{}'
-            );
-            CREATE TABLE IF NOT EXISTS vuln_results (
-                ip   TEXT PRIMARY KEY,
-                data TEXT NOT NULL DEFAULT '{}'
-            );
-        """)
+    conn = _db_conn()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS devices (ip TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}')")
+        conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
+        conn.execute("CREATE TABLE IF NOT EXISTS mac_vendors (oui TEXT PRIMARY KEY, vendor TEXT NOT NULL DEFAULT '')")
+        conn.execute("CREATE TABLE IF NOT EXISTS mac_ports (mac TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}')")
+        conn.execute("CREATE TABLE IF NOT EXISTS vuln_results (ip TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}')")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 _db_init()
