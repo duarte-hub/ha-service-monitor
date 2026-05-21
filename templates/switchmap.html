@@ -20,12 +20,11 @@
     .toolbar input:focus { outline:none; border-color:var(--primary); }
     .stat-pill { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:4px 12px; font-size:.8rem; color:var(--muted); }
 
-    .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(500px, 1fr)); gap:16px; padding:0 24px 32px; }
+    .grid { display:grid; grid-template-columns:1fr; gap:16px; padding:0 24px 32px; }
 
     .swcard { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
     .swcard-header { padding:11px 16px; display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--border); background:rgba(255,255,255,.02); }
-    .swcard-name { font-weight:700; font-size:.93rem; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .swcard-ip { font-size:.74rem; color:var(--muted); font-family:monospace; flex-shrink:0; }
+    .swcard-name { font-weight:700; font-size:.93rem; flex:1; min-width:0; }
     .swcard-badge { font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:10px; text-transform:uppercase; flex-shrink:0; }
     .badge-switch { background:rgba(21,101,192,.3); color:#90caf9; }
     .badge-ap { background:rgba(76,175,80,.2); color:#81c784; }
@@ -51,7 +50,10 @@
     .status-dot.down { background:var(--down); }
     .status-dot.unknown { background:var(--muted); }
 
-    /* Signal strength */
+    .dev-chip { display:inline-block; font-size:.72rem; font-weight:600; padding:2px 8px; border-radius:8px; white-space:nowrap; }
+    .dev-chip-ap  { background:rgba(76,175,80,.15); color:#81c784; }
+    .dev-chip-sw  { background:rgba(21,101,192,.15); color:#90caf9; }
+
     .sig-bar { display:flex; align-items:flex-end; gap:2px; height:14px; }
     .sig-bar span { width:4px; border-radius:1px; background:var(--border); }
     .sig-bar span.on { background:currentColor; }
@@ -91,8 +93,8 @@
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Filter by name, IP, MAC, port&#x2026;" oninput="applyFilter()">
-  <span class="stat-pill" id="stat-devices">&#x2014;</span>
-  <span class="stat-pill" id="stat-clients">&#x2014;</span>
+  <span class="stat-pill" id="stat-aps">&#x2014;</span>
+  <span class="stat-pill" id="stat-switches">&#x2014;</span>
 </div>
 
 <div class="grid" id="grid"></div>
@@ -112,20 +114,22 @@ async function load() {
 
 function applyFilter() {
   const q = (document.getElementById('search').value || '').toLowerCase();
-  if (!q) { render(_data); return; }
-  const filtered = [];
-  for (const g of _data) {
-    const matchGroup = g.name.toLowerCase().includes(q) || (g.ip||'').includes(q);
-    const clients = g.clients.filter(c =>
-      (c.name||'').toLowerCase().includes(q) ||
-      (c.ip||'').includes(q) ||
-      (c.mac||'').toLowerCase().includes(q) ||
-      (c.port||'').toLowerCase().includes(q) ||
-      (c.port_alias||'').toLowerCase().includes(q) ||
-      (c.vendor||'').toLowerCase().includes(q)
-    );
-    if (matchGroup || clients.length)
-      filtered.push({...g, clients: clients.length ? clients : (matchGroup ? g.clients : [])});
+  let filtered = _data;
+  if (q) {
+    filtered = [];
+    for (const g of _data) {
+      const matchGroup = g.name.toLowerCase().includes(q) || (g.ip||'').includes(q);
+      const clients = g.clients.filter(c =>
+        (c.name||'').toLowerCase().includes(q) ||
+        (c.ip||'').includes(q) ||
+        (c.mac||'').toLowerCase().includes(q) ||
+        (c.port||'').toLowerCase().includes(q) ||
+        (c.port_alias||'').toLowerCase().includes(q) ||
+        (c.vendor||'').toLowerCase().includes(q)
+      );
+      if (matchGroup || clients.length)
+        filtered.push({...g, clients: clients.length ? clients : (matchGroup ? g.clients : [])});
+    }
   }
   render(filtered);
 }
@@ -134,99 +138,99 @@ function dotCls(status) {
   return status === 'up' ? 'up' : status === 'down' ? 'down' : 'unknown';
 }
 
-// RSSI: negative dBm (e.g. -67). Higher (less negative) = stronger.
-// SNR:  positive dB (e.g. 28). Higher = stronger.
 function rssiLevel(rssi) {
-  if (rssi >= -50) return 4;
-  if (rssi >= -65) return 3;
-  if (rssi >= -75) return 2;
-  return 1;
+  if (rssi >= -50) return 4; if (rssi >= -65) return 3; if (rssi >= -75) return 2; return 1;
 }
 function snrLevel(snr) {
-  if (snr >= 40) return 4;
-  if (snr >= 25) return 3;
-  if (snr >= 15) return 2;
-  return 1;
+  if (snr >= 40) return 4; if (snr >= 25) return 3; if (snr >= 15) return 2; return 1;
 }
-function levelCls(lvl) {
-  return ['','sig-poor','sig-fair','sig-good','sig-excellent'][lvl] || '';
-}
+function levelCls(lvl) { return ['','sig-poor','sig-fair','sig-good','sig-excellent'][lvl] || ''; }
 function sigBarsHtml(lvl) {
-  const heights = [5, 8, 11, 14];
-  return heights.map((h, i) =>
-    `<span style="height:${h}px" class="${i < lvl ? 'on' : ''}"></span>`
-  ).join('');
+  return [5,8,11,14].map((h,i) => `<span style="height:${h}px" class="${i<lvl?'on':''}"></span>`).join('');
 }
 
 function signalCell(c) {
   const rssi = c.rssi != null ? c.rssi : null;
   const snr  = c.snr  != null ? c.snr  : null;
   if (rssi == null && snr == null) return '<span class="sig-label">—</span>';
-
-  // Use RSSI for bar level if present, else SNR
   const lvl  = rssi != null ? rssiLevel(rssi) : snrLevel(snr);
   const cls  = levelCls(lvl);
-  const bars = sigBarsHtml(lvl);
-
-  // Show RSSI and SNR on separate lines when both are available
   const rssiLabel = rssi != null ? (c.rssi_est ? `~${rssi} dBm` : `${rssi} dBm`) : null;
   let lines = '';
   if (rssiLabel) lines += `<div class="sig-val">${rssiLabel}</div>`;
   if (snr != null) lines += `<div class="sig-label">${snr} dB SNR</div>`;
-
-  return `<div class="sig-wrap ${cls}">
-    <div class="sig-bar">${bars}</div>
-    <div>${lines}</div>
-  </div>`;
+  return `<div class="sig-wrap ${cls}"><div class="sig-bar">${sigBarsHtml(lvl)}</div><div>${lines}</div></div>`;
 }
 
 function speedCell(c) {
-  if (c.speed != null)    return `<span style="font-family:monospace;font-size:.8rem">${c.speed} Mbps</span>`;
-  if (c.wifi_cap)         return `<span style="font-size:.78rem;color:var(--muted)">${c.wifi_cap}</span>`;
+  if (c.speed != null) return `<span style="font-family:monospace;font-size:.8rem">${c.speed} Mbps</span>`;
+  if (c.wifi_cap)      return `<span style="font-size:.78rem;color:var(--muted)">${c.wifi_cap}</span>`;
   return '<span class="sig-label">—</span>';
 }
 
-function renderCard(g) {
-  const badgeCls  = g.type === 'ap' ? 'badge-ap' : 'badge-switch';
-  const typeLabel = g.type === 'ap' ? 'AP' : 'Switch';
-  const ipStr     = g.ip ? `<span class="swcard-ip">${g.ip}</span>` : '';
-  const cnt       = g.clients.length;
-  const hasSignal = g.clients.some(c => c.rssi != null || c.snr != null);
-  const hasSpeed  = g.clients.some(c => c.speed != null || c.wifi_cap);
+const AP_ICON = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>`;
+const SW_ICON = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="20" height="8" rx="2"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="10" cy="12" r="1.2" fill="currentColor"/><circle cx="14" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></svg>`;
+
+function renderSection(type, groups) {
+  const isAP = type === 'ap';
+
+  const allClients = [];
+  for (const g of groups) {
+    for (const c of g.clients) allClients.push({...c, _devName: g.name, _devIp: g.ip});
+  }
+  allClients.sort((a, b) => {
+    const d = a._devName.localeCompare(b._devName);
+    return d !== 0 ? d : (a.port || a.ip || '').localeCompare(b.port || b.ip || '');
+  });
+
+  const hasSignal = allClients.some(c => c.rssi != null || c.snr != null);
+  const hasSpeed  = allClients.some(c => c.speed != null || c.wifi_cap);
 
   let rows = '';
-  for (const c of g.clients) {
+  for (const c of allClients) {
     const dot      = `<span class="status-dot ${dotCls(c.status)}"></span>`;
     const nameCell = c.ip
       ? `<a href="/device/${c.ip}">${dot}${c.name || c.ip}</a>`
       : `<span>${dot}${c.name || c.mac}</span>`;
     const ipCell   = c.ip ? `<div class="client-ip">${c.ip}</div>` : '';
+    const chipCls  = isAP ? 'dev-chip-ap' : 'dev-chip-sw';
+    const devCell  = `<span class="dev-chip ${chipCls}" title="${c._devIp||''}">${c._devName}</span>`;
     const portCell = c.is_wireless
-      ? `<span style="color:#90caf9;font-size:.82rem">&#x1F4F6; wifi</span>`
+      ? ''
       : `<span class="client-port" title="${c.port}">${c.port}</span>${c.port_alias ? `<div class="port-alias">${c.port_alias}</div>` : ''}`;
-    const sigTd    = hasSignal ? `<td>${signalCell(c)}</td>` : '';
-    const spdTd    = hasSpeed  ? `<td>${speedCell(c)}</td>`  : '';
+
+    const sigTd  = hasSignal ? `<td>${signalCell(c)}</td>` : '';
+    const spdTd  = hasSpeed  ? `<td>${speedCell(c)}</td>`  : '';
+    const portTd = !isAP     ? `<td>${portCell}</td>`      : '';
+
     rows += `<tr>
       <td><div class="client-name">${nameCell}</div>${ipCell}</td>
       <td><div class="client-mac">${c.mac}</div><div class="client-vendor">${c.vendor||''}</div></td>
-      <td>${portCell}</td>
-      ${sigTd}
-      ${spdTd}
+      <td>${devCell}</td>
+      ${portTd}${sigTd}${spdTd}
     </tr>`;
   }
 
-  const sigTh = hasSignal ? '<th>Signal</th>' : '';
-  const spdTh = hasSpeed  ? '<th>Speed</th>'  : '';
+  const sigTh  = hasSignal ? '<th>Signal</th>' : '';
+  const spdTh  = hasSpeed  ? '<th>Speed</th>'  : '';
+  const portTh = !isAP     ? '<th>Port</th>'   : '';
+  const devHdr = isAP ? 'AP' : 'Switch';
+  const cnt    = allClients.length;
+  const devCnt = groups.length;
+  const icon   = isAP ? AP_ICON : SW_ICON;
+  const title  = isAP ? 'Access Points' : 'Switches';
+  const badgeCls = isAP ? 'badge-ap' : 'badge-switch';
+  const badgeLbl = `${devCnt} ${isAP ? 'AP' : 'switch'}${devCnt===1?'':'s'}`;
+
   const body = rows
-    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>Port</th>${sigTh}${spdTh}</tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table class="client-table"><thead><tr><th>Device</th><th>MAC / Vendor</th><th>${devHdr}</th>${portTh}${sigTh}${spdTh}</tr></thead><tbody>${rows}</tbody></table>`
     : `<div class="empty-msg">No clients detected</div>`;
 
   return `<div class="swcard">
     <div class="swcard-header">
-      <span>${g.type === 'ap' ? '&#x1F4E1;' : '&#x1F50C;'}</span>
-      <span class="swcard-name" title="${g.name}">${g.name}</span>
-      ${ipStr}
-      <span class="swcard-badge ${badgeCls}">${typeLabel}</span>
+      ${icon}
+      <span class="swcard-name">${title}</span>
+      <span class="swcard-badge ${badgeCls}">${badgeLbl}</span>
       <span class="swcard-count">${cnt} client${cnt===1?'':'s'}</span>
     </div>
     ${body}
@@ -234,12 +238,22 @@ function renderCard(g) {
 }
 
 function render(data) {
-  const totalClients = data.reduce((s, g) => s + g.clients.length, 0);
-  document.getElementById('stat-devices').textContent = `${data.length} device${data.length===1?'':'s'}`;
-  document.getElementById('stat-clients').textContent = `${totalClients} client${totalClients===1?'':'s'}`;
-  document.getElementById('grid').innerHTML = data.length
-    ? data.map(renderCard).join('')
-    : '<p class="no-data">No switch or AP data found. Run an SNMP bridge scan first.</p>';
+  const aps     = data.filter(g => g.type === 'ap');
+  const switches = data.filter(g => g.type === 'switch');
+  const apCnt   = aps.reduce((s, g) => s + g.clients.length, 0);
+  const swCnt   = switches.reduce((s, g) => s + g.clients.length, 0);
+
+  document.getElementById('stat-aps').textContent =
+    `${aps.length} AP${aps.length===1?'':'s'} · ${apCnt} client${apCnt===1?'':'s'}`;
+  document.getElementById('stat-switches').textContent =
+    `${switches.length} switch${switches.length===1?'':'es'} · ${swCnt} client${swCnt===1?'':'s'}`;
+
+  let html = '';
+  if (aps.length)      html += renderSection('ap', aps);
+  if (switches.length) html += renderSection('switch', switches);
+
+  document.getElementById('grid').innerHTML = html
+    || '<p class="no-data">No switch or AP data found. Run an SNMP bridge scan first.</p>';
 }
 
 load();
