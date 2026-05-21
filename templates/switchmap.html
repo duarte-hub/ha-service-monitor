@@ -260,7 +260,16 @@ function portActionsHtml(c) {
         onclick="portAction(this,'${c.switch_ip}',${c.if_idx},'disable')">⊘ Disable</button>
     </div>`;
   }
-  // Wireless client (Meraki or Aruba AP)
+  // SNMP AP wireless client — switch_ip is the AP's IP
+  if (c.is_wireless && c.switch_ip && !c.client_type) {
+    const mac = c.mac;
+    const aip = c.switch_ip;
+    return `<div class="port-actions">
+      <button class="port-btn port-btn-bounce"
+        onclick="wirelessAction(this,'aruba','${mac}','','','${aip}','kick')">⟳ Kick</button>
+    </div>`;
+  }
+  // Wireless client (Meraki or Aruba Central)
   if (c.is_wireless && c.client_type) {
     const ct = c.client_type;
     const mid = c.meraki_id || '';
@@ -298,7 +307,11 @@ function renderSection(type, groups) {
 
   const hasSignal  = allClients.some(c => c.rssi != null || c.snr != null);
   const hasSpeed   = allClients.some(c => c.speed != null || c.wifi_cap);
-  const hasActions = allClients.some(c => (c.if_idx && !c.is_wireless) || (c.is_wireless && c.client_type));
+  const hasActions = allClients.some(c =>
+    (c.if_idx && !c.is_wireless) ||
+    (c.is_wireless && c.switch_ip && !c.client_type) ||
+    (c.is_wireless && c.client_type)
+  );
 
   let rows = '';
   for (const c of allClients) {
