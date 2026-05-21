@@ -2304,18 +2304,44 @@ def _mac_to_snmp_oid(mac: str) -> str:
 
 
 def _aruba_ssh_kick_client(ap_ip: str, mac: str, ssh_user: str, ssh_pass: str) -> bool:
-    """Deauthenticate a wireless client via SSH: runs 'stm kick-out-sta <mac>'."""
+    """Deauthenticate a wireless client via SSH using Aruba Instant's interactive CLI."""
     try:
-        import paramiko
+        import paramiko, socket
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(ap_ip, username=ssh_user, password=ssh_pass, timeout=10, look_for_keys=False, allow_agent=False)
-        _, stdout, stderr = client.exec_command(f"stm kick-out-sta {mac}")
-        stdout.channel.recv_exit_status()
-        out = stdout.read().decode(errors="replace").strip()
-        err = stderr.read().decode(errors="replace").strip()
+        client.connect(ap_ip, username=ssh_user, password=ssh_pass, timeout=10,
+                       look_for_keys=False, allow_agent=False)
+
+        # Aruba Instant uses a restricted shell — exec_command closes the channel.
+        # invoke_shell gives us the interactive CLI.
+        shell = client.invoke_shell(width=200, height=50)
+        shell.settimeout(8)
+
+        def _read_until_prompt(timeout=5.0):
+            buf = ""
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    chunk = shell.recv(4096).decode(errors="replace")
+                    buf += chunk
+                    # Aruba prompt ends with '# ' or '> '
+                    if buf.rstrip().endswith(("#", ">", "# ", "> ")):
+                        break
+                except socket.timeout:
+                    break
+            return buf
+
+        _read_until_prompt(4)                           # swallow banner / prompt
+        shell.send(f"stm kick-out-sta {mac}\n")
+        out = _read_until_prompt(5)
+        shell.send("exit\n")
         client.close()
-        log.info("Aruba SSH kick %s @ %s: %s %s", mac, ap_ip, out, err)
+
+        log.info("Aruba SSH kick %s @ %s: %r", mac, ap_ip, out.strip())
+        # Aruba prints nothing or "Error" on failure
+        if "error" in out.lower() or "invalid" in out.lower() or "unknown" in out.lower():
+            log.warning("Aruba SSH kick %s: command rejected — %r", mac, out.strip())
+            return False
         return True
     except Exception as e:
         log.warning("Aruba SSH kick %s @ %s failed: %s", mac, ap_ip, e)
