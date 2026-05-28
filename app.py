@@ -3930,6 +3930,11 @@ def api_hexstrike_results():
         })
 
 
+@app.route("/hexstrike")
+def hexstrike_page():
+    return render_template("hexstrike.html")
+
+
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])
 def api_nmap_start(ip):
     with _devices_lock:

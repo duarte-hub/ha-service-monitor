@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HexStrike Results</title>
+  <style>
+    :root { --primary:#1565c0; --bg:#0f1117; --surface:#1a1d27; --border:#2a2d3a; --text:#e2e8f0; --muted:#94a3b8;
+            --red:#ef4444; --orange:#f97316; --yellow:#f59e0b; --green:#22c55e; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; min-height:100vh; }
+
+    .topbar { background:var(--primary); color:#fff; padding:0 24px; height:52px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-shadow:0 2px 12px rgba(0,0,0,.5); }
+    .topbar-left { display:flex; align-items:center; gap:10px; font-size:1rem; font-weight:700; }
+    .topbar-right { display:flex; gap:14px; align-items:center; font-size:.82rem; }
+    .topbar-right a { color:rgba(255,255,255,.85); text-decoration:none; font-weight:500; }
+    .topbar-right a:hover { color:#fff; }
+    .topbar-right a.active { color:#fff; border-bottom:2px solid rgba(255,255,255,.7); padding-bottom:1px; }
+
+    .toolbar { display:flex; gap:10px; align-items:center; padding:16px 24px; flex-wrap:wrap; border-bottom:1px solid var(--border); }
+    .toolbar input { background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 12px; font-size:.85rem; width:260px; }
+    .toolbar input:focus { outline:none; border-color:var(--primary); }
+    .stat-pill { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:4px 12px; font-size:.8rem; color:var(--muted); white-space:nowrap; }
+    .btn { border:none; border-radius:6px; padding:7px 14px; font-size:.82rem; font-weight:600; cursor:pointer; transition:opacity .15s; white-space:nowrap; }
+    .btn-red { background:rgba(220,38,38,.18); border:1px solid rgba(220,38,38,.4); color:#f87171; }
+    .btn-red:hover { background:rgba(220,38,38,.32); }
+    .btn-red:disabled { opacity:.35; cursor:not-allowed; }
+    .btn-muted { background:var(--surface); border:1px solid var(--border); color:var(--muted); }
+    .btn-muted:hover { color:var(--text); border-color:var(--muted); }
+    @keyframes hs-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    .content { padding:24px; }
+
+    .unconfigured { text-align:center; padding:80px 24px; color:var(--muted); }
+    .unconfigured h2 { font-size:1.1rem; color:var(--text); margin-bottom:8px; }
+    .unconfigured p { font-size:.88rem; max-width:420px; margin:0 auto; line-height:1.6; }
+    .unconfigured code { background:var(--surface); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:.82rem; color:#90caf9; }
+
+    /* ── Result grid ─────────────────────────────────────────────────────── */
+    .result-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:16px; }
+
+    .rcard { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; transition:border-color .15s; }
+    .rcard:hover { border-color:rgba(255,255,255,.18); }
+    .rcard.risk-critical { border-left:3px solid var(--red); }
+    .rcard.risk-high     { border-left:3px solid var(--orange); }
+    .rcard.risk-medium   { border-left:3px solid var(--yellow); }
+    .rcard.risk-low      { border-left:3px solid var(--green); }
+    .rcard.scanning      { border-left:3px solid #6366f1; animation:hs-pulse 1.4s ease-in-out infinite; }
+
+    .rcard-header { padding:12px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border); }
+    .rcard-ip { font-family:monospace; font-size:.92rem; font-weight:700; flex:1; }
+    .rcard-hostname { font-size:.75rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px; }
+    .risk-badge { font-size:.68rem; font-weight:800; padding:2px 8px; border-radius:10px; text-transform:uppercase; letter-spacing:.06em; flex-shrink:0; }
+    .risk-badge.critical { background:rgba(239,68,68,.2); color:#fca5a5; border:1px solid rgba(239,68,68,.35); }
+    .risk-badge.high     { background:rgba(249,115,22,.2); color:#fdba74; border:1px solid rgba(249,115,22,.35); }
+    .risk-badge.medium   { background:rgba(245,158,11,.2); color:#fde68a; border:1px solid rgba(245,158,11,.35); }
+    .risk-badge.low      { background:rgba(34,197,94,.15); color:#86efac; border:1px solid rgba(34,197,94,.3); }
+    .risk-badge.unknown  { background:rgba(148,163,184,.1); color:var(--muted); border:1px solid var(--border); }
+    .risk-badge.scanning { background:rgba(99,102,241,.15); color:#a5b4fc; border:1px solid rgba(99,102,241,.3); }
+
+    .rcard-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+
+    .rcard-row { display:flex; gap:6px; flex-wrap:wrap; align-items:baseline; }
+    .rcard-label { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; min-width:80px; flex-shrink:0; }
+    .rcard-val { font-size:.82rem; }
+
+    .port-chip { display:inline-block; font-size:.72rem; font-family:monospace; background:rgba(255,255,255,.06); border:1px solid var(--border); border-radius:4px; padding:1px 5px; margin:1px 2px 1px 0; }
+    .tech-chip { display:inline-block; font-size:.7rem; background:rgba(21,101,192,.18); border:1px solid rgba(21,101,192,.3); color:#90caf9; border-radius:4px; padding:1px 6px; margin:1px 2px 1px 0; }
+
+    .score-bar-wrap { flex:1; }
+    .score-bar { height:5px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:3px; }
+    .score-bar-fill { height:100%; border-radius:3px; transition:width .4s; }
+
+    .rcard-ts { font-size:.69rem; color:var(--muted2,#6b7280); margin-top:2px; }
+    .rcard-error { font-size:.77rem; color:#fca5a5; background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.2); border-radius:6px; padding:6px 10px; }
+
+    .rcard-actions { padding:8px 14px 12px; display:flex; gap:6px; }
+    .rcard-btn { border:none; border-radius:5px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; transition:opacity .15s; }
+    .rcard-btn-rescan { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
+    .rcard-btn-rescan:hover { background:rgba(220,38,38,.3); }
+    .rcard-btn-rescan:disabled { opacity:.35; cursor:not-allowed; }
+    .rcard-btn-device { background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
+    .rcard-btn-device:hover { color:var(--text); border-color:var(--muted); }
+
+    .empty-msg { text-align:center; padding:60px 24px; color:var(--muted); font-size:.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    HexStrike
+  </div>
+  <div class="topbar-right">
+    <a href="/topology">Topology</a>
+    <a href="/switchmap">Clients</a>
+    <a href="/ipam">IPAM</a>
+    <a href="/vulnerabilities">Vulns</a>
+    <a href="/hexstrike" class="active">HexStrike</a>
+    <a href="/logs">Logs</a>
+    <a href="/config">Settings</a>
+    <a href="/">&#8592; Dashboard</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Filter by IP, hostname, service&#x2026;" oninput="render()">
+  <button class="btn btn-red" id="btn-scan-all" onclick="scanAll()">⚡ Scan All</button>
+  <button class="btn btn-muted" onclick="clearAll()" title="Clear all results">Clear</button>
+  <span class="stat-pill" id="pill-total">0 results</span>
+  <span class="stat-pill" id="pill-scanning" style="display:none">⚡ scanning…</span>
+</div>
+
+<div class="content" id="content">
+  <div class="empty-msg" id="empty">Loading…</div>
+</div>
+
+<script>
+  let _results = {};
+  let _scanning = new Set();
+  let _configured = false;
+  let _pollTimer = null;
+
+  async function load() {
+    const d = await fetch('/api/hexstrike/results').then(r => r.json());
+    _results   = d.results   || {};
+    _scanning  = new Set(d.scanning || []);
+    _configured = d.configured || false;
+    render();
+    schedulePoll();
+  }
+
+  function schedulePoll() {
+    clearTimeout(_pollTimer);
+    if (_scanning.size > 0) {
+      _pollTimer = setTimeout(load, 2000);
+    }
+  }
+
+  async function scanAll() {
+    const btn = document.getElementById('btn-scan-all');
+    btn.disabled = true;
+    const d = await fetch('/api/hexstrike/scan_all', {method:'POST'}).then(r => r.json());
+    if (!d.ok) { alert('HexStrike: ' + (d.error || 'error')); btn.disabled = false; return; }
+    await load();
+    btn.disabled = false;
+  }
+
+  async function rescan(ip) {
+    const d = await fetch('/api/hexstrike/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ip})}).then(r => r.json());
+    if (!d.ok) { alert('HexStrike: ' + (d.error || 'error')); return; }
+    await load();
+  }
+
+  async function clearAll() {
+    if (!confirm('Clear all HexStrike results?')) return;
+    _results = {};
+    render();
+  }
+
+  function riskColor(r) {
+    if (r === 'critical') return '#ef4444';
+    if (r === 'high')     return '#f97316';
+    if (r === 'medium')   return '#f59e0b';
+    if (r === 'low')      return '#22c55e';
+    return '#94a3b8';
+  }
+
+  function fmtTs(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString();
+  }
+
+  function buildCard(ip, r, isScanning) {
+    const profile = (r && r.profile) || {};
+    const risk    = (profile.risk_level || (isScanning ? 'scanning' : 'unknown')).toLowerCase();
+    const ports   = profile.open_ports  || [];
+    const services = profile.services   || {};
+    const techs   = profile.technologies || [];
+    const score   = profile.attack_surface_score;
+    const conf    = profile.confidence_score;
+    const target  = profile.target || ip;
+    const targetType = profile.target_type || '';
+    const subdomains = profile.subdomains || [];
+    const endpoints  = profile.endpoints  || [];
+    const error   = (r && r.error) || '';
+    const ts      = (r && r.ts) || 0;
+
+    const portHtml = ports.slice(0, 20).map(p => {
+      const svc = services[p] || services[String(p)] || '';
+      return `<span class="port-chip" title="${svc}">${p}${svc ? '/' + svc : ''}</span>`;
+    }).join('') + (ports.length > 20 ? `<span class="port-chip">+${ports.length - 20}</span>` : '');
+
+    const techHtml = techs.slice(0, 8).map(t => `<span class="tech-chip">${t}</span>`).join('');
+
+    const scoreBarColor = risk === 'critical' ? '#ef4444' : risk === 'high' ? '#f97316' : risk === 'medium' ? '#f59e0b' : '#22c55e';
+    const scorePct = score != null ? Math.min(100, Math.round(score * 10)) : null;
+
+    return `<div class="rcard risk-${risk}${isScanning ? ' scanning' : ''}" id="card-${ip.replace(/\./g,'_')}">
+  <div class="rcard-header">
+    <span class="rcard-ip">${ip}</span>
+    ${targetType && targetType !== ip ? `<span class="rcard-hostname">${targetType}</span>` : ''}
+    <span class="risk-badge ${risk}">${isScanning ? '⚡ scanning' : risk}</span>
+  </div>
+  <div class="rcard-body">
+    ${error ? `<div class="rcard-error">⚠ ${error}</div>` : ''}
+    ${ports.length ? `<div class="rcard-row"><span class="rcard-label">Ports</span><span class="rcard-val">${portHtml}</span></div>` : ''}
+    ${techs.length ? `<div class="rcard-row"><span class="rcard-label">Tech</span><span class="rcard-val">${techHtml}</span></div>` : ''}
+    ${subdomains.length ? `<div class="rcard-row"><span class="rcard-label">Subdomains</span><span class="rcard-val" style="font-size:.78rem;color:var(--muted)">${subdomains.slice(0,5).join(', ')}${subdomains.length > 5 ? ` +${subdomains.length - 5}` : ''}</span></div>` : ''}
+    ${endpoints.length ? `<div class="rcard-row"><span class="rcard-label">Endpoints</span><span class="rcard-val" style="font-size:.76rem;color:var(--muted)">${endpoints.slice(0,4).join(', ')}${endpoints.length > 4 ? ` +${endpoints.length - 4}` : ''}</span></div>` : ''}
+    ${scorePct != null ? `<div class="rcard-row"><span class="rcard-label">Attack surface</span><div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${scorePct}%;background:${scoreBarColor}"></div></div></div><span class="rcard-val" style="font-size:.75rem;margin-left:6px">${score.toFixed(1)}${conf != null ? ' · ' + Math.round(conf * 100) + '% conf' : ''}</span></div>` : ''}
+    ${ts ? `<div class="rcard-ts">Scanned ${fmtTs(ts)}</div>` : ''}
+  </div>
+  <div class="rcard-actions">
+    <button class="rcard-btn rcard-btn-rescan" onclick="rescan('${ip}')" ${isScanning ? 'disabled' : ''}>⚡ ${isScanning ? 'Scanning…' : 'Re-scan'}</button>
+    <button class="rcard-btn rcard-btn-device" onclick="location.href='/device/${ip}'">Device →</button>
+  </div>
+</div>`;
+  }
+
+  function render() {
+    const q = (document.getElementById('search').value || '').toLowerCase();
+
+    if (!_configured) {
+      document.getElementById('content').innerHTML = `
+        <div class="unconfigured">
+          <h2>HexStrike not configured</h2>
+          <p>Set the <code>HEXSTRIKE_URL</code> environment variable to the address of your HexStrike AI container (e.g. <code>http://192.168.0.39:8888</code>) and restart the monitor.</p>
+        </div>`;
+      return;
+    }
+
+    // merge scanning IPs that have no result yet
+    const allIps = new Set([...Object.keys(_results), ..._scanning]);
+    let cards = [];
+    for (const ip of allIps) {
+      const r = _results[ip];
+      const isScanning = _scanning.has(ip);
+      const profile = (r && r.profile) || {};
+      const haystack = [ip, profile.target_type || '', ...(profile.technologies || []),
+                        ...(Object.values(profile.services || {}))].join(' ').toLowerCase();
+      if (q && !haystack.includes(q)) continue;
+      cards.push({ip, r, isScanning, risk: profile.risk_level || (isScanning ? 'scanning' : 'unknown')});
+    }
+
+    // sort: critical → high → medium → low → scanning → unknown
+    const order = {critical:0, high:1, medium:2, low:3, scanning:4, unknown:5};
+    cards.sort((a,b) => (order[a.risk] ?? 5) - (order[b.risk] ?? 5) || a.ip.localeCompare(b.ip));
+
+    const total = cards.length;
+    document.getElementById('pill-total').textContent = total === 1 ? '1 result' : `${total} results`;
+
+    const scanPill = document.getElementById('pill-scanning');
+    if (_scanning.size > 0) {
+      scanPill.style.display = '';
+      scanPill.textContent = `⚡ scanning ${_scanning.size}…`;
+    } else {
+      scanPill.style.display = 'none';
+    }
+
+    const content = document.getElementById('content');
+    if (cards.length === 0) {
+      content.innerHTML = `<div class="empty-msg">${q ? 'No results match the filter.' : 'No scans yet — click <strong>⚡ Scan All</strong> or use the ⚡ buttons on the dashboard.'}</div>`;
+      return;
+    }
+    content.innerHTML = `<div class="result-grid">${cards.map(c => buildCard(c.ip, c.r, c.isScanning)).join('')}</div>`;
+  }
+
+  load();
+</script>
+</body>
+</html>
