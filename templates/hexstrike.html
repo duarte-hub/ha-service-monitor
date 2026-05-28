@@ -86,13 +86,29 @@
     .nmap-toggle:hover { color:var(--text); }
     .nmap-raw { font-family:monospace; font-size:.72rem; color:#94a3b8; background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-top:4px; white-space:pre-wrap; word-break:break-all; max-height:260px; overflow-y:auto; display:none; }
 
-    .rcard-actions { padding:8px 14px 12px; display:flex; gap:6px; }
-    .rcard-btn { border:none; border-radius:5px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; transition:opacity .15s; }
-    .rcard-btn-rescan { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
-    .rcard-btn-rescan:hover { background:rgba(220,38,38,.3); }
-    .rcard-btn-rescan:disabled { opacity:.35; cursor:not-allowed; }
-    .rcard-btn-device { background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
-    .rcard-btn-device:hover { color:var(--text); border-color:var(--muted); }
+    .rcard-actions { padding:8px 14px 12px; display:flex; gap:6px; flex-wrap:wrap; }
+    .rcard-btn { border:none; border-radius:5px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; transition:opacity .15s; white-space:nowrap; }
+    .rcard-btn-rescan  { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
+    .rcard-btn-rescan:hover  { background:rgba(220,38,38,.3); }
+    .rcard-btn-nuclei  { background:rgba(139,92,246,.15); color:#c4b5fd; border:1px solid rgba(139,92,246,.3); }
+    .rcard-btn-nuclei:hover  { background:rgba(139,92,246,.3); }
+    .rcard-btn-nikto   { background:rgba(245,158,11,.12); color:#fcd34d; border:1px solid rgba(245,158,11,.3); }
+    .rcard-btn-nikto:hover   { background:rgba(245,158,11,.25); }
+    .rcard-btn:disabled { opacity:.35; cursor:not-allowed; }
+    .rcard-btn-device  { background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
+    .rcard-btn-device:hover  { color:var(--text); border-color:var(--muted); }
+
+    .findings-section { margin-top:6px; }
+    .findings-header { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+    .finding-badge { font-size:.65rem; font-weight:700; padding:1px 5px; border-radius:8px; }
+    .finding-badge.critical { background:rgba(239,68,68,.2); color:#fca5a5; }
+    .finding-badge.high     { background:rgba(249,115,22,.2); color:#fdba74; }
+    .finding-badge.medium   { background:rgba(245,158,11,.2); color:#fde68a; }
+    .finding-badge.low      { background:rgba(34,197,94,.15); color:#86efac; }
+    .finding-badge.info     { background:rgba(148,163,184,.1); color:var(--muted); }
+    .finding-item { font-size:.74rem; color:var(--text); padding:3px 0; border-bottom:1px solid rgba(255,255,255,.04); font-family:monospace; line-height:1.4; word-break:break-word; }
+    .finding-item:last-child { border-bottom:none; }
+    .findings-scanning { font-size:.76rem; color:#a5b4fc; animation:hs-pulse 1.2s ease-in-out infinite; }
 
     .empty-msg { text-align:center; padding:60px 24px; color:var(--muted); font-size:.9rem; }
   </style>
@@ -130,24 +146,27 @@
 
 <script>
   let _results = {};
-  let _scanning = new Set();
+  let _scanning        = new Set();
+  let _nucleiScanning  = new Set();
+  let _niktoScanning   = new Set();
   let _configured = false;
   let _pollTimer = null;
 
   async function load() {
     const d = await fetch('/api/hexstrike/results').then(r => r.json());
-    _results   = d.results   || {};
-    _scanning  = new Set(d.scanning || []);
-    _configured = d.configured || false;
+    _results        = d.results          || {};
+    _scanning       = new Set(d.scanning        || []);
+    _nucleiScanning = new Set(d.nuclei_scanning || []);
+    _niktoScanning  = new Set(d.nikto_scanning  || []);
+    _configured     = d.configured || false;
     render();
     schedulePoll();
   }
 
   function schedulePoll() {
     clearTimeout(_pollTimer);
-    if (_scanning.size > 0) {
-      _pollTimer = setTimeout(load, 2000);
-    }
+    const busy = _scanning.size + _nucleiScanning.size + _niktoScanning.size;
+    if (busy > 0) _pollTimer = setTimeout(load, 2500);
   }
 
   async function scanAll() {
@@ -171,6 +190,22 @@
     render();
   }
 
+  async function runNuclei(ip) {
+    const d = await fetch('/api/hexstrike/nuclei', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})}).then(r => r.json());
+    if (!d.ok) { alert('Nuclei: ' + (d.error || 'error')); return; }
+    _nucleiScanning.add(ip);
+    render();
+    schedulePoll();
+  }
+
+  async function runNikto(ip) {
+    const d = await fetch('/api/hexstrike/nikto', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})}).then(r => r.json());
+    if (!d.ok) { alert('Nikto: ' + (d.error || 'error')); return; }
+    _niktoScanning.add(ip);
+    render();
+    schedulePoll();
+  }
+
   function riskColor(r) {
     if (r === 'critical') return '#ef4444';
     if (r === 'high')     return '#f97316';
@@ -185,6 +220,40 @@
     return d.toLocaleString();
   }
 
+  function _findingBadge(line) {
+    const l = line.toLowerCase();
+    if (l.includes('critical')) return 'critical';
+    if (l.includes('high'))     return 'high';
+    if (l.includes('medium'))   return 'medium';
+    if (l.includes('low'))      return 'low';
+    return 'info';
+  }
+
+  function buildFindingsSection(label, toolData, isScanning) {
+    if (isScanning) return `<div class="findings-section"><div class="findings-header">${label} <span class="findings-scanning">scanning…</span></div></div>`;
+    if (!toolData) return '';
+    const findings = toolData.findings || [];
+    const err = toolData.error || '';
+    const ts  = toolData.ts   || 0;
+    if (toolData.status === 'idle' || !toolData.status) return '';
+
+    let body = '';
+    if (err && findings.length === 0) {
+      body = `<div class="rcard-error" style="margin-top:4px">⚠ ${err}</div>`;
+    } else if (findings.length === 0) {
+      body = `<div style="font-size:.76rem;color:var(--muted);padding:2px 0">No findings</div>`;
+    } else {
+      body = findings.slice(0, 30).map(f =>
+        `<div class="finding-item"><span class="finding-badge ${_findingBadge(f)}">${_findingBadge(f)}</span> ${f.replace(/</g,'&lt;')}</div>`
+      ).join('') + (findings.length > 30 ? `<div style="font-size:.72rem;color:var(--muted);padding:2px 0">+${findings.length-30} more</div>` : '');
+    }
+    const tsStr = ts ? ` · ${fmtTs(ts)}` : '';
+    return `<div class="findings-section">
+      <div class="findings-header">${label} <span style="font-weight:400;color:var(--muted)">${findings.length} finding${findings.length!==1?'s':''}${tsStr}</span></div>
+      ${body}
+    </div>`;
+  }
+
   function buildCard(ip, r, isScanning) {
     const profile  = (r && r.profile) || {};
     const risk     = (profile.risk_level || (isScanning ? 'scanning' : 'unknown')).toLowerCase();
@@ -195,6 +264,12 @@
     const error    = (r && r.error) || '';
     const ts       = (r && r.ts)    || 0;
     const cardId   = 'card-' + ip.replace(/\./g, '_');
+    const hasWeb   = ports.some(p => [80,443,8080,8443,8888,9090,9200,3000,4848,5000,7001,7443].includes(p));
+
+    const nucleiScanning = _nucleiScanning.has(ip);
+    const niktoScanning  = _niktoScanning.has(ip);
+    const nucleiData     = r && r.nuclei;
+    const niktoData      = r && r.nikto;
 
     // Port table rows
     let portRows = '';
@@ -221,6 +296,17 @@
          <div class="nmap-raw" id="${cardId}-raw">${rawOut.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
       : '';
 
+    const nucleiSection = (nucleiScanning || nucleiData) ? buildFindingsSection('Nuclei', nucleiData, nucleiScanning) : '';
+    const niktoSection  = (niktoScanning  || niktoData)  ? buildFindingsSection('Nikto',  niktoData,  niktoScanning)  : '';
+
+    const canRunExtra = !isScanning && ports.length > 0;
+    const nucleiBtn = (hasWeb || nucleiData || nucleiScanning)
+      ? `<button class="rcard-btn rcard-btn-nuclei" onclick="runNuclei('${ip}')" ${(nucleiScanning||isScanning)?'disabled':''}>${nucleiScanning ? '⬡ Scanning…' : '⬡ Nuclei'}</button>`
+      : '';
+    const niktoBtn = (hasWeb || niktoData || niktoScanning)
+      ? `<button class="rcard-btn rcard-btn-nikto" onclick="runNikto('${ip}')" ${(niktoScanning||isScanning)?'disabled':''}>${niktoScanning ? '⚑ Scanning…' : '⚑ Nikto'}</button>`
+      : '';
+
     return `<div class="rcard risk-${risk}${isScanning ? ' scanning' : ''}" id="${cardId}">
   <div class="rcard-header">
     <span class="rcard-ip">${ip}</span>
@@ -230,11 +316,15 @@
   <div class="rcard-body">
     ${error ? `<div class="rcard-error">⚠ ${error}</div>` : ''}
     ${portSection}
+    ${nucleiSection}
+    ${niktoSection}
     ${rawSection}
-    ${ts ? `<div class="rcard-ts">Scanned ${fmtTs(ts)} · ${ports.length} open port${ports.length !== 1 ? 's' : ''}</div>` : ''}
+    ${ts ? `<div class="rcard-ts">nmap ${fmtTs(ts)} · ${ports.length} open port${ports.length !== 1 ? 's' : ''}</div>` : ''}
   </div>
   <div class="rcard-actions">
     <button class="rcard-btn rcard-btn-rescan" onclick="rescan('${ip}')" ${isScanning ? 'disabled' : ''}>⚡ ${isScanning ? 'Scanning…' : 'Re-scan'}</button>
+    ${nucleiBtn}
+    ${niktoBtn}
     <button class="rcard-btn rcard-btn-device" onclick="location.href='/device/${ip}'">Device →</button>
   </div>
 </div>`;
@@ -284,10 +374,15 @@
     const total = cards.length;
     document.getElementById('pill-total').textContent = total === 1 ? '1 result' : `${total} results`;
 
+    const busy = _scanning.size + _nucleiScanning.size + _niktoScanning.size;
     const scanPill = document.getElementById('pill-scanning');
-    if (_scanning.size > 0) {
+    if (busy > 0) {
       scanPill.style.display = '';
-      scanPill.textContent = `⚡ scanning ${_scanning.size}…`;
+      const parts = [];
+      if (_scanning.size)       parts.push(`${_scanning.size} nmap`);
+      if (_nucleiScanning.size) parts.push(`${_nucleiScanning.size} nuclei`);
+      if (_niktoScanning.size)  parts.push(`${_niktoScanning.size} nikto`);
+      scanPill.textContent = `⚡ ${parts.join(', ')} scanning…`;
     } else {
       scanPill.style.display = 'none';
     }

@@ -472,9 +472,12 @@ _VULN_RESULTS_PATH = os.environ.get("VULN_RESULTS_PATH", "/data/vuln_results.jso
 # HexStrike AI integration
 # ---------------------------------------------------------------------------
 HEXSTRIKE_URL: str = os.environ.get("HEXSTRIKE_URL", "")
-_hexstrike_results: dict = {}   # ip → {ts, status, profile, error}
-_hexstrike_scanning: set = set()
+_hexstrike_results: dict  = {}   # ip → {ts, status, profile, nmap_output, nuclei, nikto, error}
+_hexstrike_scanning: set  = set()
+_hexstrike_nuclei_scanning: set = set()
+_hexstrike_nikto_scanning:  set = set()
 _hexstrike_lock = threading.Lock()
+_WEB_PORTS = {80, 443, 8080, 8443, 8888, 9090, 9200, 3000, 4848, 5000, 7001, 7443}
 
 def _save_vuln_results() -> None:
     try:
@@ -3940,6 +3943,121 @@ def _hexstrike_scan(ip: str) -> None:
             _hexstrike_scanning.discard(ip)
 
 
+def _parse_nuclei_findings(output: str) -> list:
+    findings = []
+    for line in output.splitlines():
+        line = line.strip()
+        # nuclei output lines look like: [template-id] [type] [severity] url [...]
+        if line.startswith("[") and "] [" in line:
+            findings.append(line)
+    return findings
+
+
+def _parse_nikto_findings(output: str) -> list:
+    findings = []
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("+ ") and len(line) > 4:
+            findings.append(line[2:])
+    return findings
+
+
+def _hexstrike_nuclei_scan(ip: str) -> None:
+    if not HEXSTRIKE_URL:
+        return
+    with _hexstrike_lock:
+        if ip not in _hexstrike_results:
+            return
+        _hexstrike_nuclei_scanning.add(ip)
+        _hexstrike_results[ip]["nuclei"] = {"status": "scanning", "output": "", "findings": [], "error": "", "ts": time.time()}
+    try:
+        profile    = _hexstrike_results.get(ip, {}).get("profile", {})
+        open_ports = profile.get("open_ports", [])
+        web_ports  = [p for p in open_ports if p in _WEB_PORTS] or ([80] if not open_ports else [])
+        if not web_ports:
+            with _hexstrike_lock:
+                _hexstrike_results[ip]["nuclei"] = {"status": "done", "output": "", "findings": [], "error": "No web ports found", "ts": time.time()}
+            return
+
+        all_output   = ""
+        all_findings = []
+        base = HEXSTRIKE_URL.rstrip("/")
+        for p in web_ports:
+            scheme     = "https" if p in {443, 8443} else "http"
+            target_url = f"{scheme}://{ip}:{p}"
+            resp = requests.post(f"{base}/api/tools/nuclei", json={
+                "target":          target_url,
+                "severity":        "low,medium,high,critical",
+                "additional_args": "-timeout 10 -no-color -silent",
+            }, timeout=360)
+            data   = resp.json()
+            output = data.get("output") or data.get("stdout") or ""
+            all_output   += f"\n--- {target_url} ---\n{output}"
+            all_findings += _parse_nuclei_findings(output)
+
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["nuclei"] = {
+                "status":   "done",
+                "output":   all_output.strip(),
+                "findings": all_findings,
+                "error":    "",
+                "ts":       time.time(),
+            }
+        log.info("HexStrike nuclei %s: %d findings", ip, len(all_findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["nuclei"] = {"status": "error", "output": "", "findings": [], "error": str(e), "ts": time.time()}
+        log.warning("HexStrike nuclei %s failed: %s", ip, e)
+    finally:
+        _hexstrike_nuclei_scanning.discard(ip)
+
+
+def _hexstrike_nikto_scan(ip: str) -> None:
+    if not HEXSTRIKE_URL:
+        return
+    with _hexstrike_lock:
+        if ip not in _hexstrike_results:
+            return
+        _hexstrike_nikto_scanning.add(ip)
+        _hexstrike_results[ip]["nikto"] = {"status": "scanning", "output": "", "findings": [], "error": "", "ts": time.time()}
+    try:
+        profile    = _hexstrike_results.get(ip, {}).get("profile", {})
+        open_ports = profile.get("open_ports", [])
+        web_ports  = [p for p in open_ports if p in _WEB_PORTS] or ([80] if not open_ports else [])
+        if not web_ports:
+            with _hexstrike_lock:
+                _hexstrike_results[ip]["nikto"] = {"status": "done", "output": "", "findings": [], "error": "No web ports found", "ts": time.time()}
+            return
+
+        port_str = ",".join(str(p) for p in web_ports)
+        base     = HEXSTRIKE_URL.rstrip("/")
+        resp = requests.post(f"{base}/api/tools/nikto", json={
+            "target":          ip,
+            "additional_args": f"-p {port_str} -nointeractive -maxtime 300",
+        }, timeout=420)
+        data     = resp.json()
+        output   = data.get("output") or data.get("stdout") or ""
+        findings = _parse_nikto_findings(output)
+
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["nikto"] = {
+                "status":   "done",
+                "output":   output,
+                "findings": findings,
+                "error":    "" if data.get("success") else data.get("error", ""),
+                "ts":       time.time(),
+            }
+        log.info("HexStrike nikto %s: %d findings", ip, len(findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["nikto"] = {"status": "error", "output": "", "findings": [], "error": str(e), "ts": time.time()}
+        log.warning("HexStrike nikto %s failed: %s", ip, e)
+    finally:
+        _hexstrike_nikto_scanning.discard(ip)
+
+
 @app.route("/api/hexstrike/scan", methods=["POST"])
 def api_hexstrike_scan():
     data = request.json or {}
@@ -3967,13 +4085,47 @@ def api_hexstrike_scan_all():
     return jsonify({"ok": True, "queued": count})
 
 
+@app.route("/api/hexstrike/nuclei", methods=["POST"])
+def api_hexstrike_nuclei():
+    data = request.json or {}
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "ip required"}), 400
+    if not HEXSTRIKE_URL:
+        return jsonify({"ok": False, "error": "HEXSTRIKE_URL not configured"}), 400
+    if ip not in _hexstrike_results:
+        return jsonify({"ok": False, "error": "Run nmap scan first"}), 400
+    if ip in _hexstrike_nuclei_scanning:
+        return jsonify({"ok": True, "status": "already_scanning"})
+    threading.Thread(target=_hexstrike_nuclei_scan, args=(ip,), daemon=True, name=f"hs-nuclei-{ip}").start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hexstrike/nikto", methods=["POST"])
+def api_hexstrike_nikto():
+    data = request.json or {}
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "ip required"}), 400
+    if not HEXSTRIKE_URL:
+        return jsonify({"ok": False, "error": "HEXSTRIKE_URL not configured"}), 400
+    if ip not in _hexstrike_results:
+        return jsonify({"ok": False, "error": "Run nmap scan first"}), 400
+    if ip in _hexstrike_nikto_scanning:
+        return jsonify({"ok": True, "status": "already_scanning"})
+    threading.Thread(target=_hexstrike_nikto_scan, args=(ip,), daemon=True, name=f"hs-nikto-{ip}").start()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/hexstrike/results")
 def api_hexstrike_results():
     with _hexstrike_lock:
         return jsonify({
-            "results":    dict(_hexstrike_results),
-            "scanning":   list(_hexstrike_scanning),
-            "configured": bool(HEXSTRIKE_URL),
+            "results":          dict(_hexstrike_results),
+            "scanning":         list(_hexstrike_scanning),
+            "nuclei_scanning":  list(_hexstrike_nuclei_scanning),
+            "nikto_scanning":   list(_hexstrike_nikto_scanning),
+            "configured":       bool(HEXSTRIKE_URL),
         })
 
 
