@@ -32,6 +32,7 @@
     .tab[data-tab="sync"].active         { color:var(--purple); border-color:var(--purple); }
     .tab[data-tab="services"].active     { color:#90a4ae;       border-color:#90a4ae;       }
     .tab[data-tab="vuln"].active         { color:#e53935;       border-color:#e53935;       }
+    .tab[data-tab="hexstrike"].active    { color:#f87171;       border-color:#f87171;       }
 
     /* Panes */
     .pane { display:none; padding:28px 32px; max-width:860px; }
@@ -106,6 +107,7 @@
   <div class="tab"        data-tab="sync"          onclick="showTab('sync')"><span class="dot"></span>Sync</div>
   <div class="tab"        data-tab="services"      onclick="showTab('services')"><span class="dot"></span>Services</div>
   <div class="tab"        data-tab="vuln"          onclick="showTab('vuln')"><span class="dot"></span>Vulnerability</div>
+  <div class="tab"        data-tab="hexstrike"     onclick="showTab('hexstrike')"><span class="dot"></span>HexStrike</div>
 </div>
 
 <!-- ── Connections ─────────────────────────────────────────────────────────── -->
@@ -500,6 +502,77 @@
   </div>
 </div>
 
+<!-- ── HexStrike ──────────────────────────────────────────────────────────── -->
+<div class="pane" id="hexstrike">
+  <div class="sub">
+    <div class="sub-label">Connection</div>
+    <div class="field"><label>HexStrike container URL</label>
+      <input type="text" id="hs_url" placeholder="http://192.168.0.39:8888">
+      <small style="color:var(--muted);font-size:.72rem">Also settable via HEXSTRIKE_URL environment variable</small>
+    </div>
+    <div class="field" style="margin-bottom:0"><label>Web ports (comma-separated)</label>
+      <input type="text" id="hs_web_ports" placeholder="80,443,8080,8443,8888,9090,9200,3000,5000">
+      <small style="color:var(--muted);font-size:.72rem">Ports considered "web" — Nuclei and Nikto only run against these</small>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">nmap</div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>Scan type flags</label>
+        <input type="text" id="hs_nmap_scan_type" placeholder="-sCV"></div>
+      <div class="field" style="margin:0"><label>Timing template</label>
+        <select id="hs_nmap_timing">
+          <option value="T1">T1 — Sneaky</option>
+          <option value="T2">T2 — Polite</option>
+          <option value="T3">T3 — Normal</option>
+          <option value="T4">T4 — Aggressive</option>
+          <option value="T5">T5 — Insane</option>
+        </select></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Port selection</label>
+        <input type="text" id="hs_nmap_ports" placeholder="--top-ports 1000">
+        <small style="color:var(--muted);font-size:.72rem">e.g. --top-ports 1000, -p 1-65535, -p 80,443</small>
+      </div>
+      <div class="field" style="margin:0"><label>Extra args</label>
+        <input type="text" id="hs_nmap_args" placeholder="-Pn"></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">Nuclei</div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>Severity filter</label>
+        <input type="text" id="hs_nuclei_severity" placeholder="low,medium,high,critical"></div>
+      <div class="field" style="margin:0"><label>Tag filter (empty = all)</label>
+        <input type="text" id="hs_nuclei_tags" placeholder="cves,default-credentials,exposed-panels"></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>Request timeout (s)</label>
+        <input type="number" id="hs_nuclei_timeout" min="1" max="120" placeholder="10"></div>
+      <div class="field" style="margin:0"><label>Extra args</label>
+        <input type="text" id="hs_nuclei_args" placeholder="-silent -no-color"></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">Nikto</div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>Max scan time per host (s)</label>
+        <input type="number" id="hs_nikto_maxtime" min="30" max="3600" placeholder="300"></div>
+      <div class="field" style="margin:0"><label>Extra args</label>
+        <input type="text" id="hs_nikto_args" placeholder="-nointeractive"></div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="saveHexStrike()">Save</button>
+    <a href="/hexstrike" style="font-size:.8rem;color:var(--muted);margin-left:8px">← HexStrike results</a>
+    <span class="status-msg" id="hs-status"></span>
+  </div>
+</div>
+
 <script>
   function showTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
@@ -559,6 +632,7 @@
       set('mqtt_probe_port', d.mqtt_probe_port || '1883');
     } catch (_) {}
     loadVuln();
+    loadHexStrike();
   }
 
   async function loadVuln() {
@@ -624,6 +698,47 @@
       const d = await r.json();
       flash('vuln-status', d.status === 'ok' ? 'Saved' : 'Error', d.status === 'ok' ? 'ok' : 'err');
     } catch(e) { flash('vuln-status', 'Error: ' + e.message, 'err'); }
+  }
+
+  async function loadHexStrike() {
+    try {
+      const d = await (await fetch('/api/hexstrike/config')).json();
+      set('hs_url',             d.hs_url             || '');
+      set('hs_web_ports',       d.hs_web_ports        || '80,443,8080,8443,8888,9090,9200,3000,5000,4848,7001,7443');
+      set('hs_nmap_scan_type',  d.hs_nmap_scan_type   || '-sCV');
+      const nt = document.getElementById('hs_nmap_timing');
+      if (nt) nt.value = d.hs_nmap_timing || 'T4';
+      set('hs_nmap_ports',      d.hs_nmap_ports       || '--top-ports 1000');
+      set('hs_nmap_args',       d.hs_nmap_args        || '-Pn');
+      set('hs_nuclei_severity', d.hs_nuclei_severity  || 'low,medium,high,critical');
+      set('hs_nuclei_tags',     d.hs_nuclei_tags      || '');
+      set('hs_nuclei_timeout',  d.hs_nuclei_timeout   || '10');
+      set('hs_nuclei_args',     d.hs_nuclei_args      || '-silent -no-color');
+      set('hs_nikto_maxtime',   d.hs_nikto_maxtime    || '300');
+      set('hs_nikto_args',      d.hs_nikto_args       || '-nointeractive');
+    } catch (_) {}
+  }
+
+  async function saveHexStrike() {
+    const payload = {
+      hs_url:             val('hs_url'),
+      hs_web_ports:       val('hs_web_ports'),
+      hs_nmap_scan_type:  val('hs_nmap_scan_type'),
+      hs_nmap_timing:     val('hs_nmap_timing'),
+      hs_nmap_ports:      val('hs_nmap_ports'),
+      hs_nmap_args:       val('hs_nmap_args'),
+      hs_nuclei_severity: val('hs_nuclei_severity'),
+      hs_nuclei_tags:     val('hs_nuclei_tags'),
+      hs_nuclei_timeout:  val('hs_nuclei_timeout'),
+      hs_nuclei_args:     val('hs_nuclei_args'),
+      hs_nikto_maxtime:   val('hs_nikto_maxtime'),
+      hs_nikto_args:      val('hs_nikto_args'),
+    };
+    try {
+      const r = await fetch('/api/hexstrike/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      const d = await r.json();
+      flash('hs-status', d.status === 'ok' ? 'Saved' : 'Error', d.status === 'ok' ? 'ok' : 'err');
+    } catch(e) { flash('hs-status', 'Error: ' + e.message, 'err'); }
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
