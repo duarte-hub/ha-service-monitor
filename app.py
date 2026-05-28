@@ -3864,6 +3864,46 @@ def api_vuln_log():
 # HexStrike AI routes
 # ---------------------------------------------------------------------------
 
+def _hexstrike_parse_nmap(output: str) -> dict:
+    """Parse nmap text output into structured data."""
+    import re
+    ports = []
+    services = {}
+    os_info = ""
+    for line in output.splitlines():
+        # PORT   STATE  SERVICE  VERSION
+        m = re.match(r"^(\d+)/(tcp|udp)\s+(open\S*)\s+(\S+)(.*)$", line.strip())
+        if m:
+            port = int(m.group(1))
+            svc  = m.group(4)
+            ver  = m.group(5).strip()
+            ports.append(port)
+            services[port] = f"{svc} {ver}".strip()
+        # OS detection line
+        if line.startswith("OS details:") or line.startswith("Running:"):
+            os_info = line.split(":", 1)[-1].strip()
+
+    # Risk from actual open ports
+    risk_ports = {
+        "critical": {21, 23, 445, 3389, 5900, 5985, 5986},
+        "high":     {22, 25, 110, 143, 1433, 1521, 3306, 5432, 6379, 27017},
+        "medium":   {80, 443, 8080, 8443, 8888, 9090, 9200},
+    }
+    open_set = set(ports)
+    if open_set & risk_ports["critical"]:
+        risk = "critical"
+    elif open_set & risk_ports["high"]:
+        risk = "high"
+    elif open_set & risk_ports["medium"]:
+        risk = "medium"
+    elif ports:
+        risk = "low"
+    else:
+        risk = "unknown"
+
+    return {"open_ports": ports, "services": services, "os_info": os_info, "risk_level": risk}
+
+
 def _hexstrike_scan(ip: str) -> None:
     if not HEXSTRIKE_URL:
         return
@@ -3871,22 +3911,29 @@ def _hexstrike_scan(ip: str) -> None:
         if ip in _hexstrike_scanning:
             return
         _hexstrike_scanning.add(ip)
-        _hexstrike_results[ip] = {"ts": time.time(), "status": "scanning", "profile": {}, "error": ""}
+        _hexstrike_results[ip] = {"ts": time.time(), "status": "scanning", "profile": {}, "nmap_output": "", "error": ""}
     try:
-        url = HEXSTRIKE_URL.rstrip("/") + "/api/intelligence/analyze-target"
-        resp = requests.post(url, json={"target": ip}, timeout=180)
-        data = resp.json()
+        url  = HEXSTRIKE_URL.rstrip("/") + "/api/tools/nmap"
+        resp = requests.post(url, json={
+            "target":          ip,
+            "scan_type":       "-sCV",
+            "additional_args": "-T4 -Pn --top-ports 1000",
+        }, timeout=300)
+        data   = resp.json()
+        output = data.get("output") or data.get("stdout") or ""
+        parsed = _hexstrike_parse_nmap(output)
         with _hexstrike_lock:
             _hexstrike_results[ip] = {
-                "ts": time.time(),
-                "status": "done" if data.get("success") else "error",
-                "profile": data.get("target_profile", {}),
-                "error":   data.get("error", ""),
+                "ts":          time.time(),
+                "status":      "done" if data.get("success") else "error",
+                "profile":     parsed,
+                "nmap_output": output,
+                "error":       data.get("error", "") if not data.get("success") else "",
             }
-        log.info("HexStrike scan %s: %s", ip, _hexstrike_results[ip]["status"])
+        log.info("HexStrike nmap %s: %d ports, risk=%s", ip, len(parsed["open_ports"]), parsed["risk_level"])
     except Exception as e:
         with _hexstrike_lock:
-            _hexstrike_results[ip] = {"ts": time.time(), "status": "error", "profile": {}, "error": str(e)}
+            _hexstrike_results[ip] = {"ts": time.time(), "status": "error", "profile": {}, "nmap_output": "", "error": str(e)}
         log.warning("HexStrike scan %s failed: %s", ip, e)
     finally:
         with _hexstrike_lock:

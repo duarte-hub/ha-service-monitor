@@ -74,6 +74,18 @@
     .rcard-ts { font-size:.69rem; color:var(--muted2,#6b7280); margin-top:2px; }
     .rcard-error { font-size:.77rem; color:#fca5a5; background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.2); border-radius:6px; padding:6px 10px; }
 
+    .port-table { width:100%; border-collapse:collapse; font-size:.78rem; margin-top:2px; }
+    .port-table th { color:var(--muted); font-weight:500; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; padding:2px 6px; text-align:left; border-bottom:1px solid var(--border); }
+    .port-table td { padding:3px 6px; border-bottom:1px solid rgba(255,255,255,.03); font-family:monospace; vertical-align:top; }
+    .port-table tr:last-child td { border-bottom:none; }
+    .port-num  { color:#93c5fd; white-space:nowrap; }
+    .port-svc  { color:var(--text); }
+    .port-ver  { color:var(--muted); font-size:.74rem; }
+
+    .nmap-toggle { font-size:.72rem; color:var(--muted); cursor:pointer; user-select:none; padding:4px 0; display:inline-block; }
+    .nmap-toggle:hover { color:var(--text); }
+    .nmap-raw { font-family:monospace; font-size:.72rem; color:#94a3b8; background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-top:4px; white-space:pre-wrap; word-break:break-all; max-height:260px; overflow-y:auto; display:none; }
+
     .rcard-actions { padding:8px 14px 12px; display:flex; gap:6px; }
     .rcard-btn { border:none; border-radius:5px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; transition:opacity .15s; }
     .rcard-btn-rescan { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
@@ -174,50 +186,70 @@
   }
 
   function buildCard(ip, r, isScanning) {
-    const profile = (r && r.profile) || {};
-    const risk    = (profile.risk_level || (isScanning ? 'scanning' : 'unknown')).toLowerCase();
-    const ports   = profile.open_ports  || [];
+    const profile  = (r && r.profile) || {};
+    const risk     = (profile.risk_level || (isScanning ? 'scanning' : 'unknown')).toLowerCase();
+    const ports    = profile.open_ports || [];
     const services = profile.services   || {};
-    const techs   = profile.technologies || [];
-    const score   = profile.attack_surface_score;
-    const conf    = profile.confidence_score;
-    const target  = profile.target || ip;
-    const targetType = profile.target_type || '';
-    const subdomains = profile.subdomains || [];
-    const endpoints  = profile.endpoints  || [];
-    const error   = (r && r.error) || '';
-    const ts      = (r && r.ts) || 0;
+    const osInfo   = profile.os_info    || '';
+    const rawOut   = (r && r.nmap_output) || '';
+    const error    = (r && r.error) || '';
+    const ts       = (r && r.ts)    || 0;
+    const cardId   = 'card-' + ip.replace(/\./g, '_');
 
-    const portHtml = ports.slice(0, 20).map(p => {
-      const svc = services[p] || services[String(p)] || '';
-      return `<span class="port-chip" title="${svc}">${p}${svc ? '/' + svc : ''}</span>`;
-    }).join('') + (ports.length > 20 ? `<span class="port-chip">+${ports.length - 20}</span>` : '');
+    // Port table rows
+    let portRows = '';
+    for (const p of ports) {
+      const svcFull = services[p] || services[String(p)] || '';
+      const [svcName, ...verParts] = svcFull.split(' ');
+      const ver = verParts.join(' ');
+      portRows += `<tr>
+        <td class="port-num">${p}/tcp</td>
+        <td class="port-svc">${svcName || ''}</td>
+        <td class="port-ver">${ver}</td>
+      </tr>`;
+    }
 
-    const techHtml = techs.slice(0, 8).map(t => `<span class="tech-chip">${t}</span>`).join('');
+    const portSection = ports.length
+      ? `<table class="port-table">
+           <thead><tr><th>Port</th><th>Service</th><th>Version</th></tr></thead>
+           <tbody>${portRows}</tbody>
+         </table>`
+      : (isScanning ? '' : '<div style="font-size:.78rem;color:var(--muted);padding:2px 0">No open ports found</div>');
 
-    const scoreBarColor = risk === 'critical' ? '#ef4444' : risk === 'high' ? '#f97316' : risk === 'medium' ? '#f59e0b' : '#22c55e';
-    const scorePct = score != null ? Math.min(100, Math.round(score * 10)) : null;
+    const rawSection = rawOut
+      ? `<span class="nmap-toggle" onclick="toggleRaw('${cardId}')">▶ Raw nmap output</span>
+         <div class="nmap-raw" id="${cardId}-raw">${rawOut.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
+      : '';
 
-    return `<div class="rcard risk-${risk}${isScanning ? ' scanning' : ''}" id="card-${ip.replace(/\./g,'_')}">
+    return `<div class="rcard risk-${risk}${isScanning ? ' scanning' : ''}" id="${cardId}">
   <div class="rcard-header">
     <span class="rcard-ip">${ip}</span>
-    ${targetType && targetType !== ip ? `<span class="rcard-hostname">${targetType}</span>` : ''}
+    ${osInfo ? `<span class="rcard-hostname" title="OS">${osInfo}</span>` : ''}
     <span class="risk-badge ${risk}">${isScanning ? '⚡ scanning' : risk}</span>
   </div>
   <div class="rcard-body">
     ${error ? `<div class="rcard-error">⚠ ${error}</div>` : ''}
-    ${ports.length ? `<div class="rcard-row"><span class="rcard-label">Ports</span><span class="rcard-val">${portHtml}</span></div>` : ''}
-    ${techs.length ? `<div class="rcard-row"><span class="rcard-label">Tech</span><span class="rcard-val">${techHtml}</span></div>` : ''}
-    ${subdomains.length ? `<div class="rcard-row"><span class="rcard-label">Subdomains</span><span class="rcard-val" style="font-size:.78rem;color:var(--muted)">${subdomains.slice(0,5).join(', ')}${subdomains.length > 5 ? ` +${subdomains.length - 5}` : ''}</span></div>` : ''}
-    ${endpoints.length ? `<div class="rcard-row"><span class="rcard-label">Endpoints</span><span class="rcard-val" style="font-size:.76rem;color:var(--muted)">${endpoints.slice(0,4).join(', ')}${endpoints.length > 4 ? ` +${endpoints.length - 4}` : ''}</span></div>` : ''}
-    ${scorePct != null ? `<div class="rcard-row"><span class="rcard-label">Attack surface</span><div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="width:${scorePct}%;background:${scoreBarColor}"></div></div></div><span class="rcard-val" style="font-size:.75rem;margin-left:6px">${score.toFixed(1)}${conf != null ? ' · ' + Math.round(conf * 100) + '% conf' : ''}</span></div>` : ''}
-    ${ts ? `<div class="rcard-ts">Scanned ${fmtTs(ts)}</div>` : ''}
+    ${portSection}
+    ${rawSection}
+    ${ts ? `<div class="rcard-ts">Scanned ${fmtTs(ts)} · ${ports.length} open port${ports.length !== 1 ? 's' : ''}</div>` : ''}
   </div>
   <div class="rcard-actions">
     <button class="rcard-btn rcard-btn-rescan" onclick="rescan('${ip}')" ${isScanning ? 'disabled' : ''}>⚡ ${isScanning ? 'Scanning…' : 'Re-scan'}</button>
     <button class="rcard-btn rcard-btn-device" onclick="location.href='/device/${ip}'">Device →</button>
   </div>
 </div>`;
+  }
+
+  function toggleRaw(cardId) {
+    const el  = document.getElementById(cardId + '-raw');
+    const tog = el.previousElementSibling;
+    if (el.style.display === 'block') {
+      el.style.display = 'none';
+      tog.textContent = tog.textContent.replace('▼','▶');
+    } else {
+      el.style.display = 'block';
+      tog.textContent = tog.textContent.replace('▶','▼');
+    }
   }
 
   function render() {
@@ -239,7 +271,7 @@
       const r = _results[ip];
       const isScanning = _scanning.has(ip);
       const profile = (r && r.profile) || {};
-      const haystack = [ip, profile.target_type || '', ...(profile.technologies || []),
+      const haystack = [ip, profile.os_info || '',
                         ...(Object.values(profile.services || {}))].join(' ').toLowerCase();
       if (q && !haystack.includes(q)) continue;
       cards.push({ip, r, isScanning, risk: profile.risk_level || (isScanning ? 'scanning' : 'unknown')});
