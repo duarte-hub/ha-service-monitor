@@ -88,15 +88,28 @@
 
     .rcard-actions { padding:8px 14px 12px; display:flex; gap:6px; flex-wrap:wrap; }
     .rcard-btn { border:none; border-radius:5px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; transition:opacity .15s; white-space:nowrap; }
-    .rcard-btn-rescan  { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
-    .rcard-btn-rescan:hover  { background:rgba(220,38,38,.3); }
-    .rcard-btn-nuclei  { background:rgba(139,92,246,.15); color:#c4b5fd; border:1px solid rgba(139,92,246,.3); }
-    .rcard-btn-nuclei:hover  { background:rgba(139,92,246,.3); }
-    .rcard-btn-nikto   { background:rgba(245,158,11,.12); color:#fcd34d; border:1px solid rgba(245,158,11,.3); }
-    .rcard-btn-nikto:hover   { background:rgba(245,158,11,.25); }
+    .rcard-btn-rescan   { background:rgba(220,38,38,.15); color:#f87171; border:1px solid rgba(220,38,38,.3); }
+    .rcard-btn-rescan:hover   { background:rgba(220,38,38,.3); }
+    .rcard-btn-nuclei   { background:rgba(139,92,246,.15); color:#c4b5fd; border:1px solid rgba(139,92,246,.3); }
+    .rcard-btn-nuclei:hover   { background:rgba(139,92,246,.3); }
+    .rcard-btn-nikto    { background:rgba(245,158,11,.12); color:#fcd34d; border:1px solid rgba(245,158,11,.3); }
+    .rcard-btn-nikto:hover    { background:rgba(245,158,11,.25); }
+    .rcard-btn-masscan  { background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }
+    .rcard-btn-masscan:hover  { background:rgba(239,68,68,.25); }
+    .rcard-btn-httpx    { background:rgba(6,182,212,.12); color:#67e8f9; border:1px solid rgba(6,182,212,.3); }
+    .rcard-btn-httpx:hover    { background:rgba(6,182,212,.25); }
+    .rcard-btn-wafw00f  { background:rgba(234,179,8,.12); color:#fde047; border:1px solid rgba(234,179,8,.3); }
+    .rcard-btn-wafw00f:hover  { background:rgba(234,179,8,.25); }
+    .rcard-btn-gobuster { background:rgba(34,197,94,.12); color:#86efac; border:1px solid rgba(34,197,94,.3); }
+    .rcard-btn-gobuster:hover { background:rgba(34,197,94,.25); }
+    .rcard-btn-ffuf     { background:rgba(168,85,247,.12); color:#d8b4fe; border:1px solid rgba(168,85,247,.3); }
+    .rcard-btn-ffuf:hover     { background:rgba(168,85,247,.25); }
+    .rcard-btn-katana   { background:rgba(251,146,60,.12); color:#fed7aa; border:1px solid rgba(251,146,60,.3); }
+    .rcard-btn-katana:hover   { background:rgba(251,146,60,.25); }
     .rcard-btn:disabled { opacity:.35; cursor:not-allowed; }
-    .rcard-btn-device  { background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
-    .rcard-btn-device:hover  { color:var(--text); border-color:var(--muted); }
+    .rcard-btn-device   { background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
+    .rcard-btn-device:hover   { color:var(--text); border-color:var(--muted); }
+    .rcard-actions-divider { width:100%; height:0; border-top:1px solid var(--border); margin:2px 0; }
 
     .findings-section { margin-top:6px; }
     .findings-header { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
@@ -146,26 +159,40 @@
 
 <script>
   let _results = {};
-  let _scanning        = new Set();
-  let _nucleiScanning  = new Set();
-  let _niktoScanning   = new Set();
+  let _scanning         = new Set();
+  let _nucleiScanning   = new Set();
+  let _niktoScanning    = new Set();
+  let _masscanScanning  = new Set();
+  let _httpxScanning    = new Set();
+  let _wafw00fScanning  = new Set();
+  let _gobusterScanning = new Set();
+  let _ffufScanning     = new Set();
+  let _katanaScanning   = new Set();
   let _configured = false;
   let _pollTimer = null;
 
   async function load() {
     const d = await fetch('/api/hexstrike/results').then(r => r.json());
-    _results        = d.results          || {};
-    _scanning       = new Set(d.scanning        || []);
-    _nucleiScanning = new Set(d.nuclei_scanning || []);
-    _niktoScanning  = new Set(d.nikto_scanning  || []);
-    _configured     = d.configured || false;
+    _results          = d.results           || {};
+    _scanning         = new Set(d.scanning         || []);
+    _nucleiScanning   = new Set(d.nuclei_scanning  || []);
+    _niktoScanning    = new Set(d.nikto_scanning   || []);
+    _masscanScanning  = new Set(d.masscan_scanning || []);
+    _httpxScanning    = new Set(d.httpx_scanning   || []);
+    _wafw00fScanning  = new Set(d.wafw00f_scanning || []);
+    _gobusterScanning = new Set(d.gobuster_scanning|| []);
+    _ffufScanning     = new Set(d.ffuf_scanning    || []);
+    _katanaScanning   = new Set(d.katana_scanning  || []);
+    _configured       = d.configured || false;
     render();
     schedulePoll();
   }
 
   function schedulePoll() {
     clearTimeout(_pollTimer);
-    const busy = _scanning.size + _nucleiScanning.size + _niktoScanning.size;
+    const busy = _scanning.size + _nucleiScanning.size + _niktoScanning.size +
+                 _masscanScanning.size + _httpxScanning.size + _wafw00fScanning.size +
+                 _gobusterScanning.size + _ffufScanning.size + _katanaScanning.size;
     if (busy > 0) _pollTimer = setTimeout(load, 2500);
   }
 
@@ -190,34 +217,26 @@
     render();
   }
 
-  async function runNuclei(ip) {
-    const d = await fetch('/api/hexstrike/nuclei', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})}).then(r => r.json());
-    if (!d.ok) { alert('Nuclei: ' + (d.error || 'error')); return; }
-    _nucleiScanning.add(ip);
+  async function _runTool(tool, ip, scanSet) {
+    const d = await fetch(`/api/hexstrike/${tool}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})}).then(r => r.json());
+    if (!d.ok) { alert(`${tool}: ` + (d.error || 'error')); return; }
+    scanSet.add(ip);
     render();
     schedulePoll();
   }
 
-  async function runNikto(ip) {
-    const d = await fetch('/api/hexstrike/nikto', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})}).then(r => r.json());
-    if (!d.ok) { alert('Nikto: ' + (d.error || 'error')); return; }
-    _niktoScanning.add(ip);
-    render();
-    schedulePoll();
-  }
-
-  function riskColor(r) {
-    if (r === 'critical') return '#ef4444';
-    if (r === 'high')     return '#f97316';
-    if (r === 'medium')   return '#f59e0b';
-    if (r === 'low')      return '#22c55e';
-    return '#94a3b8';
-  }
+  const runNuclei   = ip => _runTool('nuclei',   ip, _nucleiScanning);
+  const runNikto    = ip => _runTool('nikto',    ip, _niktoScanning);
+  const runMasscan  = ip => _runTool('masscan',  ip, _masscanScanning);
+  const runHttpx    = ip => _runTool('httpx',    ip, _httpxScanning);
+  const runWafw00f  = ip => _runTool('wafw00f',  ip, _wafw00fScanning);
+  const runGobuster = ip => _runTool('gobuster', ip, _gobusterScanning);
+  const runFfuf     = ip => _runTool('ffuf',     ip, _ffufScanning);
+  const runKatana   = ip => _runTool('katana',   ip, _katanaScanning);
 
   function fmtTs(ts) {
     if (!ts) return '';
-    const d = new Date(ts * 1000);
-    return d.toLocaleString();
+    return new Date(ts * 1000).toLocaleString();
   }
 
   function _findingBadge(line) {
@@ -229,27 +248,26 @@
     return 'info';
   }
 
-  function buildFindingsSection(label, toolData, isScanning) {
+  function buildFindingsSection(label, toolData, isScanning, useMonoItems) {
     if (isScanning) return `<div class="findings-section"><div class="findings-header">${label} <span class="findings-scanning">scanning…</span></div></div>`;
-    if (!toolData) return '';
+    if (!toolData || !toolData.status || toolData.status === 'idle') return '';
     const findings = toolData.findings || [];
     const err = toolData.error || '';
     const ts  = toolData.ts   || 0;
-    if (toolData.status === 'idle' || !toolData.status) return '';
-
     let body = '';
     if (err && findings.length === 0) {
-      body = `<div class="rcard-error" style="margin-top:4px">⚠ ${err}</div>`;
+      body = `<div class="rcard-error" style="margin-top:4px">⚠ ${err.replace(/</g,'&lt;')}</div>`;
     } else if (findings.length === 0) {
       body = `<div style="font-size:.76rem;color:var(--muted);padding:2px 0">No findings</div>`;
     } else {
-      body = findings.slice(0, 30).map(f =>
-        `<div class="finding-item"><span class="finding-badge ${_findingBadge(f)}">${_findingBadge(f)}</span> ${f.replace(/</g,'&lt;')}</div>`
-      ).join('') + (findings.length > 30 ? `<div style="font-size:.72rem;color:var(--muted);padding:2px 0">+${findings.length-30} more</div>` : '');
+      body = findings.slice(0, 40).map(f => {
+        const badge = useMonoItems ? '' : `<span class="finding-badge ${_findingBadge(f)}">${_findingBadge(f)}</span> `;
+        return `<div class="finding-item">${badge}${f.replace(/</g,'&lt;')}</div>`;
+      }).join('') + (findings.length > 40 ? `<div style="font-size:.72rem;color:var(--muted);padding:2px 0">+${findings.length-40} more</div>` : '');
     }
     const tsStr = ts ? ` · ${fmtTs(ts)}` : '';
     return `<div class="findings-section">
-      <div class="findings-header">${label} <span style="font-weight:400;color:var(--muted)">${findings.length} finding${findings.length!==1?'s':''}${tsStr}</span></div>
+      <div class="findings-header">${label} <span style="font-weight:400;color:var(--muted)">${findings.length} result${findings.length!==1?'s':''}${tsStr}</span></div>
       ${body}
     </div>`;
   }
@@ -264,31 +282,29 @@
     const error    = (r && r.error) || '';
     const ts       = (r && r.ts)    || 0;
     const cardId   = 'card-' + ip.replace(/\./g, '_');
-    const hasWeb   = ports.some(p => [80,443,8080,8443,8888,9090,9200,3000,4848,5000,7001,7443].includes(p));
+    const WEB_PORTS = [80,443,8080,8443,8888,9090,9200,3000,4848,5000,7001,7443];
+    const hasWeb   = ports.some(p => WEB_PORTS.includes(p));
 
-    const nucleiScanning = _nucleiScanning.has(ip);
-    const niktoScanning  = _niktoScanning.has(ip);
-    const nucleiData     = r && r.nuclei;
-    const niktoData      = r && r.nikto;
+    // Scanning states
+    const sc = {
+      nuclei:   _nucleiScanning.has(ip),   nikto:    _niktoScanning.has(ip),
+      masscan:  _masscanScanning.has(ip),  httpx:    _httpxScanning.has(ip),
+      wafw00f:  _wafw00fScanning.has(ip),  gobuster: _gobusterScanning.has(ip),
+      ffuf:     _ffufScanning.has(ip),     katana:   _katanaScanning.has(ip),
+    };
 
-    // Port table rows
+    // Port table
     let portRows = '';
     for (const p of ports) {
       const svcFull = services[p] || services[String(p)] || '';
       const [svcName, ...verParts] = svcFull.split(' ');
-      const ver = verParts.join(' ');
       portRows += `<tr>
         <td class="port-num">${p}/tcp</td>
-        <td class="port-svc">${svcName || ''}</td>
-        <td class="port-ver">${ver}</td>
-      </tr>`;
+        <td class="port-svc">${svcName||''}</td>
+        <td class="port-ver">${verParts.join(' ')}</td></tr>`;
     }
-
     const portSection = ports.length
-      ? `<table class="port-table">
-           <thead><tr><th>Port</th><th>Service</th><th>Version</th></tr></thead>
-           <tbody>${portRows}</tbody>
-         </table>`
+      ? `<table class="port-table"><thead><tr><th>Port</th><th>Service</th><th>Version</th></tr></thead><tbody>${portRows}</tbody></table>`
       : (isScanning ? '' : '<div style="font-size:.78rem;color:var(--muted);padding:2px 0">No open ports found</div>');
 
     const rawSection = rawOut
@@ -296,35 +312,49 @@
          <div class="nmap-raw" id="${cardId}-raw">${rawOut.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
       : '';
 
-    const nucleiSection = (nucleiScanning || nucleiData) ? buildFindingsSection('Nuclei', nucleiData, nucleiScanning) : '';
-    const niktoSection  = (niktoScanning  || niktoData)  ? buildFindingsSection('Nikto',  niktoData,  niktoScanning)  : '';
+    // Tool result sections
+    const sections = [
+      buildFindingsSection('masscan',   r&&r.masscan,   sc.masscan,  true),
+      buildFindingsSection('httpx',     r&&r.httpx,     sc.httpx,    true),
+      buildFindingsSection('wafw00f',   r&&r.wafw00f,   sc.wafw00f,  true),
+      buildFindingsSection('Nuclei',    r&&r.nuclei,    sc.nuclei,   false),
+      buildFindingsSection('Nikto',     r&&r.nikto,     sc.nikto,    true),
+      buildFindingsSection('gobuster',  r&&r.gobuster,  sc.gobuster, true),
+      buildFindingsSection('ffuf',      r&&r.ffuf,      sc.ffuf,     true),
+      buildFindingsSection('katana',    r&&r.katana,    sc.katana,   true),
+    ].filter(Boolean).join('');
 
-    const canRunExtra = !isScanning && ports.length > 0;
-    const nucleiBtn = (hasWeb || nucleiData || nucleiScanning)
-      ? `<button class="rcard-btn rcard-btn-nuclei" onclick="runNuclei('${ip}')" ${(nucleiScanning||isScanning)?'disabled':''}>${nucleiScanning ? '⬡ Scanning…' : '⬡ Nuclei'}</button>`
-      : '';
-    const niktoBtn = (hasWeb || niktoData || niktoScanning)
-      ? `<button class="rcard-btn rcard-btn-nikto" onclick="runNikto('${ip}')" ${(niktoScanning||isScanning)?'disabled':''}>${niktoScanning ? '⚑ Scanning…' : '⚑ Nikto'}</button>`
-      : '';
+    // Buttons
+    const dis = (active) => active || isScanning ? 'disabled' : '';
+    const row1 = `
+      <button class="rcard-btn rcard-btn-rescan"  onclick="rescan('${ip}')"   ${dis(false)}>⚡ ${isScanning?'Scanning…':'Re-scan'}</button>
+      <button class="rcard-btn rcard-btn-masscan" onclick="runMasscan('${ip}')" ${dis(sc.masscan)}>${sc.masscan?'↯ Scanning…':'↯ Masscan'}</button>
+      <button class="rcard-btn rcard-btn-httpx"   onclick="runHttpx('${ip}')"  ${dis(sc.httpx)}>${sc.httpx?'≋ Scanning…':'≋ httpx'}</button>`;
+    const row2 = hasWeb || Object.values(sc).some(Boolean) || (r && (r.nuclei||r.nikto||r.wafw00f||r.gobuster||r.ffuf||r.katana)) ? `
+      <div class="rcard-actions-divider"></div>
+      <button class="rcard-btn rcard-btn-nuclei"   onclick="runNuclei('${ip}')"   ${dis(sc.nuclei)}>${sc.nuclei?'⬡ Scanning…':'⬡ Nuclei'}</button>
+      <button class="rcard-btn rcard-btn-nikto"    onclick="runNikto('${ip}')"    ${dis(sc.nikto)}>${sc.nikto?'⚑ Scanning…':'⚑ Nikto'}</button>
+      <button class="rcard-btn rcard-btn-wafw00f"  onclick="runWafw00f('${ip}')"  ${dis(sc.wafw00f)}>${sc.wafw00f?'🛡 Scanning…':'🛡 WAF'}</button>
+      <button class="rcard-btn rcard-btn-gobuster" onclick="runGobuster('${ip}')" ${dis(sc.gobuster)}>${sc.gobuster?'📁 Scanning…':'📁 Dirs'}</button>
+      <button class="rcard-btn rcard-btn-ffuf"     onclick="runFfuf('${ip}')"     ${dis(sc.ffuf)}>${sc.ffuf?'⚡ Scanning…':'⚡ Fuzz'}</button>
+      <button class="rcard-btn rcard-btn-katana"   onclick="runKatana('${ip}')"   ${dis(sc.katana)}>${sc.katana?'🕷 Scanning…':'🕷 Crawl'}</button>` : '';
 
-    return `<div class="rcard risk-${risk}${isScanning ? ' scanning' : ''}" id="${cardId}">
+    return `<div class="rcard risk-${risk}${isScanning?' scanning':''}" id="${cardId}">
   <div class="rcard-header">
     <span class="rcard-ip">${ip}</span>
     ${osInfo ? `<span class="rcard-hostname" title="OS">${osInfo}</span>` : ''}
-    <span class="risk-badge ${risk}">${isScanning ? '⚡ scanning' : risk}</span>
+    <span class="risk-badge ${risk}">${isScanning?'⚡ scanning':risk}</span>
   </div>
   <div class="rcard-body">
     ${error ? `<div class="rcard-error">⚠ ${error}</div>` : ''}
     ${portSection}
-    ${nucleiSection}
-    ${niktoSection}
+    ${sections}
     ${rawSection}
-    ${ts ? `<div class="rcard-ts">nmap ${fmtTs(ts)} · ${ports.length} open port${ports.length !== 1 ? 's' : ''}</div>` : ''}
+    ${ts ? `<div class="rcard-ts">nmap ${fmtTs(ts)} · ${ports.length} open port${ports.length!==1?'s':''}</div>` : ''}
   </div>
   <div class="rcard-actions">
-    <button class="rcard-btn rcard-btn-rescan" onclick="rescan('${ip}')" ${isScanning ? 'disabled' : ''}>⚡ ${isScanning ? 'Scanning…' : 'Re-scan'}</button>
-    ${nucleiBtn}
-    ${niktoBtn}
+    ${row1}
+    ${row2}
     <button class="rcard-btn rcard-btn-device" onclick="location.href='/device/${ip}'">Device →</button>
   </div>
 </div>`;
@@ -333,13 +363,9 @@
   function toggleRaw(cardId) {
     const el  = document.getElementById(cardId + '-raw');
     const tog = el.previousElementSibling;
-    if (el.style.display === 'block') {
-      el.style.display = 'none';
-      tog.textContent = tog.textContent.replace('▼','▶');
-    } else {
-      el.style.display = 'block';
-      tog.textContent = tog.textContent.replace('▶','▼');
-    }
+    const open = el.style.display === 'block';
+    el.style.display = open ? 'none' : 'block';
+    tog.textContent  = tog.textContent.replace(open?'▼':'▶', open?'▶':'▼');
   }
 
   function render() {
@@ -349,39 +375,44 @@
       document.getElementById('content').innerHTML = `
         <div class="unconfigured">
           <h2>HexStrike not configured</h2>
-          <p>Set the <code>HEXSTRIKE_URL</code> environment variable to the address of your HexStrike AI container (e.g. <code>http://192.168.0.39:8888</code>) and restart the monitor.</p>
+          <p>Set <code>HEXSTRIKE_URL</code> or <code>HS_CONTAINER_NAME</code> in <a href="/config" style="color:#90caf9">Settings → HexStrike</a> to enable scanning.</p>
         </div>`;
       return;
     }
 
-    // merge scanning IPs that have no result yet
     const allIps = new Set([...Object.keys(_results), ..._scanning]);
     let cards = [];
     for (const ip of allIps) {
       const r = _results[ip];
       const isScanning = _scanning.has(ip);
       const profile = (r && r.profile) || {};
-      const haystack = [ip, profile.os_info || '',
-                        ...(Object.values(profile.services || {}))].join(' ').toLowerCase();
+      const haystack = [ip, profile.os_info||'', ...Object.values(profile.services||{})].join(' ').toLowerCase();
       if (q && !haystack.includes(q)) continue;
-      cards.push({ip, r, isScanning, risk: profile.risk_level || (isScanning ? 'scanning' : 'unknown')});
+      cards.push({ip, r, isScanning, risk: profile.risk_level||(isScanning?'scanning':'unknown')});
     }
 
-    // sort: critical → high → medium → low → scanning → unknown
     const order = {critical:0, high:1, medium:2, low:3, scanning:4, unknown:5};
-    cards.sort((a,b) => (order[a.risk] ?? 5) - (order[b.risk] ?? 5) || a.ip.localeCompare(b.ip));
+    cards.sort((a,b) => (order[a.risk]??5) - (order[b.risk]??5) || a.ip.localeCompare(b.ip));
 
-    const total = cards.length;
-    document.getElementById('pill-total').textContent = total === 1 ? '1 result' : `${total} results`;
+    document.getElementById('pill-total').textContent = cards.length === 1 ? '1 result' : `${cards.length} results`;
 
-    const busy = _scanning.size + _nucleiScanning.size + _niktoScanning.size;
+    const allScanning = [_scanning, _nucleiScanning, _niktoScanning, _masscanScanning,
+                         _httpxScanning, _wafw00fScanning, _gobusterScanning, _ffufScanning, _katanaScanning];
+    const busy = allScanning.reduce((n,s) => n+s.size, 0);
     const scanPill = document.getElementById('pill-scanning');
     if (busy > 0) {
       scanPill.style.display = '';
-      const parts = [];
-      if (_scanning.size)       parts.push(`${_scanning.size} nmap`);
-      if (_nucleiScanning.size) parts.push(`${_nucleiScanning.size} nuclei`);
-      if (_niktoScanning.size)  parts.push(`${_niktoScanning.size} nikto`);
+      const parts = [
+        _scanning.size       && `${_scanning.size} nmap`,
+        _nucleiScanning.size && `${_nucleiScanning.size} nuclei`,
+        _niktoScanning.size  && `${_niktoScanning.size} nikto`,
+        _masscanScanning.size && `${_masscanScanning.size} masscan`,
+        _httpxScanning.size  && `${_httpxScanning.size} httpx`,
+        _gobusterScanning.size && `${_gobusterScanning.size} dirs`,
+        _ffufScanning.size   && `${_ffufScanning.size} fuzz`,
+        _katanaScanning.size && `${_katanaScanning.size} crawl`,
+        _wafw00fScanning.size && `${_wafw00fScanning.size} waf`,
+      ].filter(Boolean);
       scanPill.textContent = `⚡ ${parts.join(', ')} scanning…`;
     } else {
       scanPill.style.display = 'none';
@@ -389,7 +420,7 @@
 
     const content = document.getElementById('content');
     if (cards.length === 0) {
-      content.innerHTML = `<div class="empty-msg">${q ? 'No results match the filter.' : 'No scans yet — click <strong>⚡ Scan All</strong> or use the ⚡ buttons on the dashboard.'}</div>`;
+      content.innerHTML = `<div class="empty-msg">${q ? 'No results match.' : 'No scans yet — click <strong>⚡ Scan All</strong> or scan individual devices.'}</div>`;
       return;
     }
     content.innerHTML = `<div class="result-grid">${cards.map(c => buildCard(c.ip, c.r, c.isScanning)).join('')}</div>`;

@@ -3,8 +3,8 @@ WORKDIR /app
 
 # ── System deps + APT security tools ────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nmap masscan hydra john sqlmap ncrack dnsenum gobuster ffuf \
-    perl git curl wget unzip ca-certificates jq \
+    nmap masscan hydra john sqlmap ncrack dnsenum gobuster ffuf dirb \
+    perl ruby-full git curl wget unzip ca-certificates jq \
     && rm -rf /var/lib/apt/lists/*
 
 # ── nikto (Perl, clone from GitHub) ─────────────────────────────────────────
@@ -53,6 +53,22 @@ RUN curl -sL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass
 RUN pip install --no-cache-dir wafw00f
 RUN pip install --no-cache-dir wfuzz || true
 RUN pip install --no-cache-dir theHarvester || true
+RUN pip install --no-cache-dir arjun || true
+RUN pip install --no-cache-dir fierce || true
+RUN gem install wpscan --no-document 2>/dev/null || true
+
+# ── rustscan ─────────────────────────────────────────────────────────────────
+RUN curl -sL https://github.com/RustScan/RustScan/releases/download/2.3.0/rustscan_2.3.0_amd64.deb \
+    -o /tmp/rustscan.deb \
+    && dpkg -i /tmp/rustscan.deb && rm /tmp/rustscan.deb \
+    || echo "WARNING: rustscan skipped"
+
+# ── dalfox (XSS scanner) ─────────────────────────────────────────────────────
+RUN curl -sL https://github.com/hahwul/dalfox/releases/download/v2.9.2/dalfox_linux_amd64.tar.gz \
+    -o /tmp/dalfox.tar.gz \
+    && tar -xzf /tmp/dalfox.tar.gz -C /usr/local/bin/ dalfox \
+    && chmod +x /usr/local/bin/dalfox && rm /tmp/dalfox.tar.gz \
+    || echo "WARNING: dalfox skipped"
 
 # ── Python server requirements ───────────────────────────────────────────────
 COPY requirements_minimal.txt .

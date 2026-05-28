@@ -472,11 +472,64 @@ _VULN_RESULTS_PATH = os.environ.get("VULN_RESULTS_PATH", "/data/vuln_results.jso
 # HexStrike AI integration
 # ---------------------------------------------------------------------------
 HEXSTRIKE_URL: str = os.environ.get("HEXSTRIKE_URL", "")
-_hexstrike_results: dict  = {}   # ip → {ts, status, profile, nmap_output, nuclei, nikto, error}
-_hexstrike_scanning: set  = set()
+# Runtime-configurable HexStrike settings (overridden by _apply_config)
+HS_NMAP_SCAN_TYPE:   str = "-sCV"
+HS_NMAP_TIMING:      str = "T4"
+HS_NMAP_PORTS:       str = "--top-ports 1000"
+HS_NMAP_ARGS:        str = "-Pn"
+HS_NUCLEI_SEVERITY:  str = "low,medium,high,critical"
+HS_NUCLEI_TAGS:      str = ""
+HS_NUCLEI_TIMEOUT:   str = "10"
+HS_NUCLEI_ARGS:      str = "-silent -no-color"
+HS_NIKTO_MAXTIME:    str = "300"
+HS_NIKTO_ARGS:       str = "-nointeractive"
+HS_WEB_PORTS:        str = "80,443,8080,8443,8888,9090,9200,3000,5000,4848,7001,7443"
+
+HS_CONTAINER_NAME:    str = "HexStrike-AI"
+HS_GOBUSTER_WORDLIST: str = "/usr/share/wordlists/dirb/common.txt"
+HS_GOBUSTER_THREADS:  str = "10"
+HS_GOBUSTER_ARGS:     str = ""
+HS_FFUF_WORDLIST:     str = "/usr/share/wordlists/dirb/common.txt"
+HS_FFUF_THREADS:      str = "40"
+HS_FFUF_ARGS:         str = ""
+HS_MASSCAN_RATE:      str = "1000"
+HS_MASSCAN_PORTS:     str = "1-65535"
+HS_HTTPX_ARGS:        str = "-title -status-code -tech-detect"
+HS_WAFW00F_ARGS:      str = ""
+HS_KATANA_DEPTH:      str = "2"
+HS_KATANA_ARGS:       str = ""
+
+_hexstrike_results: dict  = {}   # ip → {ts, status, profile, nmap_output, nuclei, nikto, ...}
+_hexstrike_scanning: set        = set()
 _hexstrike_nuclei_scanning: set = set()
 _hexstrike_nikto_scanning:  set = set()
+_hexstrike_masscan_scanning: set = set()
+_hexstrike_gobuster_scanning: set = set()
+_hexstrike_ffuf_scanning:     set = set()
+_hexstrike_httpx_scanning:    set = set()
+_hexstrike_wafw00f_scanning:  set = set()
+_hexstrike_katana_scanning:   set = set()
 _hexstrike_lock = threading.Lock()
+
+
+def _docker_exec_tool(cmd: list, timeout: int = 300) -> tuple:
+    """Run a command inside the HexStrike container. Returns (exit_code, output)."""
+    try:
+        import docker as _dk
+        client = _dk.from_env()
+        container = client.containers.get(HS_CONTAINER_NAME)
+        r = container.exec_run(cmd, demux=False)
+        out = r.output.decode("utf-8", errors="replace") if r.output else ""
+        return r.exit_code or 0, out
+    except Exception as e:
+        return -1, str(e)
+
+def _hs_web_ports_set() -> set:
+    try:
+        return {int(p.strip()) for p in HS_WEB_PORTS.split(",") if p.strip()}
+    except Exception:
+        return {80, 443, 8080, 8443, 8888, 9090, 9200, 3000, 5000, 4848, 7001, 7443}
+
 _WEB_PORTS = {80, 443, 8080, 8443, 8888, 9090, 9200, 3000, 4848, 5000, 7001, 7443}
 
 def _save_vuln_results() -> None:
@@ -2824,6 +2877,31 @@ _CONFIG_FIELDS = {
     "vuln_nuclei_interactsh":       {"label": "Nuclei interactsh (OOB)",            "default": "false"},
     "vuln_nuclei_headless":         {"label": "Nuclei headless browser mode",       "default": "false"},
     "vuln_nuclei_custom_templates": {"label": "Nuclei extra templates path",        "default": ""},
+    # HexStrike scan options
+    "hs_url":              {"label": "HexStrike container URL",          "default": ""},
+    "hs_container_name":  {"label": "HexStrike container name (docker exec)", "default": "HexStrike-AI"},
+    "hs_nmap_scan_type":  {"label": "nmap scan type flags",             "default": "-sCV"},
+    "hs_nmap_timing":     {"label": "nmap timing template (T0–T5)",     "default": "T4"},
+    "hs_nmap_ports":      {"label": "nmap port selection",              "default": "--top-ports 1000"},
+    "hs_nmap_args":       {"label": "nmap extra args",                  "default": "-Pn"},
+    "hs_nuclei_severity": {"label": "Nuclei severity filter",           "default": "low,medium,high,critical"},
+    "hs_nuclei_tags":     {"label": "Nuclei tag filter (empty=all)",    "default": ""},
+    "hs_nuclei_timeout":  {"label": "Nuclei request timeout (s)",       "default": "10"},
+    "hs_nuclei_args":     {"label": "Nuclei extra args",                "default": "-silent -no-color"},
+    "hs_nikto_maxtime":   {"label": "Nikto max scan time (s)",          "default": "300"},
+    "hs_nikto_args":      {"label": "Nikto extra args",                 "default": "-nointeractive"},
+    "hs_web_ports":       {"label": "Web ports (comma-separated)",      "default": "80,443,8080,8443,8888,9090,9200,3000,5000,4848,7001,7443"},
+    "hs_masscan_rate":    {"label": "masscan packet rate",              "default": "1000"},
+    "hs_masscan_ports":   {"label": "masscan port range",               "default": "1-65535"},
+    "hs_gobuster_wordlist":{"label": "gobuster/ffuf wordlist path",     "default": "/usr/share/wordlists/dirb/common.txt"},
+    "hs_gobuster_threads": {"label": "gobuster thread count",           "default": "10"},
+    "hs_gobuster_args":   {"label": "gobuster extra args",              "default": ""},
+    "hs_ffuf_threads":    {"label": "ffuf thread count",                "default": "40"},
+    "hs_ffuf_args":       {"label": "ffuf match/filter args",           "default": ""},
+    "hs_httpx_args":      {"label": "httpx extra args",                 "default": "-title -status-code -tech-detect"},
+    "hs_wafw00f_args":    {"label": "wafw00f extra args",               "default": ""},
+    "hs_katana_depth":    {"label": "katana crawl depth",               "default": "2"},
+    "hs_katana_args":     {"label": "katana extra args",                "default": ""},
 }
 
 def _load_config() -> dict:
@@ -2980,6 +3058,39 @@ def _apply_config(data: dict) -> None:
     if "vuln_nuclei_interactsh"       in data: VULN_NUCLEI_INTERACTSH       = _b("vuln_nuclei_interactsh")
     if "vuln_nuclei_headless"         in data: VULN_NUCLEI_HEADLESS         = _b("vuln_nuclei_headless")
     if "vuln_nuclei_custom_templates" in data: VULN_NUCLEI_CUSTOM_TEMPLATES = data["vuln_nuclei_custom_templates"] or ""
+    # HexStrike
+    global HEXSTRIKE_URL, HS_CONTAINER_NAME
+    global HS_NMAP_SCAN_TYPE, HS_NMAP_TIMING, HS_NMAP_PORTS, HS_NMAP_ARGS
+    global HS_NUCLEI_SEVERITY, HS_NUCLEI_TAGS, HS_NUCLEI_TIMEOUT, HS_NUCLEI_ARGS
+    global HS_NIKTO_MAXTIME, HS_NIKTO_ARGS, HS_WEB_PORTS
+    global HS_MASSCAN_RATE, HS_MASSCAN_PORTS
+    global HS_GOBUSTER_WORDLIST, HS_GOBUSTER_THREADS, HS_GOBUSTER_ARGS
+    global HS_FFUF_THREADS, HS_FFUF_ARGS
+    global HS_HTTPX_ARGS, HS_WAFW00F_ARGS, HS_KATANA_DEPTH, HS_KATANA_ARGS
+    if "hs_url"              in data and data["hs_url"]: HEXSTRIKE_URL      = data["hs_url"]
+    if "hs_container_name"   in data and data["hs_container_name"]: HS_CONTAINER_NAME = data["hs_container_name"]
+    if "hs_nmap_scan_type"   in data: HS_NMAP_SCAN_TYPE   = data["hs_nmap_scan_type"]   or "-sCV"
+    if "hs_nmap_timing"      in data: HS_NMAP_TIMING      = data["hs_nmap_timing"]      or "T4"
+    if "hs_nmap_ports"       in data: HS_NMAP_PORTS       = data["hs_nmap_ports"]       or "--top-ports 1000"
+    if "hs_nmap_args"        in data: HS_NMAP_ARGS        = data["hs_nmap_args"]        or "-Pn"
+    if "hs_nuclei_severity"  in data: HS_NUCLEI_SEVERITY  = data["hs_nuclei_severity"]  or "low,medium,high,critical"
+    if "hs_nuclei_tags"      in data: HS_NUCLEI_TAGS      = data["hs_nuclei_tags"]      or ""
+    if "hs_nuclei_timeout"   in data: HS_NUCLEI_TIMEOUT   = data["hs_nuclei_timeout"]   or "10"
+    if "hs_nuclei_args"      in data: HS_NUCLEI_ARGS      = data["hs_nuclei_args"]      or "-silent -no-color"
+    if "hs_nikto_maxtime"    in data: HS_NIKTO_MAXTIME    = data["hs_nikto_maxtime"]    or "300"
+    if "hs_nikto_args"       in data: HS_NIKTO_ARGS       = data["hs_nikto_args"]       or "-nointeractive"
+    if "hs_web_ports"        in data: HS_WEB_PORTS        = data["hs_web_ports"]        or "80,443,8080,8443,8888,9090,9200,3000,5000"
+    if "hs_masscan_rate"     in data: HS_MASSCAN_RATE     = data["hs_masscan_rate"]     or "1000"
+    if "hs_masscan_ports"    in data: HS_MASSCAN_PORTS    = data["hs_masscan_ports"]    or "1-65535"
+    if "hs_gobuster_wordlist" in data: HS_GOBUSTER_WORDLIST = data["hs_gobuster_wordlist"] or "/usr/share/wordlists/dirb/common.txt"
+    if "hs_gobuster_threads" in data: HS_GOBUSTER_THREADS  = data["hs_gobuster_threads"] or "10"
+    if "hs_gobuster_args"    in data: HS_GOBUSTER_ARGS    = data["hs_gobuster_args"]    or ""
+    if "hs_ffuf_threads"     in data: HS_FFUF_THREADS     = data["hs_ffuf_threads"]     or "40"
+    if "hs_ffuf_args"        in data: HS_FFUF_ARGS        = data["hs_ffuf_args"]        or ""
+    if "hs_httpx_args"       in data: HS_HTTPX_ARGS       = data["hs_httpx_args"]       or "-title -status-code -tech-detect"
+    if "hs_wafw00f_args"     in data: HS_WAFW00F_ARGS     = data["hs_wafw00f_args"]     or ""
+    if "hs_katana_depth"     in data: HS_KATANA_DEPTH     = data["hs_katana_depth"]     or "2"
+    if "hs_katana_args"      in data: HS_KATANA_ARGS      = data["hs_katana_args"]      or ""
 
 # ---------------------------------------------------------------------------
 # Home Assistant API helpers
@@ -3919,8 +4030,8 @@ def _hexstrike_scan(ip: str) -> None:
         url  = HEXSTRIKE_URL.rstrip("/") + "/api/tools/nmap"
         resp = requests.post(url, json={
             "target":          ip,
-            "scan_type":       "-sCV",
-            "additional_args": "-T4 -Pn --top-ports 1000",
+            "scan_type":       HS_NMAP_SCAN_TYPE,
+            "additional_args": f"-{HS_NMAP_TIMING} {HS_NMAP_ARGS} {HS_NMAP_PORTS}".strip(),
         }, timeout=300)
         data   = resp.json()
         output = data.get("output") or data.get("stdout") or ""
@@ -3973,7 +4084,7 @@ def _hexstrike_nuclei_scan(ip: str) -> None:
     try:
         profile    = _hexstrike_results.get(ip, {}).get("profile", {})
         open_ports = profile.get("open_ports", [])
-        web_ports  = [p for p in open_ports if p in _WEB_PORTS] or ([80] if not open_ports else [])
+        web_ports  = [p for p in open_ports if p in _hs_web_ports_set()] or ([80] if not open_ports else [])
         if not web_ports:
             with _hexstrike_lock:
                 _hexstrike_results[ip]["nuclei"] = {"status": "done", "output": "", "findings": [], "error": "No web ports found", "ts": time.time()}
@@ -3982,13 +4093,16 @@ def _hexstrike_nuclei_scan(ip: str) -> None:
         all_output   = ""
         all_findings = []
         base = HEXSTRIKE_URL.rstrip("/")
+        nuclei_args  = f"-timeout {HS_NUCLEI_TIMEOUT} {HS_NUCLEI_ARGS}".strip()
+        if HS_NUCLEI_TAGS:
+            nuclei_args += f" -tags {HS_NUCLEI_TAGS}"
         for p in web_ports:
             scheme     = "https" if p in {443, 8443} else "http"
             target_url = f"{scheme}://{ip}:{p}"
             resp = requests.post(f"{base}/api/tools/nuclei", json={
                 "target":          target_url,
-                "severity":        "low,medium,high,critical",
-                "additional_args": "-timeout 10 -no-color -silent",
+                "severity":        HS_NUCLEI_SEVERITY,
+                "additional_args": nuclei_args,
             }, timeout=360)
             data   = resp.json()
             output = data.get("output") or data.get("stdout") or ""
@@ -4024,7 +4138,7 @@ def _hexstrike_nikto_scan(ip: str) -> None:
     try:
         profile    = _hexstrike_results.get(ip, {}).get("profile", {})
         open_ports = profile.get("open_ports", [])
-        web_ports  = [p for p in open_ports if p in _WEB_PORTS] or ([80] if not open_ports else [])
+        web_ports  = [p for p in open_ports if p in _hs_web_ports_set()] or ([80] if not open_ports else [])
         if not web_ports:
             with _hexstrike_lock:
                 _hexstrike_results[ip]["nikto"] = {"status": "done", "output": "", "findings": [], "error": "No web ports found", "ts": time.time()}
@@ -4034,8 +4148,8 @@ def _hexstrike_nikto_scan(ip: str) -> None:
         base     = HEXSTRIKE_URL.rstrip("/")
         resp = requests.post(f"{base}/api/tools/nikto", json={
             "target":          ip,
-            "additional_args": f"-p {port_str} -nointeractive -maxtime 300",
-        }, timeout=420)
+            "additional_args": f"-p {port_str} -maxtime {HS_NIKTO_MAXTIME} {HS_NIKTO_ARGS}".strip(),
+        }, timeout=int(HS_NIKTO_MAXTIME) + 120)
         data     = resp.json()
         output   = data.get("output") or data.get("stdout") or ""
         findings = _parse_nikto_findings(output)
@@ -4056,6 +4170,225 @@ def _hexstrike_nikto_scan(ip: str) -> None:
         log.warning("HexStrike nikto %s failed: %s", ip, e)
     finally:
         _hexstrike_nikto_scanning.discard(ip)
+
+
+def _hs_web_urls(ip: str) -> list:
+    """Return http/https URLs for all open web ports on this IP."""
+    profile   = _hexstrike_results.get(ip, {}).get("profile", {})
+    ports     = profile.get("open_ports", [])
+    web_set   = _hs_web_ports_set()
+    web_ports = [p for p in ports if p in web_set] or ([80] if not ports else [])
+    urls = []
+    for p in web_ports:
+        scheme = "https" if p in (443, 8443) else "http"
+        urls.append(f"{scheme}://{ip}:{p}" if p not in (80, 443) else f"{scheme}://{ip}")
+    return urls or [f"http://{ip}"]
+
+
+def _hexstrike_masscan(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_masscan_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["masscan"] = {"status": "scanning", "ports": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        rc, out = _docker_exec_tool(
+            ["masscan", ip, f"-p{HS_MASSCAN_PORTS}", f"--rate={HS_MASSCAN_RATE}", "--wait", "2"],
+            timeout=300,
+        )
+        import re
+        ports = []
+        for m in re.finditer(r"Discovered open port (\d+)/tcp", out):
+            ports.append(int(m.group(1)))
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["masscan"] = {
+                "status": "done" if rc == 0 else "error",
+                "ports": sorted(ports),
+                "output": out,
+                "error": "" if rc == 0 else out,
+                "ts": time.time(),
+            }
+        log.info("HexStrike masscan %s: %d ports", ip, len(ports))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["masscan"] = {"status": "error", "ports": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike masscan %s failed: %s", ip, e)
+    finally:
+        _hexstrike_masscan_scanning.discard(ip)
+
+
+def _hexstrike_httpx(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_httpx_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["httpx"] = {"status": "scanning", "findings": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        urls = _hs_web_urls(ip)
+        extra = HS_HTTPX_ARGS.split() if HS_HTTPX_ARGS.strip() else ["-title", "-status-code", "-tech-detect"]
+        rc, out = _docker_exec_tool(["httpx"] + extra + urls, timeout=120)
+        findings = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("[")]
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["httpx"] = {
+                "status": "done",
+                "findings": findings,
+                "output": out,
+                "error": "" if rc == 0 else out,
+                "ts": time.time(),
+            }
+        log.info("HexStrike httpx %s: %d services", ip, len(findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["httpx"] = {"status": "error", "findings": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike httpx %s failed: %s", ip, e)
+    finally:
+        _hexstrike_httpx_scanning.discard(ip)
+
+
+def _hexstrike_wafw00f(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_wafw00f_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["wafw00f"] = {"status": "scanning", "findings": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        urls  = _hs_web_urls(ip)
+        extra = HS_WAFW00F_ARGS.split() if HS_WAFW00F_ARGS.strip() else []
+        results = []
+        combined_out = ""
+        for url in urls:
+            rc, out = _docker_exec_tool(["wafw00f", url] + extra, timeout=60)
+            combined_out += out + "\n"
+            for line in out.splitlines():
+                if "is behind" in line or "No WAF" in line or "detected" in line.lower():
+                    results.append(f"{url}: {line.strip()}")
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["wafw00f"] = {
+                "status": "done",
+                "findings": results,
+                "output": combined_out.strip(),
+                "error": "",
+                "ts": time.time(),
+            }
+        log.info("HexStrike wafw00f %s: %d results", ip, len(results))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["wafw00f"] = {"status": "error", "findings": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike wafw00f %s failed: %s", ip, e)
+    finally:
+        _hexstrike_wafw00f_scanning.discard(ip)
+
+
+def _hexstrike_gobuster(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_gobuster_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["gobuster"] = {"status": "scanning", "findings": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        urls     = _hs_web_urls(ip)
+        wordlist = HS_GOBUSTER_WORDLIST
+        extra    = HS_GOBUSTER_ARGS.split() if HS_GOBUSTER_ARGS.strip() else []
+        all_findings = []
+        combined_out = ""
+        for url in urls:
+            cmd = ["gobuster", "dir", "-u", url, "-w", wordlist,
+                   "-t", HS_GOBUSTER_THREADS, "-q", "--no-error"] + extra
+            rc, out = _docker_exec_tool(cmd, timeout=300)
+            combined_out += out + "\n"
+            for line in out.splitlines():
+                line = line.strip()
+                if line and not line.startswith("Error") and "Status:" in line:
+                    all_findings.append(f"{url}{line}")
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["gobuster"] = {
+                "status": "done",
+                "findings": all_findings,
+                "output": combined_out.strip(),
+                "error": "",
+                "ts": time.time(),
+            }
+        log.info("HexStrike gobuster %s: %d paths", ip, len(all_findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["gobuster"] = {"status": "error", "findings": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike gobuster %s failed: %s", ip, e)
+    finally:
+        _hexstrike_gobuster_scanning.discard(ip)
+
+
+def _hexstrike_ffuf(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_ffuf_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["ffuf"] = {"status": "scanning", "findings": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        urls     = _hs_web_urls(ip)
+        wordlist = HS_GOBUSTER_WORDLIST
+        extra    = HS_FFUF_ARGS.split() if HS_FFUF_ARGS.strip() else ["-mc", "200,204,301,302,307,401,403"]
+        all_findings = []
+        combined_out = ""
+        for url in urls:
+            cmd = ["ffuf", "-u", f"{url}/FUZZ", "-w", wordlist,
+                   "-t", HS_FFUF_THREADS, "-s"] + extra
+            rc, out = _docker_exec_tool(cmd, timeout=300)
+            combined_out += out + "\n"
+            for line in out.splitlines():
+                line = line.strip()
+                if line and not line.startswith("[") and "/" in line:
+                    all_findings.append(f"{url}/{line}")
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["ffuf"] = {
+                "status": "done",
+                "findings": all_findings,
+                "output": combined_out.strip(),
+                "error": "",
+                "ts": time.time(),
+            }
+        log.info("HexStrike ffuf %s: %d paths", ip, len(all_findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["ffuf"] = {"status": "error", "findings": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike ffuf %s failed: %s", ip, e)
+    finally:
+        _hexstrike_ffuf_scanning.discard(ip)
+
+
+def _hexstrike_katana(ip: str) -> None:
+    with _hexstrike_lock:
+        _hexstrike_katana_scanning.add(ip)
+        _hexstrike_results.setdefault(ip, {"ts": time.time(), "status": "done", "profile": {}, "nmap_output": "", "error": ""})
+        _hexstrike_results[ip]["katana"] = {"status": "scanning", "findings": [], "output": "", "error": "", "ts": time.time()}
+    try:
+        urls  = _hs_web_urls(ip)
+        extra = HS_KATANA_ARGS.split() if HS_KATANA_ARGS.strip() else []
+        all_findings = []
+        combined_out = ""
+        for url in urls:
+            cmd = ["katana", "-u", url, "-depth", HS_KATANA_DEPTH, "-silent"] + extra
+            rc, out = _docker_exec_tool(cmd, timeout=180)
+            combined_out += out + "\n"
+            for line in out.splitlines():
+                line = line.strip()
+                if line and line.startswith("http"):
+                    all_findings.append(line)
+        with _hexstrike_lock:
+            _hexstrike_results[ip]["katana"] = {
+                "status": "done",
+                "findings": list(dict.fromkeys(all_findings)),
+                "output": combined_out.strip(),
+                "error": "",
+                "ts": time.time(),
+            }
+        log.info("HexStrike katana %s: %d URLs", ip, len(all_findings))
+    except Exception as e:
+        with _hexstrike_lock:
+            if ip in _hexstrike_results:
+                _hexstrike_results[ip]["katana"] = {"status": "error", "findings": [], "output": "", "error": str(e), "ts": time.time()}
+        log.warning("HexStrike katana %s failed: %s", ip, e)
+    finally:
+        _hexstrike_katana_scanning.discard(ip)
 
 
 @app.route("/api/hexstrike/scan", methods=["POST"])
@@ -4117,16 +4450,72 @@ def api_hexstrike_nikto():
     return jsonify({"ok": True})
 
 
+def _hs_tool_route(tool: str, fn, scanning_set: set):
+    """Generic handler for docker-exec tool routes."""
+    data = request.json or {}
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "ip required"}), 400
+    if ip in scanning_set:
+        return jsonify({"ok": True, "status": "already_scanning"})
+    threading.Thread(target=fn, args=(ip,), daemon=True, name=f"hs-{tool}-{ip}").start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hexstrike/masscan",  methods=["POST"])
+def api_hexstrike_masscan():  return _hs_tool_route("masscan",  _hexstrike_masscan,  _hexstrike_masscan_scanning)
+
+@app.route("/api/hexstrike/httpx",    methods=["POST"])
+def api_hexstrike_httpx():    return _hs_tool_route("httpx",    _hexstrike_httpx,    _hexstrike_httpx_scanning)
+
+@app.route("/api/hexstrike/wafw00f",  methods=["POST"])
+def api_hexstrike_wafw00f():  return _hs_tool_route("wafw00f",  _hexstrike_wafw00f,  _hexstrike_wafw00f_scanning)
+
+@app.route("/api/hexstrike/gobuster", methods=["POST"])
+def api_hexstrike_gobuster(): return _hs_tool_route("gobuster", _hexstrike_gobuster, _hexstrike_gobuster_scanning)
+
+@app.route("/api/hexstrike/ffuf",     methods=["POST"])
+def api_hexstrike_ffuf():     return _hs_tool_route("ffuf",     _hexstrike_ffuf,     _hexstrike_ffuf_scanning)
+
+@app.route("/api/hexstrike/katana",   methods=["POST"])
+def api_hexstrike_katana():   return _hs_tool_route("katana",   _hexstrike_katana,   _hexstrike_katana_scanning)
+
+
 @app.route("/api/hexstrike/results")
 def api_hexstrike_results():
     with _hexstrike_lock:
         return jsonify({
-            "results":          dict(_hexstrike_results),
-            "scanning":         list(_hexstrike_scanning),
-            "nuclei_scanning":  list(_hexstrike_nuclei_scanning),
-            "nikto_scanning":   list(_hexstrike_nikto_scanning),
-            "configured":       bool(HEXSTRIKE_URL),
+            "results":            dict(_hexstrike_results),
+            "scanning":           list(_hexstrike_scanning),
+            "nuclei_scanning":    list(_hexstrike_nuclei_scanning),
+            "nikto_scanning":     list(_hexstrike_nikto_scanning),
+            "masscan_scanning":   list(_hexstrike_masscan_scanning),
+            "httpx_scanning":     list(_hexstrike_httpx_scanning),
+            "wafw00f_scanning":   list(_hexstrike_wafw00f_scanning),
+            "gobuster_scanning":  list(_hexstrike_gobuster_scanning),
+            "ffuf_scanning":      list(_hexstrike_ffuf_scanning),
+            "katana_scanning":    list(_hexstrike_katana_scanning),
+            "configured":         bool(HEXSTRIKE_URL or HS_CONTAINER_NAME),
         })
+
+
+@app.route("/api/hexstrike/config", methods=["GET"])
+def api_hexstrike_config_get():
+    keys = [k for k in _CONFIG_FIELDS if k.startswith("hs_")]
+    return jsonify({k: _runtime_config.get(k, _CONFIG_FIELDS[k]["default"]) for k in keys} | {
+        "hs_url": HEXSTRIKE_URL,
+    })
+
+
+@app.route("/api/hexstrike/config", methods=["POST"])
+def api_hexstrike_config_post():
+    data    = request.json or {}
+    allowed = {k for k in _CONFIG_FIELDS if k.startswith("hs_")}
+    filtered = {k: v for k, v in data.items() if k in allowed}
+    _runtime_config.update(filtered)
+    _save_config(_runtime_config)
+    _apply_config(filtered)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/hexstrike")

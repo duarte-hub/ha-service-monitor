@@ -506,13 +506,19 @@
 <div class="pane" id="hexstrike">
   <div class="sub">
     <div class="sub-label">Connection</div>
-    <div class="field"><label>HexStrike container URL</label>
-      <input type="text" id="hs_url" placeholder="http://192.168.0.39:8888">
-      <small style="color:var(--muted);font-size:.72rem">Also settable via HEXSTRIKE_URL environment variable</small>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>HexStrike container URL</label>
+        <input type="text" id="hs_url" placeholder="http://192.168.0.39:8888">
+        <small style="color:var(--muted);font-size:.72rem">For nmap/nuclei/nikto via HTTP API</small>
+      </div>
+      <div class="field" style="margin:0"><label>Container name (docker exec)</label>
+        <input type="text" id="hs_container_name" placeholder="HexStrike-AI">
+        <small style="color:var(--muted);font-size:.72rem">Used for masscan, gobuster, ffuf, httpx, wafw00f, katana. Requires docker socket mounted.</small>
+      </div>
     </div>
-    <div class="field" style="margin-bottom:0"><label>Web ports (comma-separated)</label>
+    <div class="field"><label>Web ports (comma-separated)</label>
       <input type="text" id="hs_web_ports" placeholder="80,443,8080,8443,8888,9090,9200,3000,5000">
-      <small style="color:var(--muted);font-size:.72rem">Ports considered "web" — Nuclei and Nikto only run against these</small>
+      <small style="color:var(--muted);font-size:.72rem">Ports considered "web" — Nuclei, Nikto, gobuster, etc. only run against these</small>
     </div>
   </div>
 
@@ -533,11 +539,57 @@
     <div class="grid2" style="margin-top:12px">
       <div class="field" style="margin:0"><label>Port selection</label>
         <input type="text" id="hs_nmap_ports" placeholder="--top-ports 1000">
-        <small style="color:var(--muted);font-size:.72rem">e.g. --top-ports 1000, -p 1-65535, -p 80,443</small>
+        <small style="color:var(--muted);font-size:.72rem">e.g. --top-ports 1000, -p 1-65535</small>
       </div>
       <div class="field" style="margin:0"><label>Extra args</label>
         <input type="text" id="hs_nmap_args" placeholder="-Pn"></div>
     </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">masscan (fast full-port scan)</div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>Port range</label>
+        <input type="text" id="hs_masscan_ports" placeholder="1-65535"></div>
+      <div class="field" style="margin:0"><label>Packet rate (pkts/sec)</label>
+        <input type="number" id="hs_masscan_rate" min="100" max="100000" placeholder="1000">
+        <small style="color:var(--muted);font-size:.72rem">Higher = faster but may miss ports or upset switches</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">gobuster / ffuf (directory discovery)</div>
+    <div class="field"><label>Wordlist path (inside HexStrike container)</label>
+      <input type="text" id="hs_gobuster_wordlist" placeholder="/usr/share/wordlists/dirb/common.txt">
+      <small style="color:var(--muted);font-size:.72rem">Shared by gobuster and ffuf. Default wordlists come with <code>dirb</code> package.</small>
+    </div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>gobuster threads</label>
+        <input type="number" id="hs_gobuster_threads" min="1" max="100" placeholder="10"></div>
+      <div class="field" style="margin:0"><label>gobuster extra args</label>
+        <input type="text" id="hs_gobuster_args" placeholder=""></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field" style="margin:0"><label>ffuf threads</label>
+        <input type="number" id="hs_ffuf_threads" min="1" max="200" placeholder="40"></div>
+      <div class="field" style="margin:0"><label>ffuf match/filter args</label>
+        <input type="text" id="hs_ffuf_args" placeholder="-mc 200,204,301,302,307,401,403"></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="sub-label">httpx / wafw00f / katana</div>
+    <div class="field" style="margin-bottom:12px"><label>httpx extra args</label>
+      <input type="text" id="hs_httpx_args" placeholder="-title -status-code -tech-detect"></div>
+    <div class="grid2">
+      <div class="field" style="margin:0"><label>wafw00f extra args</label>
+        <input type="text" id="hs_wafw00f_args" placeholder=""></div>
+      <div class="field" style="margin:0"><label>katana crawl depth</label>
+        <input type="number" id="hs_katana_depth" min="1" max="5" placeholder="2"></div>
+    </div>
+    <div class="field" style="margin-top:12px;margin-bottom:0"><label>katana extra args</label>
+      <input type="text" id="hs_katana_args" placeholder=""></div>
   </div>
 
   <div class="sub">
@@ -703,36 +755,60 @@
   async function loadHexStrike() {
     try {
       const d = await (await fetch('/api/hexstrike/config')).json();
-      set('hs_url',             d.hs_url             || '');
-      set('hs_web_ports',       d.hs_web_ports        || '80,443,8080,8443,8888,9090,9200,3000,5000,4848,7001,7443');
-      set('hs_nmap_scan_type',  d.hs_nmap_scan_type   || '-sCV');
+      set('hs_url',              d.hs_url              || '');
+      set('hs_container_name',   d.hs_container_name   || 'HexStrike-AI');
+      set('hs_web_ports',        d.hs_web_ports         || '80,443,8080,8443,8888,9090,9200,3000,5000,4848,7001,7443');
+      set('hs_nmap_scan_type',   d.hs_nmap_scan_type    || '-sCV');
       const nt = document.getElementById('hs_nmap_timing');
       if (nt) nt.value = d.hs_nmap_timing || 'T4';
-      set('hs_nmap_ports',      d.hs_nmap_ports       || '--top-ports 1000');
-      set('hs_nmap_args',       d.hs_nmap_args        || '-Pn');
-      set('hs_nuclei_severity', d.hs_nuclei_severity  || 'low,medium,high,critical');
-      set('hs_nuclei_tags',     d.hs_nuclei_tags      || '');
-      set('hs_nuclei_timeout',  d.hs_nuclei_timeout   || '10');
-      set('hs_nuclei_args',     d.hs_nuclei_args      || '-silent -no-color');
-      set('hs_nikto_maxtime',   d.hs_nikto_maxtime    || '300');
-      set('hs_nikto_args',      d.hs_nikto_args       || '-nointeractive');
+      set('hs_nmap_ports',       d.hs_nmap_ports        || '--top-ports 1000');
+      set('hs_nmap_args',        d.hs_nmap_args         || '-Pn');
+      set('hs_masscan_ports',    d.hs_masscan_ports     || '1-65535');
+      set('hs_masscan_rate',     d.hs_masscan_rate      || '1000');
+      set('hs_gobuster_wordlist',d.hs_gobuster_wordlist || '/usr/share/wordlists/dirb/common.txt');
+      set('hs_gobuster_threads', d.hs_gobuster_threads  || '10');
+      set('hs_gobuster_args',    d.hs_gobuster_args     || '');
+      set('hs_ffuf_threads',     d.hs_ffuf_threads      || '40');
+      set('hs_ffuf_args',        d.hs_ffuf_args         || '');
+      set('hs_httpx_args',       d.hs_httpx_args        || '-title -status-code -tech-detect');
+      set('hs_wafw00f_args',     d.hs_wafw00f_args      || '');
+      set('hs_katana_depth',     d.hs_katana_depth      || '2');
+      set('hs_katana_args',      d.hs_katana_args       || '');
+      set('hs_nuclei_severity',  d.hs_nuclei_severity   || 'low,medium,high,critical');
+      set('hs_nuclei_tags',      d.hs_nuclei_tags       || '');
+      set('hs_nuclei_timeout',   d.hs_nuclei_timeout    || '10');
+      set('hs_nuclei_args',      d.hs_nuclei_args       || '-silent -no-color');
+      set('hs_nikto_maxtime',    d.hs_nikto_maxtime     || '300');
+      set('hs_nikto_args',       d.hs_nikto_args        || '-nointeractive');
     } catch (_) {}
   }
 
   async function saveHexStrike() {
     const payload = {
-      hs_url:             val('hs_url'),
-      hs_web_ports:       val('hs_web_ports'),
-      hs_nmap_scan_type:  val('hs_nmap_scan_type'),
-      hs_nmap_timing:     val('hs_nmap_timing'),
-      hs_nmap_ports:      val('hs_nmap_ports'),
-      hs_nmap_args:       val('hs_nmap_args'),
-      hs_nuclei_severity: val('hs_nuclei_severity'),
-      hs_nuclei_tags:     val('hs_nuclei_tags'),
-      hs_nuclei_timeout:  val('hs_nuclei_timeout'),
-      hs_nuclei_args:     val('hs_nuclei_args'),
-      hs_nikto_maxtime:   val('hs_nikto_maxtime'),
-      hs_nikto_args:      val('hs_nikto_args'),
+      hs_url:              val('hs_url'),
+      hs_container_name:   val('hs_container_name'),
+      hs_web_ports:        val('hs_web_ports'),
+      hs_nmap_scan_type:   val('hs_nmap_scan_type'),
+      hs_nmap_timing:      val('hs_nmap_timing'),
+      hs_nmap_ports:       val('hs_nmap_ports'),
+      hs_nmap_args:        val('hs_nmap_args'),
+      hs_masscan_ports:    val('hs_masscan_ports'),
+      hs_masscan_rate:     val('hs_masscan_rate'),
+      hs_gobuster_wordlist:val('hs_gobuster_wordlist'),
+      hs_gobuster_threads: val('hs_gobuster_threads'),
+      hs_gobuster_args:    val('hs_gobuster_args'),
+      hs_ffuf_threads:     val('hs_ffuf_threads'),
+      hs_ffuf_args:        val('hs_ffuf_args'),
+      hs_httpx_args:       val('hs_httpx_args'),
+      hs_wafw00f_args:     val('hs_wafw00f_args'),
+      hs_katana_depth:     val('hs_katana_depth'),
+      hs_katana_args:      val('hs_katana_args'),
+      hs_nuclei_severity:  val('hs_nuclei_severity'),
+      hs_nuclei_tags:      val('hs_nuclei_tags'),
+      hs_nuclei_timeout:   val('hs_nuclei_timeout'),
+      hs_nuclei_args:      val('hs_nuclei_args'),
+      hs_nikto_maxtime:    val('hs_nikto_maxtime'),
+      hs_nikto_args:       val('hs_nikto_args'),
     };
     try {
       const r = await fetch('/api/hexstrike/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});

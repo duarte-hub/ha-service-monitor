@@ -21,5 +21,6 @@
   <Config Name="HA_TOKEN" Target="HA_TOKEN" Default="" Mode="" Description="Long-lived access token from HA Profile -> Security" Type="Variable" Display="always" Required="true" Mask="true"></Config>
   <Config Name="POLL_INTERVAL" Target="POLL_INTERVAL" Default="30" Mode="" Description="Seconds between health checks" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
   <Config Name="HEXSTRIKE_URL" Target="HEXSTRIKE_URL" Default="" Mode="" Description="HexStrike AI container URL" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Docker socket — required for gobuster, ffuf, masscan, httpx, wafw00f, katana via docker exec" Type="Path" Display="advanced" Required="false" Mask="false">/var/run/docker.sock</Config>
   <Config Name="TZ" Target="TZ" Default="Australia/Brisbane" Mode="" Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Australia/Brisbane</Config>
 </Container>
