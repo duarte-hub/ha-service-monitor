@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>HexStrike-AI</Name>
+  <Repository>ghcr.io/duarte-hub/hexstrike-ai:latest</Repository>
+  <Registry>https://ghcr.io/duarte-hub/hexstrike-ai</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/duarte-hub/ha-service-monitor</Support>
+  <Project>https://github.com/duarte-hub/ha-service-monitor</Project>
+  <Overview>HexStrike AI — network intelligence and security scanning.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8888]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/duarte-hub/ha-service-monitor/main/unraid/my-hexstrike-ai.xml</TemplateURL>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <Config Name="Web Port" Target="8888" Default="8888" Mode="tcp" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
+  <Config Name="HEXSTRIKE_PORT" Target="HEXSTRIKE_PORT" Default="8888" Mode="" Type="Variable" Display="advanced" Required="false" Mask="false">8888</Config>
+</Container>
