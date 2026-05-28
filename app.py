@@ -468,6 +468,14 @@ _vuln_scanning: set  = set()
 _vuln_lock = threading.Lock()
 _VULN_RESULTS_PATH = os.environ.get("VULN_RESULTS_PATH", "/data/vuln_results.json")
 
+# ---------------------------------------------------------------------------
+# HexStrike AI integration
+# ---------------------------------------------------------------------------
+HEXSTRIKE_URL: str = os.environ.get("HEXSTRIKE_URL", "")
+_hexstrike_results: dict = {}   # ip → {ts, status, profile, error}
+_hexstrike_scanning: set = set()
+_hexstrike_lock = threading.Lock()
+
 def _save_vuln_results() -> None:
     try:
         rows = [(ip, json.dumps(data)) for ip, data in _vuln_results.items()]
@@ -3850,6 +3858,76 @@ def api_vuln_log():
         scanning = bool(_vuln_scanning)
     return jsonify({"entries": entries, "scanning": scanning,
                     "max_seq": _vuln_log_seq})
+
+
+# ---------------------------------------------------------------------------
+# HexStrike AI routes
+# ---------------------------------------------------------------------------
+
+def _hexstrike_scan(ip: str) -> None:
+    if not HEXSTRIKE_URL:
+        return
+    with _hexstrike_lock:
+        if ip in _hexstrike_scanning:
+            return
+        _hexstrike_scanning.add(ip)
+        _hexstrike_results[ip] = {"ts": time.time(), "status": "scanning", "profile": {}, "error": ""}
+    try:
+        url = HEXSTRIKE_URL.rstrip("/") + "/api/intelligence/analyze-target"
+        resp = requests.post(url, json={"target": ip}, timeout=180)
+        data = resp.json()
+        with _hexstrike_lock:
+            _hexstrike_results[ip] = {
+                "ts": time.time(),
+                "status": "done" if data.get("success") else "error",
+                "profile": data.get("target_profile", {}),
+                "error":   data.get("error", ""),
+            }
+        log.info("HexStrike scan %s: %s", ip, _hexstrike_results[ip]["status"])
+    except Exception as e:
+        with _hexstrike_lock:
+            _hexstrike_results[ip] = {"ts": time.time(), "status": "error", "profile": {}, "error": str(e)}
+        log.warning("HexStrike scan %s failed: %s", ip, e)
+    finally:
+        with _hexstrike_lock:
+            _hexstrike_scanning.discard(ip)
+
+
+@app.route("/api/hexstrike/scan", methods=["POST"])
+def api_hexstrike_scan():
+    data = request.json or {}
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "error": "ip required"}), 400
+    if not HEXSTRIKE_URL:
+        return jsonify({"ok": False, "error": "HEXSTRIKE_URL not configured"}), 400
+    threading.Thread(target=_hexstrike_scan, args=(ip,), daemon=True, name=f"hexstrike-{ip}").start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hexstrike/scan_all", methods=["POST"])
+def api_hexstrike_scan_all():
+    if not HEXSTRIKE_URL:
+        return jsonify({"ok": False, "error": "HEXSTRIKE_URL not configured"}), 400
+    with _devices_lock:
+        ips = list(_devices.keys())
+    count = 0
+    for ip in ips:
+        with _hexstrike_lock:
+            if ip not in _hexstrike_scanning:
+                threading.Thread(target=_hexstrike_scan, args=(ip,), daemon=True, name=f"hexstrike-{ip}").start()
+                count += 1
+    return jsonify({"ok": True, "queued": count})
+
+
+@app.route("/api/hexstrike/results")
+def api_hexstrike_results():
+    with _hexstrike_lock:
+        return jsonify({
+            "results":    dict(_hexstrike_results),
+            "scanning":   list(_hexstrike_scanning),
+            "configured": bool(HEXSTRIKE_URL),
+        })
 
 
 @app.route("/api/devices/<ip>/nmap", methods=["POST"])

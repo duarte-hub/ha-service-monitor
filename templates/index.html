@@ -59,6 +59,16 @@
     .btn-filter { background:transparent; border:1px solid var(--border); border-radius:7px; color:var(--muted); padding:5px 12px; font-size:.78rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
     .btn-filter:hover { border-color:var(--primary); color:var(--primary); }
     .btn-filter.active { background:var(--pdim); border-color:var(--primary); color:var(--primary); font-weight:600; }
+    /* ── HexStrike ──────────────────────────────────────────────────────── */
+    .btn-hexstrike { background:rgba(220,38,38,.15); border:1px solid rgba(220,38,38,.4); color:#f87171; border-radius:6px; padding:3px 9px; font-size:.72rem; font-weight:600; cursor:pointer; transition:all .15s; white-space:nowrap; }
+    .btn-hexstrike:hover { background:rgba(220,38,38,.3); }
+    .btn-hexstrike:disabled { opacity:.35; cursor:not-allowed; }
+    .btn-hexstrike.scanning { background:rgba(220,38,38,.08); animation:hs-pulse 1.2s ease-in-out infinite; }
+    @keyframes hs-pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+    .hs-badge { display:inline-block; font-size:.68rem; font-weight:700; border-radius:4px; padding:1px 5px; vertical-align:middle; }
+    .hs-done  { background:rgba(16,185,129,.15); color:#6ee7b7; border:1px solid rgba(16,185,129,.3); }
+    .hs-error { background:rgba(220,38,38,.15); color:#fca5a5; border:1px solid rgba(220,38,38,.3); }
+    .hs-detail { font-size:.72rem; color:var(--muted); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .scan-info { font-size:.75rem; color:var(--muted); margin-left:auto; }
 
     /* ── Device table ────────────────────────────────────────────────────── */
@@ -306,6 +316,8 @@
   <button class="btn-scan" id="btn-scan" onclick="startScan()">Scan Now</button>
   <button class="btn-scan" id="btn-nmap-all" onclick="startNmapAll()" style="background:rgba(3,169,244,.18);border:1px solid rgba(3,169,244,.5);">Nmap All</button>
   <span id="nmap-all-info" style="font-size:.75rem;color:var(--muted);white-space:nowrap"></span>
+  <button class="btn-scan" id="btn-hexstrike-all" onclick="hexstrikeAll()" style="background:rgba(220,38,38,.18);border:1px solid rgba(220,38,38,.5);color:#f87171;" title="Run HexStrike AI on all devices">⚡ HexStrike All</button>
+  <span id="hexstrike-all-info" style="font-size:.75rem;color:var(--muted);white-space:nowrap"></span>
 </div>
 
 <div class="card">
@@ -322,11 +334,12 @@
         <th>Connection</th>
         <th>Tags</th>
         <th>Monitor</th>
+        <th style="width:60px">HexStrike</th>
         <th style="width:32px"></th>
       </tr>
     </thead>
     <tbody id="device-tbody">
-      <tr class="empty-row"><td colspan="11">No devices yet — click Scan Now</td></tr>
+      <tr class="empty-row"><td colspan="12">No devices yet — click Scan Now</td></tr>
     </tbody>
   </table>
 </div>
@@ -593,6 +606,7 @@
       <td>${_swPortCell(d)}</td>
       <td>${_tagsCell(d)}</td>
       <td onclick="event.stopPropagation()">${_monitorCell(d)}</td>
+      <td onclick="event.stopPropagation()">${_hexstrikeCell(d)}</td>
       <td onclick="event.stopPropagation()"><button class="btn-del" title="Remove" onclick="deleteDevice('${d.ip}')">✕</button></td>
     </tr>`;
   }
@@ -621,10 +635,10 @@
     if (!visible.length) {
       if (_monitoredOnly && _devices.length) {
         tbody.innerHTML =
-          `<tr class="empty-row"><td colspan="11">No monitored devices yet</td></tr>` +
+          `<tr class="empty-row"><td colspan="12">No monitored devices yet</td></tr>` +
           _devices.map(d => _rowHtml(d, true)).join('');
       } else {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">${_devices.length ? 'No monitored devices' : 'No devices yet — click Scan Now'}</td></tr>`;
       }
     } else {
       tbody.innerHTML = visible.map(d => _rowHtml(d, false)).join('');
@@ -764,6 +778,83 @@
     } catch(_) {}
   }
 
+  // ── HexStrike AI ───────────────────────────────────────────────────────
+  let _hsResults = {};
+  let _hsScanning = new Set();
+  let _hsConfigured = false;
+  let _hsPollTimer = null;
+
+  function _hexstrikeCell(d) {
+    const r = _hsResults[d.ip];
+    const scanning = _hsScanning.has(d.ip);
+    if (!_hsConfigured) return '<span style="color:var(--muted);font-size:.7rem">—</span>';
+    if (scanning) return `<button class="btn-hexstrike scanning" disabled>⚡…</button>`;
+    if (r && r.status === 'done') {
+      const risk = (r.profile && r.profile.risk_level) ? r.profile.risk_level : '';
+      const col = risk === 'high' || risk === 'critical' ? '#f87171' : risk === 'medium' ? '#fbbf24' : '#6ee7b7';
+      return `<button class="btn-hexstrike" onclick="hexstrikeSingle('${d.ip}')" title="Re-scan with HexStrike AI">
+        <span style="color:${col}">${risk || '✓'}</span></button>`;
+    }
+    if (r && r.status === 'error') return `<button class="btn-hexstrike" onclick="hexstrikeSingle('${d.ip}')" title="${r.error || 'Error'}">⚡!</button>`;
+    return `<button class="btn-hexstrike" onclick="hexstrikeSingle('${d.ip}')" title="Scan with HexStrike AI">⚡</button>`;
+  }
+
+  async function hexstrikeSingle(ip) {
+    const r = await fetch('/api/hexstrike/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip})});
+    const d = await r.json();
+    if (!d.ok) { alert('HexStrike: ' + (d.error || 'error')); return; }
+    _hsScanning.add(ip);
+    renderDevices();
+    _hsStartPolling();
+  }
+
+  async function hexstrikeAll() {
+    const btn = document.getElementById('btn-hexstrike-all');
+    const info = document.getElementById('hexstrike-all-info');
+    btn.disabled = true;
+    const r = await fetch('/api/hexstrike/scan_all', {method:'POST'});
+    const d = await r.json();
+    if (!d.ok) { alert('HexStrike: ' + (d.error || 'error')); btn.disabled = false; return; }
+    info.textContent = `Queued ${d.queued} devices…`;
+    _hsStartPolling();
+    setTimeout(() => { btn.disabled = false; }, 3000);
+  }
+
+  function _hsStartPolling() {
+    if (_hsPollTimer) return;
+    _hsPollTimer = setInterval(_hsPoll, 3000);
+  }
+
+  async function _hsPoll() {
+    try {
+      const d = await (await fetch('/api/hexstrike/results')).json();
+      _hsConfigured = d.configured;
+      _hsResults    = d.results || {};
+      _hsScanning   = new Set(d.scanning || []);
+      renderDevices();
+      const info = document.getElementById('hexstrike-all-info');
+      if (_hsScanning.size > 0) {
+        info.textContent = `Scanning ${_hsScanning.size} device(s)…`;
+      } else {
+        const done  = Object.values(_hsResults).filter(r => r.status === 'done').length;
+        const errs  = Object.values(_hsResults).filter(r => r.status === 'error').length;
+        if (done || errs) info.textContent = `${done} scanned${errs ? ', ' + errs + ' errors' : ''}`;
+        clearInterval(_hsPollTimer); _hsPollTimer = null;
+      }
+    } catch(_) {}
+  }
+
+  async function _hsInit() {
+    try {
+      const d = await (await fetch('/api/hexstrike/results')).json();
+      _hsConfigured = d.configured;
+      _hsResults    = d.results || {};
+      _hsScanning   = new Set(d.scanning || []);
+      if (_hsScanning.size > 0) _hsStartPolling();
+      renderDevices();
+    } catch(_) {}
+  }
+
   // ── Z2M update ─────────────────────────────────────────────────────────
   function toggleZ2mLog() {
     const log = document.getElementById('z2m-log');
@@ -861,6 +952,7 @@
   setInterval(loadDevices, {{ poll_interval }} * 1000);
   initScan();
   _initNmapAll();
+  _hsInit();
   loadDevices();
 </script>
 </body>
