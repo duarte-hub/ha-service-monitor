@@ -20,5 +20,6 @@
   <Config Name="HA_URL" Target="HA_URL" Default="http://192.168.0.20:8123" Mode="" Description="Home Assistant base URL" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.0.20:8123</Config>
   <Config Name="HA_TOKEN" Target="HA_TOKEN" Default="" Mode="" Description="Long-lived access token from HA Profile -> Security" Type="Variable" Display="always" Required="true" Mask="true"></Config>
   <Config Name="POLL_INTERVAL" Target="POLL_INTERVAL" Default="30" Mode="" Description="Seconds between health checks" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="HEXSTRIKE_URL" Target="HEXSTRIKE_URL" Default="" Mode="" Description="HexStrike AI container URL" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="TZ" Target="TZ" Default="Australia/Brisbane" Mode="" Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Australia/Brisbane</Config>
 </Container>
